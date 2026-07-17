@@ -1,7 +1,7 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-17 (after the M3 commit)
-**State: M0–M3 complete and committed. Next milestone: M4 (feel & finish).**
+**Last updated:** 2026-07-17 (after the M4 commit)
+**State: M0–M4 complete and committed — V1 non-stretch scope is DONE. Next: stretch items (save/load, deploy) and the art pass.**
 
 ## What this project is
 
@@ -21,9 +21,11 @@ Both were hardened by independent adversarial reviews before any code was writte
 | `f6ecf05` | M2 (playable vertical slice) + fixes from the M2 review (12 findings) |
 | `d4567a3` | Placeholder-plus characters + V1 collision model (Flow rule 14) |
 | `8ede235` | M3 gate: two adversarial pre-M3 reviews (code gaps + plan gaps): 11 code fixes with 12 regression tests, and 19 plan rulings written into the GDD/tech plan (look for "M3-gate ruling" / "M3 ruling" markers) |
-| *(M3)* | Full V1 roster: 6 conditions with weighted spawn mix + rep case-mix shift, multi-step + dual-staff paths, room props, atrium/greeter/aura grid, complete wayfinding system, comfort auras, inspection panels, click-to-jump toasts, aura overlay, thought log, A* per-walker path variety + fixes from the M3 adversarial review (3 major, 5 minor) |
+| `16ade07` | Full V1 roster: 6 conditions with weighted spawn mix + rep case-mix shift, multi-step + dual-staff paths, room props, atrium/greeter/aura grid, complete wayfinding system, comfort auras, inspection panels, click-to-jump toasts, aura overlay, thought log, A* per-walker path variety + fixes from the M3 adversarial review (3 major, 5 minor) |
+| `7e27b63` | `/run-hospital-simms` skill: headless browser driver (playwright-core + system Edge) for driving the live game |
+| *(M4)* | Feel & finish: daily report modal + per-day tally (`src/sim/dailyStats.ts`), day-close wait bonus, bankruptcy lose-state + game-over screen, title screen + `?seed=` new-game flow, first-run checklist, keyboard shortcuts (Space/1/2/3), hover cursors, headless balance harness + balance pass (arrivals 3.0→1.5/h, wait-bonus threshold 120→240m), `debugSetCash` + fixes from the M4 adversarial review (2 major, 3 minor, 4 nit) |
 
-**The full V1 loop is playable now:** `npm run dev` → localhost:5173. All 6 conditions arrive on a reputation-shifted weighted mix; fractures/pneumonia re-queue between X-ray and their second step; chest pain takes a doctor+nurse ER team. Patients take wrong turns on long walks (❓ wander) unless atriums with posted greeters cover the routes; comfort auras slow patience decay. Click anything for its inspection panel (Fire/Sell), click toasts/thoughts to jump the camera, select an atrium or place one to see aura coverage. Backtick opens the debug panel (per-condition spawn, force outcomes, fast-forward, walkability overlay). 119 Vitest tests, lint and build green. Fixed seed 1337 in `main.ts` (new-game flow randomizes it in M4).
+**V1 is playable end-to-end:** `npm run dev` → localhost:5173 shows the title screen; New Game navigates to `?seed=<random>` (seed shown in the HUD — a bare `?seed=1337` boots deterministically, which the `/run-hospital-simms` driver skill relies on). All 6 conditions arrive on a reputation-shifted weighted mix; wayfinding/atriums/auras as before. New in M4: a pausing daily-report modal at midnight (counters, money, avg door-to-first-treatment wait, day-close rep bonus ★), bankruptcy lose-state (below −$10k a full day → foreclosure screen → New Game), guided first-run checklist, Space/1/2/3 speed shortcuts (suppressed while a modal is open), Esc peels build-mode→selection, hover cursors. Backtick debug panel gains "Set cash to double debt limit" (drives the game-over path). 130 Vitest tests, lint and build green.
 
 ## Architecture in five sentences
 
@@ -52,6 +54,11 @@ Both were hardened by independent adversarial reviews before any code was writte
 - **Arrival ends the walk (M3 review):** `onPatientTileStep` never rolls on the destination tile, and promotion to `active` defensively clears `lost` — treatment can never run on a lost patient (rule 3 decay would leak).
 - **Aura grid is signature-cached per tick** (`auraCheckedTick`, invalidated end-of-tick and per command) — has* getters are cheap enough for the per-frame overlay; don't add per-query signature scans back.
 - **Prop strip length lives ONLY in `PROP_STYLE[id].tiles`** — placement and render slicing both read it (§3.1 rule 5).
+- **Day tallies increment at the same choke points that emit events** (M4): `killPatient`/`dischargePatient`/`patientLeavesAma`/`billFee`/`applyReputation` in world.ts, payroll in economy.ts, lost episodes in wayfinding.ts, first-treatment wait in the dispatcher's promotion (kind `treatment` only, `firstTreatedAtTick` once-guard — regression: `test/m4.test.ts` pipeline test). `repDelta` records the APPLIED (clamp-aware) delta.
+- **`closeDay` order is load-bearing** (M4): wait bonus applied → report snapshotted → tally reset → `dayEnded` emitted. `dayEnded`'s payload is a `DayReport` (superset of the old `{day}`).
+- **Bankruptcy** (M4): strictly below the threshold, sampled once per tick after all systems (intra-tick dips can't false-trigger); recovery resets the countdown; `gameOver` emits once and `tick()` becomes a no-op — commands still drain, so debug commands after game over are inert by construction.
+- **A visible `.modal-overlay` owns the clock** (M4 review): keyboard speed shortcuts check for one before touching the loop; the game-over screen hides an open daily report.
+- **Harness validity is mutation-checked, not assumed** (M4 review): the zero-atrium test probes reservation ages EVERY tick (a stuck reservation fails the bound even if it resolves by day end) and asserts a lost holder was actually observed; the acuity-5 test pins reputation at max for genuine overload (AMA assertion proves it). Room partitioning (one ER, X-ray throttle) means the aging *mechanism* is guarded by unit tests, not the harness — see the comment in `test/harness.test.ts` before "improving" either.
 
 ## Working agreements (user-established)
 
@@ -60,14 +67,13 @@ Both were hardened by independent adversarial reviews before any code was writte
 3. Balance changes edit `src/sim/data/balance.ts`, not the GDD (GDD numbers are initial values by declaration).
 4. User cares about game feel: they requested the wayfinding/atrium mechanic, the character upgrade, and the overlap fix. Visual polish requests are welcome mid-milestone.
 
-## Next: M4 — feel & finish (tech plan milestone definition is authoritative)
+## Next: V1 stretch + definition-of-done checks (tech plan §6)
 
-- **Daily report modal** at midnight (per-day counters: treated/died/left/lost, revenue, expenses, rep change) — this also unlocks the **day-close reputation bonus** (+10 for avg door-to-first-treatment wait < 2h; constants staged in `balance.ts`, deferred here by M3-gate ruling).
-- **Bankruptcy lose-state** (cash below −$10,000 for a full game day; constants staged) + game-over screen; **new-game flow** (randomize + display seed — `main.ts` currently pins 1337).
-- **Guided first-run checklist** (GDD §9), title screen, hover cursors, keyboard shortcuts, polish.
-- **Headless balance harness**: run N days at various build/hire configs in Vitest, assert survivability envelope — the renderer-free sim's payoff. The M4 harness also owes two risk-table assertions: acuity-5 patients get treated under sustained load, and a zero-atrium large hospital degrades but doesn't deadlock.
-- **Stretch:** save/load to localStorage (entities need explicit toJSON/fromJSON — budget a session); deploy.
-- Then the art pass (tech plan §2.6 contract — `characterKey()` and the prop-slice lookups are atlas-ready).
+- **Save/load to localStorage** (M4 stretch, not started): entities are classes with Maps and in-flight paths — each needs an explicit `toJSON`/`fromJSON` pair; budget a session. No backend/database by design (tech plan §1).
+- **Deploy** (Vercel, stretch).
+- **Art pass** (tech plan §2.6 contract — `characterKey()` and the prop-slice lookups are atlas-ready).
+- **V1 DoD still unchecked:** 60fps with 100 patients + 20 staff on a mid-range laptop (profile it); a manual full-session playthrough for console errors; the §3.1 SSOT grep audit.
+- **Balance watch:** the M4 pass tuned arrivals to 1.5/h and the wait-bonus threshold to 240m against the harness's 6-room reference build (see `balance.ts` comments). Rep now oscillates gently 350–500 for that build — revisit after real playtesting, via the harness.
 
 ## Gotchas
 

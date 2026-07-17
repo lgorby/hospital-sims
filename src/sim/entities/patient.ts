@@ -41,6 +41,10 @@ export interface Patient {
   lost: { since: number } | null;
   /** Last mood the thought log reported — transitions emit `patientThought`. */
   reportedMood: 'content' | 'impatient' | 'critical';
+  /** Spawn tick — the "door" end of the door-to-first-treatment wait (M4). */
+  arrivedAtTick: number;
+  /** Tick the first TREATMENT reservation went active (triage excluded); null until then. */
+  firstTreatedAtTick: number | null;
   /** Index of the next not-yet-completed treatment step. */
   stepIndex: number;
   /** Fees billed so far (per-step payment — GDD §6). */

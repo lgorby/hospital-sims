@@ -64,7 +64,9 @@ for await (const line of rl) {
   try {
     switch (cmd) {
       case 'goto': {
-        await page.goto(arg || 'http://localhost:5173', { waitUntil: 'load' });
+        // Default to a seeded URL: the bare origin shows the M4 title screen
+        // (no HUD), and a fixed seed keeps runs deterministic.
+        await page.goto(arg || 'http://localhost:5173/?seed=1337', { waitUntil: 'load' });
         await page.waitForSelector('.hud-clock', { timeout: 15000 });
         await page.waitForTimeout(500); // let Pixi paint a frame
         console.log(`[goto] loaded — ${await hudRead()}`);

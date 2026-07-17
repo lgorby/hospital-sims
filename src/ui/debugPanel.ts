@@ -1,6 +1,7 @@
 import type { CommandQueue } from '../commands';
 import type { WorldRenderer } from '../render/renderer';
 import { TICKS_PER_DAY, TICKS_PER_GAME_HOUR } from '../sim/clock';
+import { BALANCE } from '../sim/data/balance';
 import { CONDITION_DEFS, CONDITION_IDS } from '../sim/data/conditions';
 
 const SPAWN_BATCH = 5;
@@ -40,6 +41,12 @@ export class DebugPanel {
     this.button('Force complication (selected)', () => this.force('complication'));
     this.button('Fast-forward 1 hour', () =>
       this.commands.push({ type: 'debugFastForward', ticks: TICKS_PER_GAME_HOUR }),
+    );
+    this.button('Set cash to double debt limit', () =>
+      this.commands.push({
+        type: 'debugSetCash',
+        amount: BALANCE.economy.bankruptcyThreshold * 2,
+      }),
     );
     this.button('Fast-forward 1 day', () =>
       this.commands.push({ type: 'debugFastForward', ticks: TICKS_PER_DAY }),

@@ -1,7 +1,8 @@
 import type { CommandQueue, Command } from '../commands';
 import type { EventBus } from '../events';
 import { doorFromOutsideTile, validateRoomBuild, validateRoomSell } from './build';
-import { GameClock, gameMinutesToTicks } from './clock';
+import { GameClock, gameMinutesToTicks, ticksToGameMinutes } from './clock';
+import { emptyDayTally, type DayReport, type DayTally } from './dailyStats';
 import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, type ConditionId } from './data/conditions';
 import { generateAge, generateName } from './data/names';
@@ -77,6 +78,15 @@ export class World implements PathGrid {
   readonly checkInQueues = new Map<number, number[]>();
   cash: number = BALANCE.economy.startingCash;
   reputation: number = BALANCE.reputation.starting;
+  /** Running tally for the current day; snapshotted + reset at midnight (M4). */
+  today: DayTally = emptyDayTally();
+  /** Lifetime counters for the game-over summary. */
+  lifetimeTreated = 0;
+  lifetimeDied = 0;
+  /** Tick when cash first dropped below the bankruptcy threshold; null = solvent. */
+  bankruptSinceTick: number | null = null;
+  /** Terminal state (M4): once set, tick() is a no-op — the world is frozen. */
+  gameOver = false;
   /** One-shot advisory hints already shown (Flow rule 5 "once per condition type"). */
   private hintedOnce = new Set<string>();
   private nextEntityId = 1;
@@ -355,6 +365,11 @@ export class World implements PathGrid {
       case 'debugFastForward':
         for (let i = 0; i < command.ticks; i++) this.tick();
         return;
+      case 'debugSetCash':
+        // Balancing/testing aid (M4): drive the bankruptcy path on demand.
+        this.cash = command.amount;
+        this.events.emit('cashChanged', { cash: this.cash });
+        return;
       case 'debugWalkTo':
         // Debug-only: manually steer every patient (movement tests, sandboxing).
         for (const p of this.patients.values()) {
@@ -403,6 +418,7 @@ export class World implements PathGrid {
     this.placeProps(room);
     if (!free) {
       this.cash -= def.cost;
+      this.today.construction += def.cost;
       this.events.emit('cashChanged', { cash: this.cash });
     }
     this.events.emit('roomBuilt', { roomId: id });
@@ -533,7 +549,9 @@ export class World implements PathGrid {
         this.routeToCheckIn(p);
       }
     }
-    this.cash += Math.floor(ROOM_DEFS[room.type].cost * BALANCE.economy.roomSellbackRatio);
+    const sellback = Math.floor(ROOM_DEFS[room.type].cost * BALANCE.economy.roomSellbackRatio);
+    this.cash += sellback;
+    this.today.sellIncome += sellback;
     this.events.emit('cashChanged', { cash: this.cash });
     this.events.emit('roomSold', { roomId });
     this.recomputePaths();
@@ -586,6 +604,7 @@ export class World implements PathGrid {
       candidate.age,
     );
     this.cash -= BALANCE.economy.hireFee;
+    this.today.hireFees += BALANCE.economy.hireFee;
     this.events.emit('cashChanged', { cash: this.cash });
   }
 
@@ -628,6 +647,8 @@ export class World implements PathGrid {
       wayfinding: this.rng.intInRange(1, 5),
       lost: null,
       reportedMood: 'content',
+      arrivedAtTick: this.clock.tick,
+      firstTreatedAtTick: null,
       stepIndex: 0,
       billed: 0,
       stage: { kind: 'atEntrance' },
@@ -641,6 +662,7 @@ export class World implements PathGrid {
       progress: 0,
     };
     this.patients.set(patient.id, patient);
+    this.today.arrivals += 1;
     this.routeToCheckIn(patient);
     this.events.emit('patientSpawned', { patientId: patient.id });
     return patient;
@@ -788,15 +810,19 @@ export class World implements PathGrid {
   // ------------------------------------------------------ terminal outcomes
 
   applyReputation(delta: number): void {
+    const before = this.reputation;
     this.reputation = Math.min(
       BALANCE.reputation.max,
       Math.max(0, this.reputation + delta),
     );
+    // Report the APPLIED delta — clamping at 0/max must not skew the tally.
+    this.today.repDelta += this.reputation - before;
     this.events.emit('reputationChanged', { reputation: this.reputation });
   }
 
   billFee(amount: number, label: string): void {
     this.cash += amount;
+    this.today.revenue += amount;
     this.events.emit('cashChanged', { cash: this.cash });
     this.events.emit('feeBilled', { amount, label });
   }
@@ -891,6 +917,8 @@ export class World implements PathGrid {
     patient.next = null;
     patient.path = [];
     patient.target = null;
+    this.today.died += 1;
+    this.lifetimeDied += 1;
     this.applyReputation(-BALANCE.reputation.deathLoss);
     this.events.emit('patientDied', {
       patientId: patient.id,
@@ -905,6 +933,7 @@ export class World implements PathGrid {
     this.releasePatientHoldings(patient);
     patient.stage = { kind: 'leaving', reason: 'ama' };
     patient.lost = null; // exits clear lostness (M3-gate ruling)
+    this.today.leftAma += 1;
     this.applyReputation(-BALANCE.reputation.amaLoss);
     this.setWalkerTarget(patient, BALANCE.map.entrance);
     this.events.emit('patientLeftAma', {
@@ -919,6 +948,8 @@ export class World implements PathGrid {
     this.releasePatientHoldings(patient);
     patient.stage = { kind: 'leaving', reason: 'discharged' };
     patient.lost = null; // exits clear lostness (M3-gate ruling)
+    this.today.treated += 1;
+    this.lifetimeTreated += 1;
     this.applyReputation(dischargeReputationGain(patient.acuity ?? BALANCE.decay.untriagedAcuity));
     this.setWalkerTarget(patient, BALANCE.map.entrance);
     this.emitThought(patient, 'discharged');
@@ -1008,6 +1039,7 @@ export class World implements PathGrid {
 
   /** One fixed-timestep sim step. System order per tech plan §2.1. */
   tick(): void {
+    if (this.gameOver) return; // terminal state (M4): the world is frozen
     this.clock.advance();
     updateSpawn(this);
     updateDecay(this);
@@ -1021,9 +1053,60 @@ export class World implements PathGrid {
     // aura cache so post-tick queries (render overlay, next tick's systems)
     // see arrivals immediately (M3 review: at most 2 rechecks per tick).
     this.auraCheckedTick = -1;
-    if (this.clock.isMidnight) {
-      this.events.emit('dayEnded', { day: this.clock.day - 1 });
+    this.checkBankruptcy();
+    if (!this.gameOver && this.clock.isMidnight) this.closeDay();
+  }
+
+  /**
+   * Bankruptcy lose-state (GDD §2, M4): cash strictly below the threshold for
+   * a full uninterrupted game day loses. Climbing back above resets the clock.
+   */
+  private checkBankruptcy(): void {
+    if (this.cash >= BALANCE.economy.bankruptcyThreshold) {
+      this.bankruptSinceTick = null;
+      return;
     }
+    if (this.bankruptSinceTick === null) {
+      this.bankruptSinceTick = this.clock.tick;
+      const t = BALANCE.economy.bankruptcyThreshold;
+      const label = `${t < 0 ? '−' : ''}$${Math.abs(t).toLocaleString('en-US')}`;
+      this.events.emit('hint', {
+        message: `Deep in debt — climb above ${label} within a day or the bank forecloses`,
+      });
+    }
+    const graceTicks = gameMinutesToTicks(BALANCE.economy.bankruptcyGraceGameMinutes);
+    if (this.clock.tick - this.bankruptSinceTick < graceTicks) return;
+    this.gameOver = true;
+    this.events.emit('gameOver', {
+      day: this.clock.day,
+      cash: this.cash,
+      reputation: this.reputation,
+      treated: this.lifetimeTreated,
+      died: this.lifetimeDied,
+    });
+  }
+
+  /** Midnight close (M4): wait bonus → report snapshot → reset the tally. */
+  private closeDay(): void {
+    const avgWaitGameMinutes =
+      this.today.waitCount === 0
+        ? null
+        : ticksToGameMinutes(this.today.waitSumTicks / this.today.waitCount);
+    // No first-treatments today ⇒ no bonus (an empty hospital isn't "fast").
+    const waitBonusAwarded =
+      avgWaitGameMinutes !== null &&
+      avgWaitGameMinutes < BALANCE.reputation.dayCloseWaitThresholdGameMinutes;
+    if (waitBonusAwarded) this.applyReputation(BALANCE.reputation.dayCloseWaitBonus);
+    const report: DayReport = {
+      ...this.today,
+      day: this.clock.day - 1,
+      cash: this.cash,
+      reputation: this.reputation,
+      avgWaitGameMinutes,
+      waitBonusAwarded,
+    };
+    this.today = emptyDayTally();
+    this.events.emit('dayEnded', report);
   }
 }
 
