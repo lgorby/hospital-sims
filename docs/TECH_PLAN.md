@@ -2,7 +2,7 @@
 
 Companion to `GAME_DESIGN.md`. Covers stack, architecture, project layout, and the build order (milestones M0–M4) for V1.
 
-> **Status (2026-07-17):** M0–M4, the full-codebase audit, Persistence Phase 1 (save/load, `docs/PERSISTENCE_PLAN.md`), the §6 DoD checks (SSOT audit / 60fps profile / QA playthrough — all passed), and GDD §12 Expansion 1 are **shipped**. This document remains the architecture contract; current state and the invariant ledger live in `docs/HANDOFF.md`. Remaining §6 stretch: Vercel deploy, §2.6 art pass.
+> **Status (2026-07-17):** M0–M4, the full-codebase audit, Persistence Phase 1 (save/load, `docs/PERSISTENCE_PLAN.md`), the §6 DoD checks (SSOT audit / 60fps profile / QA playthrough — all passed), GDD §12 Expansion 1, the §2.6 art pass, and the Vercel deploy are all **shipped** — V1 is complete and live at https://hospital-sims.vercel.app (git-connected auto-deploy). This document remains the architecture contract; current state and the invariant ledger live in `docs/HANDOFF.md`.
 
 ## 1. Stack
 
@@ -241,7 +241,7 @@ Each milestone ends **runnable and demonstrable**. Estimates assume focused sess
 - Daily report modal; bankruptcy lose-state + game-over screen; new-game flow.
 - Balance pass driven by a **headless sim harness** (run N days at various build/hire configs in Vitest, assert survivability envelope — this is the payoff of the renderer-free sim).
 - Polish: hover cursors, build-mode affordances, keyboard shortcuts, mood-bubble tuning, title screen, guided first-run checklist (GDD §9).
-- Stretch (only if time allows): save/load to localStorage — note this is *not* free: entities are classes with Maps and in-flight paths, so each needs an explicit `toJSON`/`fromJSON` pair (budget a session for it). Deploy to Vercel. *(Save/load SHIPPED post-M4 as Persistence Phase 1 — explicit per-entity serializers exactly as budgeted; deploy still pending.)*
+- Stretch (only if time allows): save/load to localStorage — note this is *not* free: entities are classes with Maps and in-flight paths, so each needs an explicit `toJSON`/`fromJSON` pair (budget a session for it). Deploy to Vercel. *(Both SHIPPED post-M4: save/load as Persistence Phase 1 — explicit per-entity serializers exactly as budgeted; Vercel deploy live at https://hospital-sims.vercel.app with git-connected auto-deploy.)*
 - **Demo:** a stranger can open the URL and play 3 in-game days without instruction.
 
 ## 5. Risks & mitigations
@@ -266,4 +266,4 @@ Each milestone ends **runnable and demonstrable**. Estimates assume focused sess
 - 60fps with 100 concurrent patients + 20 staff on a mid-range laptop.
 - A full session — new game → build → hire → survive or go bankrupt — with no console errors.
 
-**Deploy (stretch) — parked until after the art pass** (owner ruling 2026-07-17): a first public URL is more shareable with real art than placeholder rectangles. Target host **Vercel** (root-domain URLs suit the `?seed=` sharing story; Git-integration auto-deploy off the existing GitHub repo), but the `vite build` output is a pure static site portable to any host — see `docs/HANDOFF.md` "Next" for the full rationale and the GitHub Pages alternative.
+**Deploy (stretch) — DONE (2026-07-17):** live at **https://hospital-sims.vercel.app**. Parked until after the art pass by owner ruling (a first public URL is more shareable with real art than placeholder rectangles), then shipped. Host **Vercel** (root-domain URLs suit the `?seed=` sharing story), public repo `lgorby/hospital-sims`, git-connected auto-deploy off `master`. The `vite build` output is a pure static site portable to any host — see `docs/HANDOFF.md` "Next" for the full deploy record (team/project, backup branch, CLAUDE.md handling).
