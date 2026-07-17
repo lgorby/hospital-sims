@@ -54,4 +54,10 @@ export interface Reservation {
   /** gathering: parties walking to the room. active: timer running. */
   phase: 'gathering' | 'active';
   ticksRemaining: number;
+  /**
+   * The patient's `waitingSince` at reservation time. Re-queues (complication,
+   * between steps, rule-8 cancel) restore it — the wait clock survives the
+   * round-trip so aged priority is never wiped (Flow rule 6 ruling).
+   */
+  patientWaitingSince: number | null;
 }

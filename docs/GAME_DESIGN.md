@@ -73,12 +73,12 @@ The player's job is to keep this pipeline flowing by **building rooms**, **hirin
 3. **Decay semantics:** health decays everywhere *except* during active treatment; patience decays only while queueing/waiting **or lost** — not while purposefully walking, checking in, or being treated.
 4. **Waiting room overflow:** the base 3×3 room includes 6 chairs (capacity = chairs). When full, patients stand on free tiles in and around the room with patience decaying at 1.5×.
 5. **No facility/staff for a needed step:** the patient stays in waiting (still decaying) and a hint toast fires once per condition type ("Nobody here can treat Pneumonia — build Respiratory Therapy").
-6. **Priority aging (anti-starvation):** the dispatcher sorts by `effectivePriority = acuity − 0.5 × hoursWaited` (lower = served first), so a flu patient waiting 4 hours competes with a fresh fracture. AMA departures remain the relief valve under sustained overload.
+6. **Priority aging (anti-starvation):** the dispatcher sorts by `effectivePriority = acuity − 0.5 × hoursWaited` (lower = served first), so a flu patient waiting 4 hours competes with a fresh fracture. AMA departures remain the relief valve under sustained overload. **`hoursWaited` semantics (M3-gate ruling):** each queue class starts its own clock (entering the check-in queue, finishing check-in, finishing triage), but within the treatment queue the clock **survives every re-queue** — complication, between-steps return, rule-8 cancellation, and the lost-reservation timeout all keep the accumulated wait. It clears only on reservation start or a terminal event.
 7. **Reservation release:** if a patient dies or leaves AMA at *any* point — including mid-walk to a room — every staff member and room reserved for them is released immediately and staff return to idle.
-8. **No path (A\* failure):** the task is cancelled, reservations released, the patient re-queued, and a toast hints that the layout is blocked.
-9. **Room sale & build safety:** rooms can only be sold while unoccupied and unreserved (the sell button is disabled otherwise). Building is disallowed on tiles currently occupied by actors.
+8. **No path (A\* failure):** the task is cancelled, reservations released, the patient re-queued, and a toast hints that the layout is blocked. **Cancellation is a recovery, not a spin (M3-gate ruling):** the dispatcher never reserves a room the patient can't currently path to, a cancelled patient is held from re-dispatch for 5 game-min, and the layout hint fires at most once per patient.
+9. **Room sale & build safety:** rooms can only be sold while unoccupied and unreserved (the sell button is disabled otherwise). Building is disallowed on tiles currently occupied by actors. **Open-plan exemption (M3 ruling):** an atrium occupies and reserves no one, so it may be sold while people stand on its tiles (tiles stay public; walkers keep walking); selling it un-posts its greeter. At build time an atrium footprint must contain at least one entrance-reachable tile.
 10. **Death visuals:** the patient flashes, fades out over ~3 s, and the entity is removed; a toast fires and the daily report tallies it.
-11. **Idle staff** walk to the nearest room matching their role (or wander corridors if none exists) — cosmetic only.
+11. **Idle staff** walk to the nearest room matching their role (or wander corridors if none exists) — cosmetic only. **V1 minimum (implemented at the M3 gate):** released staff drop their stale walk target and step out of walled rooms to the nearest free corridor tile, so an idle loiterer can never pin a room sale; the ambient wander is polish on top.
 12. **Negative cash:** payroll can push cash negative; building and hiring require `cash ≥ cost` (no credit).
 13. **Lost patients:** wrong turns, wandering, recovery, and the 60-game-min reservation timeout are specified in §3 (Getting lost & wayfinding). Lostness is a movement sub-state — a lost patient still belongs to whatever queue/treatment stage they were in, and all release rules (7, 8) apply unchanged.
 14. **Collision model (V1):** walkers pass through each other while in motion (RCT tradition — hard per-tile blocking creates doorway deadlocks and is deferred post-V1), but **standing spots are exclusive**: destination assignment (queue slots, waiting seats, treatment spots, staff posts) avoids tiles already occupied or targeted, and each person renders with a small deterministic stance offset so transient overlaps stay readable.
@@ -121,6 +121,8 @@ Design rules baked into the roster:
 
 ### Patient spawning
 - Arrival rate = **base 3.0 patients/game-hour** × reputation multiplier (linear 0.5×–2.0× over rep 0–1000) × time-of-day curve: 00–06 ×0.3 · 06–10 ×0.8 · 10–14 ×1.3 · 14–18 ×1.5 · 18–22 ×1.0 · 22–24 ×0.5. Spawns are Poisson-distributed around the rate (seeded RNG).
+- **Condition mix (M3 ruling):** each spawn rolls a condition from per-condition base weights — initial values flu 30 · laceration 20 · fracture 15 · asthma 15 · pneumonia 10 · chest pain 10 (SSOT in `balance.ts` once implemented). **Case-mix shift (§7):** the weights of referral-grade conditions (those with `acuityMin ≤ 2`: asthma, pneumonia, chest pain) scale by `1 + 0.5 × (reputation − 300) / 700`, then the whole table renormalizes — better hospitals draw the harder, better-paying cases.
+- **Wayfinding stat:** rolled uniform 1–5 from the seeded rng at spawn.
 
 ### Getting lost & wayfinding
 
@@ -132,6 +134,16 @@ Hospitals are mazes — patients walking to a distant room can get lost, and the
 - **Reservation timeout:** lost for more than 60 game-min with a room/staff reserved → the reservation is released (Flow rule 7) so the hospital doesn't stall; on recovery the patient re-queues with aged priority (Flow rule 6).
 - **Why atriums, plural:** the guidance aura has a radius, so one grand atrium at the entrance protects nothing deep in the hospital. Coverage — a small atrium at each junction of a large hospital — is the design the mechanic rewards, mirroring real hospital wayfinding (and RCT's scattered info kiosks).
 - Condition mix shifts slightly with reputation: better hospitals attract referrals for higher-acuity (higher-paying) cases.
+
+**M3-gate rulings (canonical answers to the lost-state edge matrix):**
+- **Which walks roll wrong turns:** patient walks in stages `waitingTriage`, `waiting`, and `reserved` (walks to seats, standing spots, and rooms). Check-in queue walks/shuffles and the leaving walk (discharged/AMA) **never** roll — a lost patient can't deadlock the reception line or haunt the exit. Staff never roll.
+- **Lost while reserved:** the lost walker *keeps its reservation target* and is **exempt from the rule-8 gathering stall check** — only the 60-min timeout or a terminal event releases a lost patient's reservation. (Without this exemption the timeout is dead code: the stall check would cancel on the first lost tick.)
+- **Timeout semantics:** at timeout the room and staff are released (rule-7 style); the patient stays lost, returns to stage `waiting` with **no walk target and no layout hint** (this isn't a corridor problem); waiting-spot assignment and the A* re-path happen at recovery. The wait clock keeps running throughout — lostness counts as waiting (rule 3).
+- **Dispatcher:** skips lost patients when assigning — staff are never idled against a wanderer.
+- **Exits clear lostness:** going AMA or being discharged clears `lost`; the patient paths to the entrance normally.
+- **Wander mechanics:** uniformly random orthogonal steps (seeded rng) at normal speed; a wanderer never crosses a door edge into a walled room.
+- **Geometry:** all aura radii are Euclidean, measured from the nearest atrium footprint tile, ignoring walls; staff rescue is Euclidean ≤ 3 from any staff tile. Aura coverage is a per-tile boolean — overlapping auras don't stack.
+- **Staffed means posted AND arrived** (same rule as the reception desk). A posted greeter's arrival at or departure from the help desk invalidates the aura grid, alongside room build/sell and greeter hire/fire.
 
 ## 4. Staff
 
@@ -146,7 +158,7 @@ Hospitals are mazes — patients walking to a distant room can get lost, and the
 | Volunteer Greeter | Atrium help desk | $50 | Standing post (like the receptionist); powers the atrium's guidance aura |
 
 ### Attributes
-- **Skill (1–5):** affects treatment duration and success odds. Hiring pool offers randomized skill/salary tradeoffs.
+- **Skill (1–5):** affects treatment duration and success odds. Hiring pool offers randomized skill/salary tradeoffs. Greeter skill is **cosmetic in V1** — auras don't scale with it (their candidate cards still show it; a bargain skill-1 greeter is the smart hire).
 - **State machine:** `Idle → WalkingToTask → Working → Idle`. (Fatigue, breaks, and morale are post-V1.)
 
 ### Assignment logic (the "brain" of the game)
@@ -158,7 +170,7 @@ A central **dispatcher** runs every sim tick:
 The player never micro-assigns in V1 — they shape flow by what they build and hire. (A manual "prioritize this patient" pin is a post-V1 nicety.)
 
 ### Firing
-Staff can be fired from their inspection panel — effective immediately, no severance in V1. This is the correction lever for the "overstaffed, under-visited" failure mode. Staff mid-treatment finish the current patient first.
+Staff can be fired from their inspection panel — effective immediately, no severance in V1. This is the correction lever for the "overstaffed, under-visited" failure mode. Staff mid-treatment finish the current patient first. **Gathering is not mid-treatment (M3-gate ruling):** firing a staff member who is still walking to a reservation cancels it per Flow rule 8 — the patient re-queues (wait clock intact), co-staff are released, and the fired member is removed immediately. Only an *active* treatment defers removal.
 
 ### Patient movement (V1)
 All patients are ambulatory and walk themselves between rooms — even chest-pain patients (walking slowly, clutching their chest, for flavor). Dedicated patient transport — wheelchairs, stretchers, and a Transporter role for non-ambulatory arrivals — is a headline post-V1 system (§11): it turns *movement itself* into a schedulable resource, which is exactly the kind of dispatcher complexity V1 deliberately defers until the core loop is proven.
@@ -177,12 +189,12 @@ All patients are ambulatory and walk themselves between rooms — even chest-pai
 | ER bay | 3×4 | $10,000 | Trauma bed, crash cart, monitor | Doctor + Nurse |
 | Atrium | 4×4 | $4,000 | Help desk, benches, plants | Volunteer Greeter |
 
-**Atrium special rules:** unlike treatment rooms, an atrium is **open-plan** — no walls or door; its tiles stay public and walkable, and it has no dispatcher occupancy slot. While its help desk is staffed it projects a **guidance aura** (radius 8 tiles): no wrong turns inside it, and lost patients who enter it instantly recover. Staffed or not, it projects a **comfort aura** (same radius): patience decays at 0.75× within it. Several small atriums spread across the hospital beat one big one — coverage is the point.
+**Atrium special rules:** unlike treatment rooms, an atrium is **open-plan** — no walls or door; its tiles stay public and walkable, and it has no dispatcher occupancy slot. While its help desk is staffed (greeter posted **and arrived**) it projects a **guidance aura** (radius 8 tiles): no wrong turns inside it, and lost patients who enter it instantly recover. Staffed or not, it projects a **comfort aura** (same radius): patience decays at 0.75× within it — multiplying with other patience modifiers (a standing overflow waiter in comfort decays at 1.5 × 0.75). Several small atriums spread across the hospital beat one big one — coverage is the point.
 
 ### Building mechanics
 - Drag-a-rectangle room placement on the isometric grid (Theme Hospital style), then place the door on a wall segment touching a corridor/open tile.
 - **Placement validation:** in bounds, no overlap, min size met, no actors on the footprint, and the door must have a walkable path to the entrance (a door may open onto a corridor **or an atrium tile** — open-plan tiles are public). A build that would sever any *existing* room's door-to-entrance path, or seal any person into an unreachable pocket, is rejected with a hint.
-- Required equipment auto-suggests placement spots; player can rearrange within the room.
+- Required equipment is **auto-placed** (fixed, data-driven layouts per room type, like the M1 exam bed; placement respects the interior-connectivity backstop). Player rearrangement of equipment is post-V1.
 - Rooms can be sold back at 50% of cost — only while unoccupied and unreserved (Flow rule 9).
 - Corridors are just unbuilt floor — patients and staff path through any walkable tile. (Explicit corridor décor is post-V1.)
 - **Room quality (V1-simple):** each tile of size above the minimum adds a small quality bonus (roomier = slightly faster treatment, slower patience decay inside). Décor items deepen this post-V1.
@@ -195,7 +207,7 @@ All patients are ambulatory and walk themselves between rooms — even chest-pai
 - Starting cash: **$50,000**
 - Revenue: flat fee per completed treatment step — Flu $150 · Laceration $200 · Fracture $500 (X-ray $200 + casting $300) · Asthma $400 · Pneumonia $700 · Chest pain $1,200
 - Expenses: salaries (charged per game-hour, pro-rated), room construction, one-time hire fee ($100)
-- Payment is **per completed step** — a fracture patient who gets an X-ray but leaves AMA before casting still pays $200 for the X-ray.
+- Payment is **per completed step** — a fracture patient who gets an X-ray but leaves AMA before casting still pays $200 for the X-ray. Death works the same way: fees already billed for completed steps stay billed; only uncompleted steps go unpaid.
 - No insurance/billing simulation in V1 — flat fees keep the loop legible. (Insurance mix is a flavorful post-V1 system.)
 
 ### Balance defaults (initial values — all live in `sim/data/balance.ts`)
@@ -235,7 +247,7 @@ So an untreated chest-pain patient (acuity 1, full health) dies in ~8 game-hours
 ## 7. Reputation
 
 - Score 0–1000, starts at 300.
-- Gains: successful discharge (+2 to +8 scaled by acuity); day-close bonus of +10 if the day's average door-to-first-treatment wait was under 2 game-hours.
+- Gains: successful discharge (+2 to +8 scaled by acuity); day-close bonus of +10 if the day's average door-to-first-treatment wait was under 2 game-hours *(the bonus needs per-day wait tracking, so it lands with the M4 daily report — M3 reputation covers discharge/death/AMA deltas and the arrival/case-mix couplings only)*.
 - Losses: death (−25), left-AMA (−8).
 - Effects: arrival-rate multiplier (0.5× at rep 0 → 2× at rep 1000) and case-mix shift toward higher acuity.
 
@@ -249,9 +261,9 @@ So an untreated chest-pain patient (acuity 1, full health) dies in ~8 game-hours
 - **HUD (top bar):** cash, reputation, date/time, speed controls, daily patient counter.
 - **Build menu (bottom):** room catalog with cost/footprint preview; hire menu with candidate cards (role, skill stars, salary).
 - **Inspection panels:** click a patient → condition, acuity, health/patience bars, current state. Click a staff member → role, skill, salary, current task, **Fire** button. Click a room → type, quality, assigned staff, patient inside, **Sell** button (disabled while occupied/reserved).
-- **Notifications (toast queue):** death, AMA departure, bankruptcy warning, "no room can treat X" hints. **Clicking a toast snaps the camera** to the entity or tile it references — a death report on a 40×40 map is useless if you can't jump to where it happened.
-- **Coverage overlay:** while placing or selecting an atrium, tiles inside guidance auras are tinted — both the ghost's radius and all existing coverage — so wayfinding gaps are visible instead of guessed. (General overlay infrastructure also serves the debug panel.)
-- **Thought log:** the RCT guest-thoughts analog. A scrollable feed of recent patient thoughts ("Doris K.: *I've been waiting forever*", "*I got lost twice!*", "*What a lovely atrium*"), generated at mood-bubble moments. The first-run checklist teaches the opening; the thought log is how the player diagnoses the mid-game — it's the narrative answer to "why are my patients dying?"
+- **Notifications (toast queue):** death, AMA departure, bankruptcy warning, "no room can treat X" hints. **Clicking a toast snaps the camera** to the entity or tile it references — a death report on a 40×40 map is useless if you can't jump to where it happened. *(M3 ruling: every jumpable event carries a `{col,row}` tile snapshot at emit time; a click pans to the live entity if it still exists, else to the snapshot — a death toast must outlive its patient, whose entity fades in ~3 s.)*
+- **Coverage overlay:** while placing or selecting an atrium, tiles inside guidance auras are tinted — both the ghost's radius and all existing coverage — so wayfinding gaps are visible instead of guessed. *(M3 ruling: staffed atriums tint solid; an unstaffed atrium's potential radius renders dimmed/hollow. Comfort coverage shares the same footprint, so one tint suffices.)* (General overlay infrastructure also serves the debug panel.)
+- **Thought log:** the RCT guest-thoughts analog. A scrollable feed of recent patient thoughts ("Doris K.: *I've been waiting forever*", "*I got lost twice!*", "*What a lovely atrium*"), generated at mood-bubble moments. The first-run checklist teaches the opening; the thought log is how the player diagnoses the mid-game — it's the narrative answer to "why are my patients dying?" *(M3 ruling: capped at the most recent 100 entries; the trigger moments come from the shared `moodOf` formula plus lifecycle events (lost, rescued, treated, long wait); thought strings are game content and live in `sim/data/thoughts.ts` per SSOT.)*
 - **Daily report modal** at midnight.
 - **First-run experience:** a new game starts with a reception desk and waiting room pre-built and one receptionist hired, plus a persistent guided checklist in place of a tutorial: *Build a Triage Bay → Hire a Nurse → Build an Exam Room → Hire a Doctor → Treat your first patient.* Items check off as completed; the checklist dismisses itself. This is what makes the M4 definition-of-done ("a stranger plays 3 days without instruction") achievable.
 - Rendering note: HUD/menus are DOM overlay (HTML/CSS), not in-canvas — see tech plan.

@@ -7,6 +7,7 @@ import { ROOM_DEFS, type RoomType } from '../sim/data/rooms';
 import type { WallEdge } from '../sim/entities/room';
 import { boundaryEdges } from '../sim/entities/room';
 import type { Patient } from '../sim/entities/patient';
+import { moodOf } from '../sim/formulas';
 import { PATIENT_TILES_PER_TICK, STAFF_TILES_PER_TICK } from '../sim/systems/movement';
 import { samePoint, type GridPoint, type Rect } from '../sim/types';
 import type { Walker, World } from '../sim/world';
@@ -277,8 +278,9 @@ export class WorldRenderer {
     if (patient.stage.kind === 'leaving') {
       return patient.stage.reason === 'discharged' ? '💚' : '💢';
     }
-    if (patient.health < 30) return '💀';
-    if (patient.patience < 30) return '💢';
+    const mood = moodOf(patient.health, patient.patience);
+    if (mood === 'critical') return '💀';
+    if (mood === 'impatient') return '💢';
     return '';
   }
 

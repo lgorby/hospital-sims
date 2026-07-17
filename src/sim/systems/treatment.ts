@@ -62,7 +62,9 @@ export function resolveTreatmentOutcome(
     }
     world.releaseReservation(reservation);
     patient.stage = { kind: 'waiting' };
-    patient.waitingSince = world.clock.tick;
+    // Flow rule 6 ruling: between-steps re-queues keep the accumulated wait —
+    // multi-step patients never restart the aged-priority line from zero.
+    patient.waitingSince = reservation.patientWaitingSince ?? world.clock.tick;
     world.assignWaitingSpot(patient);
     return;
   }
@@ -76,6 +78,8 @@ export function resolveTreatmentOutcome(
   world.events.emit('patientComplication', { patientId: patient.id, name: patient.name.full });
   world.releaseReservation(reservation);
   patient.stage = { kind: 'waiting' };
-  patient.waitingSince = world.clock.tick;
+  // "Re-queued, with aged priority per Flow rule 6" (GDD §2): the wait clock
+  // survives the complication instead of resetting to the back of the line.
+  patient.waitingSince = reservation.patientWaitingSince ?? world.clock.tick;
   world.assignWaitingSpot(patient);
 }

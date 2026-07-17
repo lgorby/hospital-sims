@@ -3,9 +3,13 @@ import { CommandQueue } from '../src/commands';
 import { EventBus } from '../src/events';
 import { TICKS_PER_DAY } from '../src/sim/clock';
 import { BALANCE } from '../src/sim/data/balance';
+import { CONDITION_DEFS } from '../src/sim/data/conditions';
 import type { Reservation } from '../src/sim/entities/staff';
 import { gameMinutesToTicks } from '../src/sim/clock';
-import { treatmentDurationTicks } from '../src/sim/formulas';
+import {
+  reputationArrivalMultiplier,
+  treatmentDurationTicks,
+} from '../src/sim/formulas';
 import { setupNewGame } from '../src/sim/newGame';
 import { resolveTreatmentOutcome } from '../src/sim/systems/treatment';
 import { World } from '../src/sim/world';
@@ -29,6 +33,7 @@ function fakeTreatmentReservation(world: World, patientId: number): Reservation 
     stepIndex: 0,
     phase: 'active',
     ticksRemaining: 0,
+    patientWaitingSince: null,
   };
   world.reservations.set(reservation.id, reservation);
   return reservation;
@@ -117,8 +122,9 @@ describe('treatment outcomes', () => {
 
     resolveTreatmentOutcome(t.world, reservation, true);
 
-    expect(t.world.cash).toBe(startCash + 150); // flu exam fee (GDD §6)
-    expect(patient.billed).toBe(150);
+    const fluFee = CONDITION_DEFS.flu.steps[0]!.fee; // §3.1 rule 6: assert the real data
+    expect(t.world.cash).toBe(startCash + fluFee);
+    expect(patient.billed).toBe(fluFee);
     expect(patient.stage).toEqual({ kind: 'leaving', reason: 'discharged' });
     expect(t.world.reputation).toBe(startRep + BALANCE.reputation.dischargeGainMin);
   });
@@ -254,9 +260,19 @@ describe('M2 review regression cases', () => {
     // Patients pile up atEntrance (no reception) — cheap and deterministic.
     const days = 2;
     for (let i = 0; i < TICKS_PER_DAY * days; i++) t.world.tick();
-    // Expected/day: 3.0 × repMult(300) × Σ(blockHours × multiplier)
-    //             = 3.0 × 0.875 × (6×0.3 + 4×0.8 + 4×1.3 + 4×1.5 + 4×1.0 + 2×0.5) = 55.65
-    const expected = 55.65 * days;
+    // Expected/day = base × repMult(starting) × Σ(blockHours × multiplier),
+    // computed from the real balance data (§3.1 rule 6), not a re-derived copy.
+    let curveHours = 0;
+    let prevUntil = 0;
+    for (const block of BALANCE.arrivals.timeOfDayCurve) {
+      curveHours += (block.untilHour - prevUntil) * block.multiplier;
+      prevUntil = block.untilHour;
+    }
+    const expected =
+      BALANCE.arrivals.basePatientsPerGameHour *
+      reputationArrivalMultiplier(BALANCE.reputation.starting) *
+      curveHours *
+      days;
     expect(spawned).toBeGreaterThan(expected * 0.8);
     expect(spawned).toBeLessThan(expected * 1.2);
   });
@@ -265,8 +281,9 @@ describe('M2 review regression cases', () => {
     const t = setup();
     void t;
     const floored = treatmentDurationTicks(30, 3, 1000);
-    // 30 min × (1.3−0.3) × floor(0.7) = 21 game-min, never 1 tick.
-    expect(floored).toBe(gameMinutesToTicks(30 * 0.7));
+    // At skill 3 the skill modifier is exactly 1.0, so the floor is the whole
+    // story: 30 min × durationQualityFloor — never 1 tick (§3.1 rule 6 data).
+    expect(floored).toBe(gameMinutesToTicks(30 * BALANCE.treatment.durationQualityFloor));
   });
 
   it('pure decay reaches death and costs reputation', () => {

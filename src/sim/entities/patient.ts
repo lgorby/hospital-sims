@@ -38,6 +38,8 @@ export interface Patient {
   stage: PatientStage;
   /** Tick when the current wait began (priority aging); null while not waiting. */
   waitingSince: number | null;
+  /** Dispatcher won't reserve for this patient before this tick (Flow rule 8 retry hold). */
+  dispatchHoldUntil: number;
   /** Waiting room whose capacity this patient occupies; null = standing (1.5× patience). */
   waitingRoomId: number | null;
 
