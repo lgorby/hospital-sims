@@ -254,3 +254,5 @@ Each milestone ends **runnable and demonstrable**. Estimates assume focused sess
 - SSOT audit (§3.1) passes: no game-content literal (cost, fee, salary, duration, rate) exists outside `sim/data/`; a grep of `ui/` and `render/` for numeric game constants turns up only layout values.
 - 60fps with 100 concurrent patients + 20 staff on a mid-range laptop.
 - A full session — new game → build → hire → survive or go bankrupt — with no console errors.
+
+**Deploy (stretch) — parked until after the art pass** (owner ruling 2026-07-17): a first public URL is more shareable with real art than placeholder rectangles. Target host **Vercel** (root-domain URLs suit the `?seed=` sharing story; Git-integration auto-deploy off the existing GitHub repo), but the `vite build` output is a pure static site portable to any host — see `docs/HANDOFF.md` "Next" for the full rationale and the GitHub Pages alternative.
