@@ -1,11 +1,14 @@
 # Persistence & Multiplayer Plan
 
-Scoping document (2026-07-17, owner-requested). Companion to `TECH_PLAN.md`;
-nothing here is implemented yet. The V1 stance stands: **no backend, no
-accounts, no database** — everything below layers onto that without
-contradicting it until the explicitly-marked later phases.
+Scoping document (2026-07-17, owner-requested). Companion to `TECH_PLAN.md`.
+**Phase 1 is SHIPPED** (same day — `src/sim/save.ts`, `src/ui/saveStore.ts`,
+`src/ui/saveLoad.ts`; round-trip determinism test green; currently
+`SAVE_VERSION` 2 after Expansion 1 added enum values, with v1 loadable via a
+candidate-pool top-up migration). Phases 2–3 remain scoped-only. The V1 stance
+stands: **no backend, no accounts, no database** — everything below layers onto
+that without contradicting it until the explicitly-marked later phases.
 
-## Phase 1 — Save/load, portable PC-to-PC (next implementation phase, ~1–2 sessions)
+## Phase 1 — Save/load, portable PC-to-PC (SHIPPED — spec below is as-built)
 
 **Format: one versioned JSON snapshot of the full `World`.**
 

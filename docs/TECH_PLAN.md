@@ -2,6 +2,8 @@
 
 Companion to `GAME_DESIGN.md`. Covers stack, architecture, project layout, and the build order (milestones M0–M4) for V1.
 
+> **Status (2026-07-17):** M0–M4, the full-codebase audit, Persistence Phase 1 (save/load, `docs/PERSISTENCE_PLAN.md`), the §6 DoD checks (SSOT audit / 60fps profile / QA playthrough — all passed), and GDD §12 Expansion 1 are **shipped**. This document remains the architecture contract; current state and the invariant ledger live in `docs/HANDOFF.md`. Remaining §6 stretch: Vercel deploy, §2.6 art pass.
+
 ## 1. Stack
 
 | Layer | Choice | Why |
@@ -14,7 +16,7 @@ Companion to `GAME_DESIGN.md`. Covers stack, architecture, project layout, and t
 | Tests | Vitest | Sim systems (pathfinding, dispatcher, economy) are pure logic — unit-test them headlessly |
 | Deploy | Vercel static | It's a static site after `vite build` |
 
-No backend, no accounts, no network play. Save/load (when it lands, M4-stretch) is JSON in `localStorage`.
+No backend, no accounts, no network play. Save/load (SHIPPED — Persistence Phase 1) is a versioned JSON snapshot in `localStorage` slots plus file export/import; see `docs/PERSISTENCE_PLAN.md` and `src/sim/save.ts`.
 
 ## 2. Architecture
 
@@ -228,7 +230,7 @@ Each milestone ends **runnable and demonstrable**. Estimates assume focused sess
 - Daily report modal; bankruptcy lose-state + game-over screen; new-game flow.
 - Balance pass driven by a **headless sim harness** (run N days at various build/hire configs in Vitest, assert survivability envelope — this is the payoff of the renderer-free sim).
 - Polish: hover cursors, build-mode affordances, keyboard shortcuts, mood-bubble tuning, title screen, guided first-run checklist (GDD §9).
-- Stretch (only if time allows): save/load to localStorage — note this is *not* free: entities are classes with Maps and in-flight paths, so each needs an explicit `toJSON`/`fromJSON` pair (budget a session for it). Deploy to Vercel.
+- Stretch (only if time allows): save/load to localStorage — note this is *not* free: entities are classes with Maps and in-flight paths, so each needs an explicit `toJSON`/`fromJSON` pair (budget a session for it). Deploy to Vercel. *(Save/load SHIPPED post-M4 as Persistence Phase 1 — explicit per-entity serializers exactly as budgeted; deploy still pending.)*
 - **Demo:** a stranger can open the URL and play 3 in-game days without instruction.
 
 ## 5. Risks & mitigations
