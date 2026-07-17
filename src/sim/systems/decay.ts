@@ -39,9 +39,10 @@ export function updateDecay(world: World): void {
     }
 
     // Patience drains only while actually waiting IN PLACE — purposeful
-    // walking is exempt (Flow rule 3). M3 lostness counts as waiting again
-    // via the lost sub-state (Flow rule 13), not via stage.
-    if (isAmaEligible(patient) && world.walkerArrived(patient)) {
+    // walking is exempt (Flow rule 3). Lostness counts as waiting in ANY
+    // stage, including `reserved` (rules 3/13): a lost patient going to 0
+    // patience walks out AMA like any other waiter.
+    if (patient.lost !== null || (isAmaEligible(patient) && world.walkerArrived(patient))) {
       let rate = patienceDecayPerTick(patient.acuity);
       // Standing because every waiting room is full → 1.5× (Flow rule 4).
       // Applies to both triaged and untriaged waiters (M2 review #10).
@@ -50,6 +51,11 @@ export function updateDecay(world: World): void {
         patient.waitingRoomId === null
       ) {
         rate *= BALANCE.decay.standingMultiplier;
+      }
+      // Comfort aura ×0.75 (GDD §5) — MULTIPLIES with the modifiers above
+      // (M3-gate ruling): a standing waiter in comfort decays at 1.5 × 0.75.
+      if (world.hasComfortAura(patient.at)) {
+        rate *= BALANCE.wayfinding.comfortAuraPatienceMultiplier;
       }
       patient.patience -= rate;
       if (patient.patience <= 0) {

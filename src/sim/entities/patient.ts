@@ -31,6 +31,16 @@ export interface Patient {
   acuity: number | null;
   health: number;
   patience: number;
+  /** Sense of direction 1–5 (GDD §3): low = prone to wrong turns on long walks. */
+  wayfinding: number;
+  /**
+   * Lost sub-state (GDD §3, tech plan §2.3): NOT a lifecycle stage. A lost
+   * walker abandons its path but RETAINS its target; stall checks exempt it
+   * (M3-gate ruling) — only timeout/terminal events release its reservation.
+   */
+  lost: { since: number } | null;
+  /** Last mood the thought log reported — transitions emit `patientThought`. */
+  reportedMood: 'content' | 'impatient' | 'critical';
   /** Index of the next not-yet-completed treatment step. */
   stepIndex: number;
   /** Fees billed so far (per-step payment — GDD §6). */

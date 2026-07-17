@@ -162,6 +162,11 @@ export function validateRoomBuild(
   if (door && !visited.has(keyOf(door.outside))) {
     return fail('Door would be unreachable from the entrance');
   }
+  // Open-plan rooms have no door, but a sealed atrium is useless: at least one
+  // footprint tile must be entrance-reachable (GDD Flow rule 9, M3 ruling).
+  if (isOpen && !rectTiles(rect).some((t) => visited.has(keyOf(t)))) {
+    return fail('Atrium must be reachable from the entrance');
+  }
   for (const room of world.rooms.values()) {
     if (room.door && !visited.has(keyOf(room.door.outside))) {
       return fail(`Would cut off ${ROOM_DEFS[room.type].label} from the entrance`);
@@ -186,12 +191,17 @@ export function validateRoomSell(world: World, roomId: number): Validation {
   for (const reservation of world.reservations.values()) {
     if (reservation.roomId === roomId) return fail('Room is reserved');
   }
-  for (const person of [...world.patients.values(), ...world.staff.values()]) {
-    if (
-      rectContains(room.rect, person.at) ||
-      (person.next && rectContains(room.rect, person.next))
-    ) {
-      return fail('Someone is inside');
+  // Open-plan exemption (Flow rule 9, M3 ruling): an atrium holds no one —
+  // its tiles are public through-traffic, so people standing on them never
+  // block the sale (they stay exactly where they are, on plain corridor).
+  if (ROOM_DEFS[room.type].kind !== 'open') {
+    for (const person of [...world.patients.values(), ...world.staff.values()]) {
+      if (
+        rectContains(room.rect, person.at) ||
+        (person.next && rectContains(room.rect, person.next))
+      ) {
+        return fail('Someone is inside');
+      }
     }
   }
   return OK;

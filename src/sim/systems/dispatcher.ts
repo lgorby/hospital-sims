@@ -8,7 +8,7 @@ import type { Patient } from '../entities/patient';
 import type { Reservation, Staff } from '../entities/staff';
 import { effectivePriority, treatmentDurationTicks } from '../formulas';
 import { findPath } from '../path/astar';
-import { samePoint } from '../types';
+import { ORTHOGONAL_STEPS, samePoint } from '../types';
 import type { Walker, World } from '../world';
 
 /**
@@ -17,7 +17,7 @@ import type { Walker, World } from '../world';
  * promotes gathered reservations to active treatments.
  */
 export function updateDispatcher(world: World): void {
-  postReceptionists(world);
+  postStandingStaff(world);
   reRouteEntranceWaiters(world);
   processCheckIn(world);
   assignTriage(world);
@@ -36,27 +36,50 @@ function roomBusy(world: World, roomId: number): boolean {
   return false;
 }
 
-/** Deterministic desk spot: first walkable interior tile that isn't the doorway. */
+/**
+ * Deterministic standing-post spot: beside the room's desk prop when it has
+ * one, else the first walkable interior tile that isn't the doorway. Prefers
+ * unclaimed tiles (Flow rule 14) — atrium tiles are public, so a patient may
+ * be standing on the obvious spot.
+ */
 function postTile(world: World, room: Room): { col: number; row: number } {
+  const candidates: { col: number; row: number }[] = [];
+  for (let row = room.rect.row; row < room.rect.row + room.rect.rows; row++) {
+    for (let col = room.rect.col; col < room.rect.col + room.rect.cols; col++) {
+      const tile = world.tileAt(col, row);
+      if (!tile?.object || tile.walkable) continue; // desk/help-desk style props
+      for (const step of ORTHOGONAL_STEPS) {
+        const p = { col: col + step.col, row: row + step.row };
+        if (!world.isInsideRoom(p, room) || !world.isWalkable(p)) continue;
+        if (room.door && samePoint(room.door.inside, p)) continue;
+        candidates.push(p);
+      }
+    }
+  }
   for (let row = room.rect.row; row < room.rect.row + room.rect.rows; row++) {
     for (let col = room.rect.col; col < room.rect.col + room.rect.cols; col++) {
       const p = { col, row };
       if (!world.isWalkable(p)) continue;
       if (room.door && samePoint(room.door.inside, p)) continue;
-      return p;
+      candidates.push(p);
     }
   }
-  return room.door?.inside ?? { col: room.rect.col, row: room.rect.row };
+  const free = candidates.find((p) => !world.isTileClaimed(p));
+  return free ?? candidates[0] ?? room.door?.inside ?? { col: room.rect.col, row: room.rect.row };
 }
 
-function postReceptionists(world: World): void {
+/** Post idle standing-post staff (receptionists, greeters) to their rooms. */
+function postStandingStaff(world: World): void {
   const staffedRooms = new Set<number>();
   for (const s of world.staff.values()) {
     if (s.duty.kind === 'post') staffedRooms.add(s.duty.roomId);
   }
-  for (const room of world.roomsOfType('reception')) {
-    if (!room.door || staffedRooms.has(room.id)) continue;
-    const candidate = idleStaff(world, (s) => s.role === 'receptionist')[0];
+  for (const room of world.rooms.values()) {
+    const def = ROOM_DEFS[room.type];
+    const postRole = def.staffedBy.find((role) => ROLE_DEFS[role].standingPost);
+    if (!postRole || staffedRooms.has(room.id)) continue;
+    if (def.kind !== 'open' && !room.door) continue;
+    const candidate = idleStaff(world, (s) => s.role === postRole)[0];
     if (!candidate) continue;
     candidate.duty = { kind: 'post', roomId: room.id };
     world.setWalkerTarget(candidate, postTile(world, room));
@@ -182,10 +205,13 @@ function canReachRoom(world: World, walker: Walker, room: Room): boolean {
   );
 }
 
-/** Waiting patients eligible for dispatch (rule-8 retry hold honored). */
+/**
+ * Waiting patients eligible for dispatch: rule-8 retry hold honored, and lost
+ * patients skipped (M3-gate ruling — never idle staff against a wanderer).
+ */
 function dispatchable(world: World, stageKind: 'waitingTriage' | 'waiting'): Patient[] {
   return [...world.patients.values()].filter(
-    (p) => p.stage.kind === stageKind && world.clock.tick >= p.dispatchHoldUntil,
+    (p) => p.stage.kind === stageKind && p.lost === null && world.clock.tick >= p.dispatchHoldUntil,
   );
 }
 
@@ -272,9 +298,11 @@ function promoteGatheredReservations(world: World): void {
     // Flow rule 8 / M2 review #1: a participant who has STOPPED (no committed
     // step, no goal) but is not inside the room has no path — cancel the
     // reservation instead of stalling forever with the room and staff leaked.
+    // LOST patients are exempt (M3-gate ruling): they retain the target and
+    // wander; only the 60-min timeout or a terminal event releases them.
     const stalled = (w: Walker): boolean =>
       world.walkerArrived(w) && !world.isInsideRoom(w.at, room);
-    if (stalled(patient) || members.some(stalled)) {
+    if ((patient.lost === null && stalled(patient)) || members.some(stalled)) {
       world.cancelReservation(reservation);
       continue;
     }
@@ -283,6 +311,9 @@ function promoteGatheredReservations(world: World): void {
     if (!members.every((m) => world.walkerArrived(m) && world.isInsideRoom(m.at, room))) continue;
 
     reservation.phase = 'active';
+    // Belt-and-suspenders: treatment is not a walk, so an active patient can
+    // never be lost (rule 3 — lost patience decay must not run mid-treatment).
+    patient.lost = null;
     if (reservation.kind === 'triage') {
       reservation.ticksRemaining = gameMinutesToTicks(BALANCE.triage.durationGameMinutes);
     } else {

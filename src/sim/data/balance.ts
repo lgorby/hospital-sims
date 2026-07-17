@@ -38,6 +38,19 @@ export const BALANCE = {
     ],
     reputationMultiplierMin: 0.5,
     reputationMultiplierMax: 2.0,
+    /** Per-condition spawn weights (GDD §3 condition mix); renormalized after the case-mix shift. */
+    conditionWeights: {
+      flu: 30,
+      laceration: 20,
+      fracture: 15,
+      asthma: 15,
+      pneumonia: 10,
+      chestPain: 10,
+    },
+    /** Conditions with acuityMin ≤ this are "referral-grade" and shift with reputation (GDD §7). */
+    referralAcuityMax: 2,
+    /** Referral-grade weights scale by 1 + factor × (rep − starting)/(max − starting). */
+    caseMixShiftFactor: 0.5,
   },
   /** Reception check-in (GDD Flow rule 1). */
   reception: {
@@ -84,8 +97,9 @@ export const BALANCE = {
     dayCloseWaitThresholdGameMinutes: 120,
   },
   wayfinding: {
-    /** Wrong-turn chance per tile step = perTileBase × (6 − wayfinding) (GDD §3). */
+    /** Wrong-turn chance per tile step = perTileBase × (statCeiling − wayfinding) (GDD §3). */
     wrongTurnPerTileBase: 0.004,
+    wrongTurnStatCeiling: 6,
     guidanceAuraRadius: 8,
     staffRescueRadius: 3,
     comfortAuraPatienceMultiplier: 0.75,

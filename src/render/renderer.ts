@@ -18,10 +18,14 @@ import {
   FEET_ANCHOR,
   generateCharacterTextures,
   generateTileTextures,
+  PROP_RISE_PAD,
+  propKey,
   variantFor,
   type CharacterKind,
+  type PropSlice,
   type TileTextures,
 } from './sprites';
+import { PROP_STYLE } from '../sim/data/rooms';
 
 const ZOOM_STEPS = [0.5, 1, 2] as const;
 const DEFAULT_ZOOM_INDEX = 1;
@@ -32,8 +36,6 @@ const WALL_HEIGHT = 34;
 /** Depth bias: far walls behind their tile's occupants, near walls in front. */
 const WALL_Z_FAR = -0.45;
 const WALL_Z_NEAR = 0.45;
-/** Texture-crop offset (see sprites.ts bed padding). */
-const BED_OFFSET = { x: -TILE_W / 2, y: -12 };
 /** Sim ticks per walk-cycle frame (10 tps / 3 ≈ 3.3 fps step cadence). */
 const WALK_FRAME_TICKS = 3;
 /** Bubble height above the feet anchor. */
@@ -44,6 +46,12 @@ export type UiMode =
   | { kind: 'idle' }
   | { kind: 'build'; type: RoomType }
   | { kind: 'sell' };
+
+/** Idle-click selection: patient beats staff beats room (M3 inspection panels). */
+export type Selection =
+  | { kind: 'patient'; id: number }
+  | { kind: 'staff'; id: number }
+  | { kind: 'room'; id: number };
 
 interface BuildState {
   type: RoomType;
@@ -70,8 +78,8 @@ export class WorldRenderer {
   private overlay = new Graphics();
   /** Debug: tint unwalkable tiles (toggled from the debug panel). */
   showWalkOverlay = false;
-  /** Idle-click selection — the debug panel and readout use it. */
-  selectedPatientId: number | null = null;
+  /** Idle-click selection — inspection panel, debug panel, and readout use it. */
+  selected: Selection | null = null;
   private zoomIndex: number = DEFAULT_ZOOM_INDEX;
   private heldKeys = new Set<string>();
   private panning: { startX: number; startY: number; camX: number; camY: number } | null = null;
@@ -92,6 +100,20 @@ export class WorldRenderer {
     private commands: CommandQueue,
     private events: EventBus,
   ) {}
+
+  /** Back-compat view of the selection (debug panel, HUD readout). */
+  get selectedPatientId(): number | null {
+    return this.selected?.kind === 'patient' ? this.selected.id : null;
+  }
+
+  /** Click-to-jump (M3): center the camera on a tile at the current zoom. */
+  jumpTo(col: number, row: number): void {
+    const { x, y } = toScreen(col, row);
+    this.camera.position.set(
+      window.innerWidth / 2 - x * this.camera.scale.x,
+      window.innerHeight / 2 - y * this.camera.scale.y,
+    );
+  }
 
   async init(mount: HTMLElement): Promise<void> {
     await this.app.init({
@@ -122,7 +144,10 @@ export class WorldRenderer {
       this.setMarker(col, row, present),
     );
     this.events.on('roomBuilt', ({ roomId }) => this.drawRoom(roomId));
-    this.events.on('roomSold', ({ roomId }) => this.removeRoom(roomId));
+    this.events.on('roomSold', ({ roomId }) => {
+      this.removeRoom(roomId);
+      if (this.selected?.kind === 'room' && this.selected.id === roomId) this.selected = null;
+    });
 
     // Rooms that existed before the renderer (new-game start state).
     for (const roomId of this.world.rooms.keys()) this.drawRoom(roomId);
@@ -206,13 +231,19 @@ export class WorldRenderer {
         visuals.push(floor);
 
         const tile = this.world.tileAt(col, row)!;
-        if (tile.object === 'bed') {
-          // West slice = the bed tile whose east neighbor IN THE SAME ROOM is
-          // also bed — adjacent rooms may both own beds (M1 review M-4).
-          const east = this.world.tileAt(col + 1, row);
-          const eastIsBed = east?.object === 'bed' && east.roomId === tile.roomId;
-          const sprite = new Sprite(eastIsBed ? this.textures.bedWest : this.textures.bedEast);
-          sprite.position.set(x + BED_OFFSET.x, y + BED_OFFSET.y);
+        if (tile.object) {
+          // Strip props slice west/east by same-object-same-room neighbors —
+          // adjacent rooms may both own identical props (M1 review M-4);
+          // single-tile props (chairs!) never pair up.
+          let slice: PropSlice = 'single';
+          if (PROP_STYLE[tile.object].tiles > 1) {
+            const east = this.world.tileAt(col + 1, row);
+            const west = this.world.tileAt(col - 1, row);
+            if (east?.object === tile.object && east.roomId === tile.roomId) slice = 'west';
+            else if (west?.object === tile.object && west.roomId === tile.roomId) slice = 'east';
+          }
+          const sprite = new Sprite(this.textures.props.get(propKey(tile.object, slice))!);
+          sprite.position.set(x - TILE_W / 2, y - PROP_RISE_PAD);
           sprite.zIndex = depthKey(col, row);
           this.sortedLayer.addChild(sprite);
           visuals.push(sprite);
@@ -272,12 +303,13 @@ export class WorldRenderer {
     this.roomVisuals.delete(roomId);
   }
 
-  /** Mood bubble per GDD §10: 💢 impatient/AMA, 💀 critical, 💚 treated. */
+  /** Mood bubble per GDD §10: 💢 impatient/AMA, 💀 critical, 💚 treated, ❓ lost. */
   private static bubbleFor(patient: Patient): string {
     if (patient.stage.kind === 'dead') return '';
     if (patient.stage.kind === 'leaving') {
       return patient.stage.reason === 'discharged' ? '💚' : '💢';
     }
+    if (patient.lost) return '❓';
     const mood = moodOf(patient.health, patient.patience);
     if (mood === 'critical') return '💀';
     if (mood === 'impatient') return '💢';
@@ -370,7 +402,7 @@ export class WorldRenderer {
         this.patientSprites.delete(id);
         this.bubbles.get(id)?.destroy();
         this.bubbles.delete(id);
-        if (this.selectedPatientId === id) this.selectedPatientId = null;
+        if (this.selected?.kind === 'patient' && this.selected.id === id) this.selected = null;
       }
     }
 
@@ -384,6 +416,7 @@ export class WorldRenderer {
       if (!this.world.staff.has(id)) {
         sprite.destroy();
         this.staffSprites.delete(id);
+        if (this.selected?.kind === 'staff' && this.selected.id === id) this.selected = null;
       }
     }
   }
@@ -462,14 +495,22 @@ export class WorldRenderer {
       else this.onHint?.('No room there');
       return;
     }
-    // Idle mode: select the patient standing on (or stepping into) the tile.
-    this.selectedPatientId = null;
+    // Idle mode: pick the patient on the tile, else staff, else the room.
+    this.selected = null;
     for (const patient of this.world.patients.values()) {
       if (samePoint(patient.at, tile) || (patient.next && samePoint(patient.next, tile))) {
-        this.selectedPatientId = patient.id;
-        break;
+        this.selected = { kind: 'patient', id: patient.id };
+        return;
       }
     }
+    for (const member of this.world.staff.values()) {
+      if (samePoint(member.at, tile) || (member.next && samePoint(member.next, tile))) {
+        this.selected = { kind: 'staff', id: member.id };
+        return;
+      }
+    }
+    const room = this.world.roomAt(tile);
+    if (room) this.selected = { kind: 'room', id: room.id };
   }
 
   private finishDrag(): void {
@@ -679,16 +720,59 @@ export class WorldRenderer {
     this.drawOverlay();
   }
 
+  private tintTile(col: number, row: number, color: number, alpha: number): void {
+    const { x, y } = toScreen(col, row);
+    this.overlay
+      .poly([x, y, x + TILE_W / 2, y + TILE_H / 2, x, y + TILE_H, x - TILE_W / 2, y + TILE_H / 2])
+      .fill({ color, alpha });
+  }
+
+  /** Coverage overlay is live while placing an atrium or with one selected (GDD §9). */
+  private auraOverlayActive(): boolean {
+    if (this.build?.type === 'atrium') return true;
+    if (this.selected?.kind !== 'room') return false;
+    return this.world.rooms.get(this.selected.id)?.type === 'atrium';
+  }
+
   private drawOverlay(): void {
     this.overlay.clear();
-    if (!this.showWalkOverlay) return;
+    if (this.showWalkOverlay) {
+      for (let col = 0; col < this.world.cols; col++) {
+        for (let row = 0; row < this.world.rows; row++) {
+          if (this.world.tileAt(col, row)!.walkable) continue;
+          this.tintTile(col, row, 0xd94f4f, 0.4);
+        }
+      }
+      return;
+    }
+    if (!this.auraOverlayActive()) return;
+
+    // Ghost radius: potential coverage of the pending atrium rect.
+    const ghostRect = this.build?.type === 'atrium' ? this.build.rect : null;
+    const radius = BALANCE.wayfinding.guidanceAuraRadius;
+    const radiusSq = radius * radius;
+    const inGhostAura = (col: number, row: number): boolean => {
+      if (!ghostRect) return false;
+      for (let fc = ghostRect.col; fc < ghostRect.col + ghostRect.cols; fc++) {
+        for (let fr = ghostRect.row; fr < ghostRect.row + ghostRect.rows; fr++) {
+          const dc = col - fc;
+          const dr = row - fr;
+          if (dc * dc + dr * dr <= radiusSq) return true;
+        }
+      }
+      return false;
+    };
+
     for (let col = 0; col < this.world.cols; col++) {
       for (let row = 0; row < this.world.rows; row++) {
-        if (this.world.tileAt(col, row)!.walkable) continue;
-        const { x, y } = toScreen(col, row);
-        this.overlay
-          .poly([x, y, x + TILE_W / 2, y + TILE_H / 2, x, y + TILE_H, x - TILE_W / 2, y + TILE_H / 2])
-          .fill({ color: 0xd94f4f, alpha: 0.4 });
+        const p = { col, row };
+        if (this.world.hasGuidanceAura(p)) {
+          this.tintTile(col, row, 0x57bb6a, 0.32); // live guidance coverage
+        } else if (this.world.hasComfortAura(p)) {
+          this.tintTile(col, row, 0x57bb6a, 0.12); // unstaffed: dimmed potential
+        } else if (inGhostAura(col, row)) {
+          this.tintTile(col, row, 0xffe066, 0.18); // the ghost's future radius
+        }
       }
     }
   }

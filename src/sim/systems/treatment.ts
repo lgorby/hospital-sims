@@ -75,7 +75,13 @@ export function resolveTreatmentOutcome(
     world.killPatient(patient); // releases the reservation too
     return;
   }
-  world.events.emit('patientComplication', { patientId: patient.id, name: patient.name.full });
+  world.emitThought(patient, 'complication');
+  world.events.emit('patientComplication', {
+    patientId: patient.id,
+    name: patient.name.full,
+    col: patient.at.col,
+    row: patient.at.row,
+  });
   world.releaseReservation(reservation);
   patient.stage = { kind: 'waiting' };
   // "Re-queued, with aged priority per Flow rule 6" (GDD §2): the wait clock

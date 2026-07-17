@@ -1,5 +1,6 @@
 import { GAME_MINUTES_PER_TICK, gameMinutesToTicks } from './clock';
 import { BALANCE } from './data/balance';
+import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditions';
 
 /**
  * Derived-value SSOT (tech plan §3.1 rule 4): every formula lives here as one
@@ -61,6 +62,26 @@ export function reputationArrivalMultiplier(reputation: number): number {
   return a.reputationMultiplierMin + (a.reputationMultiplierMax - a.reputationMultiplierMin) * t;
 }
 
+/**
+ * GDD §3 condition mix + §7 case-mix shift: base weights, with referral-grade
+ * conditions (acuityMin ≤ referralAcuityMax) scaled by reputation. Weights are
+ * relative — the spawner rolls against their sum, so no explicit renormalize.
+ */
+export function conditionSpawnWeights(reputation: number): Record<ConditionId, number> {
+  const a = BALANCE.arrivals;
+  const r = BALANCE.reputation;
+  const shift = Math.max(
+    0,
+    1 + a.caseMixShiftFactor * ((reputation - r.starting) / (r.max - r.starting)),
+  );
+  const weights = {} as Record<ConditionId, number>;
+  for (const id of CONDITION_IDS) {
+    const referral = CONDITION_DEFS[id].acuityMin <= a.referralAcuityMax;
+    weights[id] = a.conditionWeights[id] * (referral ? shift : 1);
+  }
+  return weights;
+}
+
 /** Piecewise time-of-day multiplier (GDD §3). */
 export function timeOfDayMultiplier(hourOfDay: number): number {
   for (const block of BALANCE.arrivals.timeOfDayCurve) {
@@ -78,6 +99,12 @@ export function moodOf(health: number, patience: number): Mood {
   if (health < BALANCE.mood.criticalHealthBelow) return 'critical';
   if (patience < BALANCE.mood.impatientPatienceBelow) return 'impatient';
   return 'content';
+}
+
+/** GDD §3: wrong-turn chance per tile step; zero inside a guidance aura (caller checks). */
+export function wrongTurnChance(wayfindingStat: number): number {
+  const w = BALANCE.wayfinding;
+  return w.wrongTurnPerTileBase * (w.wrongTurnStatCeiling - wayfindingStat);
 }
 
 /** Candidate salary from role base and skill (GDD §4 hiring pool tradeoffs). */
