@@ -81,6 +81,7 @@ The player's job is to keep this pipeline flowing by **building rooms**, **hirin
 11. **Idle staff** walk to the nearest room matching their role (or wander corridors if none exists) — cosmetic only.
 12. **Negative cash:** payroll can push cash negative; building and hiring require `cash ≥ cost` (no credit).
 13. **Lost patients:** wrong turns, wandering, recovery, and the 60-game-min reservation timeout are specified in §3 (Getting lost & wayfinding). Lostness is a movement sub-state — a lost patient still belongs to whatever queue/treatment stage they were in, and all release rules (7, 8) apply unchanged.
+14. **Collision model (V1):** walkers pass through each other while in motion (RCT tradition — hard per-tile blocking creates doorway deadlocks and is deferred post-V1), but **standing spots are exclusive**: destination assignment (queue slots, waiting seats, treatment spots, staff posts) avoids tiles already occupied or targeted, and each person renders with a small deterministic stance offset so transient overlaps stay readable.
 
 ### Win/lose (V1)
 - No hard win state in V1 — it's sandbox with pressure. Lose state: cash below a bankruptcy threshold (−$10,000) for a full game day.

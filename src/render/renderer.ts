@@ -3,7 +3,6 @@ import type { CommandQueue } from '../commands';
 import type { EventBus } from '../events';
 import { doorFromOutsideTile, validateRoomBuild, validateRoomRect } from '../sim/build';
 import { BALANCE } from '../sim/data/balance';
-import { ROLE_DEFS, type RoleId } from '../sim/data/roles';
 import { ROOM_DEFS, type RoomType } from '../sim/data/rooms';
 import type { WallEdge } from '../sim/entities/room';
 import { boundaryEdges } from '../sim/entities/room';
@@ -12,7 +11,16 @@ import { PATIENT_TILES_PER_TICK, STAFF_TILES_PER_TICK } from '../sim/systems/mov
 import { samePoint, type GridPoint, type Rect } from '../sim/types';
 import type { Walker, World } from '../sim/world';
 import { depthKey, TILE_H, TILE_W, toScreen, toTile, type TilePoint } from './iso';
-import { generatePersonTexture, generateTileTextures, type TileTextures } from './sprites';
+import {
+  CHARACTER_FRAMES,
+  characterKey,
+  FEET_ANCHOR,
+  generateCharacterTextures,
+  generateTileTextures,
+  variantFor,
+  type CharacterKind,
+  type TileTextures,
+} from './sprites';
 
 const ZOOM_STEPS = [0.5, 1, 2] as const;
 const DEFAULT_ZOOM_INDEX = 1;
@@ -23,9 +31,12 @@ const WALL_HEIGHT = 34;
 /** Depth bias: far walls behind their tile's occupants, near walls in front. */
 const WALL_Z_FAR = -0.45;
 const WALL_Z_NEAR = 0.45;
-/** Texture-crop offsets (see sprites.ts padding rects). */
+/** Texture-crop offset (see sprites.ts bed padding). */
 const BED_OFFSET = { x: -TILE_W / 2, y: -12 };
-const PERSON_OFFSET = { x: -8, y: -44 };
+/** Sim ticks per walk-cycle frame (10 tps / 3 ≈ 3.3 fps step cadence). */
+const WALK_FRAME_TICKS = 3;
+/** Bubble height above the feet anchor. */
+const BUBBLE_RISE = 46;
 
 /** UI interaction mode — the build menu drives it; Esc/right-click cancel it. */
 export type UiMode =
@@ -54,7 +65,7 @@ export class WorldRenderer {
   private patientSprites = new Map<number, Sprite>();
   private staffSprites = new Map<number, Sprite>();
   private bubbles = new Map<number, Text>();
-  private roleTextures = new Map<RoleId, Texture>();
+  private characterTextures!: Map<string, Texture>;
   private overlay = new Graphics();
   /** Debug: tint unwalkable tiles (toggled from the debug panel). */
   showWalkOverlay = false;
@@ -92,9 +103,7 @@ export class WorldRenderer {
     mount.appendChild(this.app.canvas);
 
     this.textures = generateTileTextures(this.app.renderer);
-    for (const [role, def] of Object.entries(ROLE_DEFS)) {
-      this.roleTextures.set(role as RoleId, generatePersonTexture(this.app.renderer, def.color));
-    }
+    this.characterTextures = generateCharacterTextures(this.app.renderer);
     this.sortedLayer.sortableChildren = true;
     this.camera.addChild(this.groundLayer, this.roomFloorLayer, this.sortedLayer);
     this.app.stage.addChild(this.camera);
@@ -273,29 +282,62 @@ export class WorldRenderer {
     return '';
   }
 
-  private placeWalker(sprite: Sprite, walker: Walker, perTick: number, alpha: number): void {
+  private makeCharacterSprite(kind: CharacterKind, entityId: number): Sprite {
+    const sprite = new Sprite(
+      this.characterTextures.get(characterKey(kind, variantFor(kind, entityId), 0))!,
+    );
+    sprite.anchor.set(FEET_ANCHOR.x, FEET_ANCHOR.y);
+    this.sortedLayer.addChild(sprite);
+    return sprite;
+  }
+
+  private placeWalker(
+    sprite: Sprite,
+    walker: Walker,
+    kind: CharacterKind,
+    entityId: number,
+    perTick: number,
+    alpha: number,
+  ): void {
     let fc = walker.at.col;
     let fr = walker.at.row;
     if (walker.next) {
       const frac = Math.min(walker.progress + alpha * perTick, 1);
       fc += (walker.next.col - walker.at.col) * frac;
       fr += (walker.next.row - walker.at.row) * frac;
+      // Facing: every orthogonal step has a horizontal screen component
+      // (dc − dr is ±1), so mirror toward the direction of travel.
+      const screenDx = walker.next.col - walker.at.col - (walker.next.row - walker.at.row);
+      sprite.scale.x = screenDx > 0 ? 1 : -1;
     }
+    // Deterministic stance offset (Flow rule 14): transient tile-sharing never
+    // renders as one person. Hash the id, never the sim RNG.
+    const jx = ((entityId * 37) % 9) - 4;
+    const jy = ((entityId * 53) % 5) - 2;
     const { x, y } = toScreen(fc, fr);
-    sprite.position.set(x + PERSON_OFFSET.x, y + TILE_H / 2 + PERSON_OFFSET.y);
+    sprite.position.set(x + jx, y + TILE_H / 2 + 1 + jy);
     sprite.zIndex = depthKey(fc, fr);
+
+    // Walk cycle while moving, idle frame while standing; per-entity phase
+    // offset keeps a crowd from marching in lockstep.
+    const frame = walker.next
+      ? 1 +
+        ((Math.floor(this.world.clock.tick / WALK_FRAME_TICKS) + entityId) %
+          (CHARACTER_FRAMES - 1))
+      : 0;
+    sprite.texture = this.characterTextures.get(
+      characterKey(kind, variantFor(kind, entityId), frame),
+    )!;
   }
 
   /** Poll-based actor sync: create/destroy sprites by diffing the world maps. */
   private updateActors(alpha: number): void {
     for (const [id, patient] of this.world.patients) {
       if (!this.patientSprites.has(id)) {
-        const sprite = new Sprite(this.textures.patient);
-        this.sortedLayer.addChild(sprite);
-        this.patientSprites.set(id, sprite);
+        this.patientSprites.set(id, this.makeCharacterSprite('patient', id));
       }
       const sprite = this.patientSprites.get(id)!;
-      this.placeWalker(sprite, patient, PATIENT_TILES_PER_TICK, alpha);
+      this.placeWalker(sprite, patient, 'patient', id, PATIENT_TILES_PER_TICK, alpha);
       sprite.alpha =
         patient.stage.kind === 'dead'
           ? Math.max(0, 1 - (this.world.clock.tick - patient.stage.since) / BALANCE.deathFadeTicks)
@@ -305,6 +347,7 @@ export class WorldRenderer {
       let bubble = this.bubbles.get(id);
       if (emoji && !bubble) {
         bubble = new Text({ text: emoji, style: { fontSize: 16 } });
+        bubble.anchor.set(0.5, 1);
         this.sortedLayer.addChild(bubble);
         this.bubbles.set(id, bubble);
       }
@@ -314,7 +357,7 @@ export class WorldRenderer {
           this.bubbles.delete(id);
         } else {
           bubble.text = emoji;
-          bubble.position.set(sprite.position.x, sprite.position.y - 16);
+          bubble.position.set(sprite.position.x, sprite.position.y - BUBBLE_RISE);
           bubble.zIndex = sprite.zIndex + 0.01;
         }
       }
@@ -331,11 +374,9 @@ export class WorldRenderer {
 
     for (const [id, member] of this.world.staff) {
       if (!this.staffSprites.has(id)) {
-        const sprite = new Sprite(this.roleTextures.get(member.role)!);
-        this.sortedLayer.addChild(sprite);
-        this.staffSprites.set(id, sprite);
+        this.staffSprites.set(id, this.makeCharacterSprite(member.role, id));
       }
-      this.placeWalker(this.staffSprites.get(id)!, member, STAFF_TILES_PER_TICK, alpha);
+      this.placeWalker(this.staffSprites.get(id)!, member, member.role, id, STAFF_TILES_PER_TICK, alpha);
     }
     for (const [id, sprite] of this.staffSprites) {
       if (!this.world.staff.has(id)) {

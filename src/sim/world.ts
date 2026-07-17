@@ -160,11 +160,26 @@ export class World implements PathGrid {
     return [...this.rooms.values()].filter((r) => r.type === type);
   }
 
-  /** A random walkable interior tile, avoiding a reserved-away tile if given. */
+  /**
+   * Is this tile someone's standing spot or destination? (V1 collision model,
+   * Flow rule 14: walkers pass through each other in motion, but standing
+   * spots are exclusive — destinations avoid claimed tiles.)
+   */
+  isTileClaimed(p: GridPoint): boolean {
+    for (const person of [...this.patients.values(), ...this.staff.values()]) {
+      if (person.target && samePoint(person.target, p)) return true;
+      if (this.walkerArrived(person) && samePoint(person.at, p)) return true;
+    }
+    return false;
+  }
+
+  /** A random walkable interior tile, preferring unclaimed ones (Flow rule 14). */
   freeInteriorTile(room: Room, avoid?: GridPoint): GridPoint {
-    const options = rectTiles(room.rect).filter(
+    const walkable = rectTiles(room.rect).filter(
       (t) => this.tileAt(t.col, t.row)!.walkable && !(avoid && samePoint(t, avoid)),
     );
+    const unclaimed = walkable.filter((t) => !this.isTileClaimed(t));
+    const options = unclaimed.length > 0 ? unclaimed : walkable;
     return options[this.rng.intBelow(options.length)] ?? room.door?.inside ?? room.rect;
   }
 
