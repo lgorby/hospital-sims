@@ -6,6 +6,8 @@ import { BuildMenu } from './ui/buildMenu';
 import { DebugPanel } from './ui/debugPanel';
 import { HirePanel } from './ui/hirePanel';
 import { Hud } from './ui/hud';
+import { InspectPanel } from './ui/inspect';
+import { ThoughtLog } from './ui/thoughtLog';
 import { Toasts } from './ui/toasts';
 import { setupNewGame } from './sim/newGame';
 import { World } from './sim/world';
@@ -23,6 +25,7 @@ async function bootstrap(): Promise<void> {
   const loop = new GameLoop(world, commands, events, (alpha) => {
     renderer.draw(alpha);
     hud.update();
+    inspect.update();
   });
 
   const hud = new Hud(world, loop, renderer, events);
@@ -31,8 +34,12 @@ async function bootstrap(): Promise<void> {
   const uiRoot = document.getElementById('ui')!;
   const buildMenu = new BuildMenu(renderer, commands, events);
   buildMenu.mount(uiRoot);
-  new Toasts(events).mount(uiRoot);
+  const jump = (col: number, row: number): void => renderer.jumpTo(col, row);
+  new Toasts(events, world, jump).mount(uiRoot);
   new HirePanel(world, commands, events).mount(uiRoot, buildMenu.staffButton);
+  new ThoughtLog(events, jump).mount(uiRoot, document.getElementById('buildbar')!);
+  const inspect = new InspectPanel(world, commands, renderer);
+  inspect.mount(uiRoot);
   new DebugPanel(renderer, commands).mount(uiRoot);
 
   loop.start();

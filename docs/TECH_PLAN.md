@@ -38,10 +38,13 @@ The simulation is **deterministic, fixed-timestep (10 ticks/sec), and renderer-f
   Systems, run in order each tick:        RoomLayer              BuildMenu
     SpawnSystem                           ActorLayer (z-sorted)  HirePanel
     DecaySystem (health/patience)         SelectionHighlight     InspectPanel
-    DispatcherSystem                      GhostPreview (build)   Toasts
-    MovementSystem (follows paths)                               DailyReport
-    WayfindingSystem (wrong turns, lost
-      wander, auras, rescue, timeouts)
+    ThoughtsSystem (mood → thoughts)      GhostPreview (build)   Toasts
+    DispatcherSystem                                             DailyReport
+    WayfindingSystem (rescue, timeout,
+      wander-step setup — runs BEFORE
+      movement; wrong-turn rolls fire
+      INSIDE movement, per tile stepped)
+    MovementSystem (follows paths)
     TreatmentSystem
     EconomySystem
     ReputationSystem

@@ -1,5 +1,6 @@
 import { Graphics, type Renderer, type Texture } from 'pixi.js';
 import { ROLE_DEFS, ROLE_IDS, type RoleId } from '../sim/data/roles';
+import { PROP_STYLE, type PropId } from '../sim/data/rooms';
 import { TILE_H, TILE_W } from './iso';
 
 /**
@@ -15,9 +16,17 @@ export interface TileTextures {
   highlight: Texture;
   marker: Texture;
   entrance: Texture;
-  /** One 2-tile bed sliced into two per-tile textures (west half, east half). */
-  bedWest: Texture;
-  bedEast: Texture;
+  /** Per-tile prop slices, keyed `${PropId}:${'single'|'west'|'east'}` (§2.5 slicing). */
+  props: Map<string, Texture>;
+}
+
+/** Every prop texture is padded to the same canvas so placement math is uniform. */
+export const PROP_RISE_PAD = 24;
+
+export type PropSlice = 'single' | 'west' | 'east';
+
+export function propKey(id: PropId, slice: PropSlice): string {
+  return `${id}:${slice}`;
 }
 
 function diamond(g: Graphics, fill: number, alpha = 1): Graphics {
@@ -26,20 +35,34 @@ function diamond(g: Graphics, fill: number, alpha = 1): Graphics {
     .fill({ color: fill, alpha });
 }
 
-/** A box prism filling one tile — the per-tile slice of multi-tile furniture. */
-function bedSlice(westHalf: boolean): Graphics {
+/** A box prism filling one tile — the per-tile slice of (multi-tile) furniture. */
+function propSlice(id: PropId, slice: PropSlice): Graphics {
+  const { color, rise } = PROP_STYLE[id];
   const g = new Graphics();
-  const rise = 12;
-  const top = [TILE_W / 2, -rise, TILE_W, TILE_H / 2 - rise, TILE_W / 2, TILE_H - rise, 0, TILE_H / 2 - rise];
+  // Constant padding rect → identical texture bounds for every prop/slice.
+  g.rect(0, -PROP_RISE_PAD, TILE_W, TILE_H + PROP_RISE_PAD).fill({ color: 0xffffff, alpha: 0.001 });
+  const top = [
+    TILE_W / 2, -rise,
+    TILE_W, TILE_H / 2 - rise,
+    TILE_W / 2, TILE_H - rise,
+    0, TILE_H / 2 - rise,
+  ];
   // South-east face
-  g.poly([TILE_W / 2, TILE_H - rise, TILE_W, TILE_H / 2 - rise, TILE_W, TILE_H / 2, TILE_W / 2, TILE_H]).fill(0x5d7fa3);
+  g.poly([TILE_W / 2, TILE_H - rise, TILE_W, TILE_H / 2 - rise, TILE_W, TILE_H / 2, TILE_W / 2, TILE_H])
+    .fill(shade(color, 0.62));
   // South-west face
-  g.poly([0, TILE_H / 2 - rise, TILE_W / 2, TILE_H - rise, TILE_W / 2, TILE_H, 0, TILE_H / 2]).fill(0x6f94ba);
-  // Mattress top
-  g.poly(top).fill(westHalf ? 0xd7e3f0 : 0xbcd0e6);
-  if (westHalf) {
-    // Pillow on the west slice
+  g.poly([0, TILE_H / 2 - rise, TILE_W / 2, TILE_H - rise, TILE_W / 2, TILE_H, 0, TILE_H / 2])
+    .fill(shade(color, 0.78));
+  // Top face — west slices slightly lighter so strips read as one object.
+  g.poly(top).fill(slice === 'west' ? shade(color, 1.12) : color);
+  if ((id === 'bed' || id === 'traumaBed') && slice !== 'east') {
+    // Pillow on the head end
     g.ellipse(TILE_W / 2, TILE_H / 2 - rise - 2, 12, 6).fill(0xffffff);
+  }
+  if (id === 'chair') {
+    // Little backrest so seats read at a glance.
+    g.poly([0, TILE_H / 2 - rise, TILE_W / 2, TILE_H / 4 - rise, TILE_W / 2, TILE_H / 4 - rise - 8, 0, TILE_H / 2 - rise - 8])
+      .fill(shade(color, 0.9));
   }
   return g;
 }
@@ -52,14 +75,22 @@ export function generateTileTextures(renderer: Renderer): TileTextures {
   const marker = diamond(new Graphics(), 0x2a9d8f, 0.85).stroke({ color: 0x1d6f66, width: 2 });
   const entrance = diamond(new Graphics(), 0x8a6f4d).stroke({ color: 0x6b5439, width: 2 });
 
+  const props = new Map<string, Texture>();
+  for (const id of Object.keys(PROP_STYLE) as PropId[]) {
+    const slices: PropSlice[] =
+      PROP_STYLE[id].tiles > 1 ? ['single', 'west', 'east'] : ['single'];
+    for (const slice of slices) {
+      props.set(propKey(id, slice), renderer.generateTexture(propSlice(id, slice)));
+    }
+  }
+
   return {
     ground: [renderer.generateTexture(groundA), renderer.generateTexture(groundB)],
     plain: renderer.generateTexture(plain),
     highlight: renderer.generateTexture(highlight),
     marker: renderer.generateTexture(marker),
     entrance: renderer.generateTexture(entrance),
-    bedWest: renderer.generateTexture(bedSlice(true)),
-    bedEast: renderer.generateTexture(bedSlice(false)),
+    props,
   };
 }
 

@@ -15,10 +15,26 @@ export interface EventMap {
   /** A build/sell command failed sim-side validation (UI shows the reason). */
   buildRejected: { reason: string };
   patientSpawned: { patientId: number };
-  patientDied: { patientId: number; name: string; condition: string };
-  patientLeftAma: { patientId: number; name: string };
-  patientDischarged: { patientId: number; name: string; totalBilled: number };
-  patientComplication: { patientId: number; name: string };
+  /**
+   * Jumpable events carry a `{col,row}` snapshot at emit time (M3 ruling):
+   * clicking the toast pans to the live entity if it still exists, else to
+   * the snapshot — a death toast must outlive its patient.
+   */
+  patientDied: { patientId: number; name: string; condition: string; col: number; row: number };
+  patientLeftAma: { patientId: number; name: string; col: number; row: number };
+  patientDischarged: {
+    patientId: number;
+    name: string;
+    totalBilled: number;
+    col: number;
+    row: number;
+  };
+  patientComplication: { patientId: number; name: string; col: number; row: number };
+  /** Wayfinding (GDD §3): a patient took a wrong turn and is wandering. */
+  patientLost: { patientId: number; name: string; col: number; row: number };
+  patientRecovered: { patientId: number; name: string; col: number; row: number };
+  /** Thought-log feed (GDD §9): emitted at mood/lifecycle moments. */
+  patientThought: { patientId: number; name: string; text: string; col: number; row: number };
   feeBilled: { amount: number; label: string };
   staffHired: { staffId: number };
   staffFired: { staffId: number };
