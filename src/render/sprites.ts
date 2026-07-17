@@ -1,17 +1,28 @@
 import { Graphics, type Renderer, type Texture } from 'pixi.js';
-import { ROLE_DEFS, ROLE_IDS, type RoleId } from '../sim/data/roles';
 import { PROP_STYLE, type PropId } from '../sim/data/rooms';
-import { TILE_H, TILE_W } from './iso';
+import { PROP_RISE_PAD, shade, TILE_H, TILE_W } from './sprites/shared';
 
 /**
- * Runtime-generated placeholder textures (tech plan §2.6): this module is the
- * single texture source. When the art pass lands, these functions read a
- * sprite atlas instead — callers never change.
+ * Tile + prop textures (100% procedural, tech plan §2.6) AND the barrel that
+ * re-exports the character module + shared contract, so the renderer keeps a
+ * single `from './sprites'` import surface. When the art pass lands, these
+ * read a sprite atlas instead — callers never change.
+ *
+ * ART PASS (this milestone) owns: ground tiles, room floors, props/equipment,
+ * and (in renderer.ts) walls + scene compositing. INVARIANTS: strip length
+ * lives ONLY in `PROP_STYLE[id].tiles`; the `propKey` lookup contract is
+ * frozen; every prop texture keeps identical bounds via the PROP_RISE_PAD
+ * padding rect so placement math stays uniform.
  */
+
+// Re-exports so `./sprites` remains the one render-art import surface.
+export * from './sprites/shared';
+export * from './sprites/characters';
+
 export interface TileTextures {
   /** Two ground shades for a subtle checkerboard. */
   ground: [Texture, Texture];
-  /** White diamond for tinting: room floors, build ghosts. */
+  /** Near-white soft-shaded diamond for tinting room floors by `def.floorColor`. */
   plain: Texture;
   highlight: Texture;
   marker: Texture;
@@ -20,38 +31,113 @@ export interface TileTextures {
   props: Map<string, Texture>;
 }
 
-/** Every prop texture is padded to the same canvas so placement math is uniform. */
-export const PROP_RISE_PAD = 24;
-
 export type PropSlice = 'single' | 'west' | 'east';
 
 export function propKey(id: PropId, slice: PropSlice): string {
   return `${id}:${slice}`;
 }
 
+/** Tile diamond outline (center-top origin), shared by every ground/floor tile. */
+const DIAMOND: readonly number[] = [
+  TILE_W / 2, 0,
+  TILE_W, TILE_H / 2,
+  TILE_W / 2, TILE_H,
+  0, TILE_H / 2,
+];
+/** Upper / lower halves of the diamond — soft directional-light shading. */
+const DIAMOND_TOP: readonly number[] = [TILE_W / 2, 0, TILE_W, TILE_H / 2, 0, TILE_H / 2];
+const DIAMOND_BOTTOM: readonly number[] = [0, TILE_H / 2, TILE_W, TILE_H / 2, TILE_W / 2, TILE_H];
+
+/** Diamond scaled toward its center — used for inset seams / welcome-mat rings. */
+function scaledDiamond(k: number): number[] {
+  const cx = TILE_W / 2;
+  const cy = TILE_H / 2;
+  const out: number[] = [];
+  for (let i = 0; i < DIAMOND.length; i += 2) {
+    out.push(cx + (DIAMOND[i]! - cx) * k, cy + (DIAMOND[i + 1]! - cy) * k);
+  }
+  return out;
+}
+
 function diamond(g: Graphics, fill: number, alpha = 1): Graphics {
-  return g
-    .poly([TILE_W / 2, 0, TILE_W, TILE_H / 2, TILE_W / 2, TILE_H, 0, TILE_H / 2])
-    .fill({ color: fill, alpha });
+  return g.poly(DIAMOND as number[]).fill({ color: fill, alpha });
+}
+
+/**
+ * Soft-shaded ground tile: a gently lit upper half, a shadowed lower half, and
+ * a faint inset seam so the floor reads as *laid tiles* rather than a flat
+ * checkerboard — the "RCT warmth" backdrop. Kept low-contrast on purpose; the
+ * two parity shades still carry the checker, this just adds volume.
+ */
+function groundTile(base: number): Graphics {
+  const g = new Graphics();
+  g.poly(DIAMOND as number[]).fill(base);
+  g.poly(DIAMOND_TOP as number[]).fill({ color: shade(base, 1.05), alpha: 0.5 });
+  g.poly(DIAMOND_BOTTOM as number[]).fill({ color: shade(base, 0.9), alpha: 0.35 });
+  g.poly(scaledDiamond(0.8)).stroke({ color: shade(base, 0.86), width: 1, alpha: 0.3 });
+  g.poly(DIAMOND as number[]).stroke({ color: shade(base, 0.8), width: 1, alpha: 0.5 });
+  return g;
+}
+
+/**
+ * Room-floor base, tinted per-room by `def.floorColor` (SSOT). Near-white so
+ * the tint reads true, with a lit top / shadowed bottom gradient and an inner
+ * border ring — so a floor reads as an inviting *room*, not a colored patch.
+ * Shading is baked as grayscale and multiplies under the tint.
+ */
+function floorTile(): Graphics {
+  const g = new Graphics();
+  g.poly(DIAMOND as number[]).fill(0xe8e8e8);
+  g.poly(DIAMOND_TOP as number[]).fill({ color: 0xffffff, alpha: 0.7 });
+  g.poly(DIAMOND_BOTTOM as number[]).fill({ color: 0x000000, alpha: 0.1 });
+  g.poly(scaledDiamond(0.82)).stroke({ color: 0x000000, width: 1, alpha: 0.06 });
+  g.poly(DIAMOND as number[]).stroke({ color: 0x000000, width: 1, alpha: 0.14 });
+  return g;
+}
+
+/** Entrance mat — kept clearly readable: warm brown with a lighter welcome-mat center. */
+function entranceTile(): Graphics {
+  const base = 0x8a6f4d;
+  const g = new Graphics();
+  g.poly(DIAMOND as number[]).fill(base);
+  g.poly(scaledDiamond(0.72)).fill(shade(base, 1.14));
+  g.poly(scaledDiamond(0.72)).stroke({ color: shade(base, 0.78), width: 1 });
+  g.poly(DIAMOND as number[]).stroke({ color: 0x6b5439, width: 2 });
+  return g;
 }
 
 /**
  * Placeholder-art embellishments drawn on top of the generic prism. Typed
  * against PropId so a typo'd id is a compile error; Partial means any id
  * absent here renders as a plain prism by default — a brand-new prop needs
- * NO code in this file. This is placeholder paint only: the atlas lookup
- * contract (`propKey`, §2.6) is untouched, and strip length still lives ONLY
- * in `PROP_STYLE[id].tiles`.
+ * NO code in this file. Placeholder paint only: the atlas lookup contract
+ * (`propKey`, §2.6) is untouched, and strip length still lives ONLY in
+ * `PROP_STYLE[id].tiles`.
  */
-type PropDecor = 'pillow' | 'backrest';
+type PropDecor = 'pillow' | 'backrest' | 'monitor' | 'panel' | 'basin';
 const PROP_DECOR: Readonly<Partial<Record<PropId, PropDecor>>> = {
+  // Beds/tables patients lie on get a pillow at the head end.
   bed: 'pillow',
   traumaBed: 'pillow',
-  // Expansion 1: patients lie on the OR table, so it reads as a bed. Scanner
-  // gantries/bores and lab benches stay deliberately plain prisms — correct
-  // placeholder art until the §2.6 atlas pass.
   orTable: 'pillow',
   chair: 'backrest',
+  // Desks & carts read as workstations with a small monitor on top.
+  desk: 'monitor',
+  helpDesk: 'monitor',
+  vitalsCart: 'monitor',
+  ultrasoundCart: 'monitor',
+  anesthesiaCart: 'monitor',
+  // Big imaging machines get a recessed front control panel + status light.
+  xrayMachine: 'panel',
+  ctGantry: 'panel',
+  mriBore: 'panel',
+  gammaCamera: 'panel',
+  shieldScreen: 'panel',
+  // Wet-work stations read as a basin sunk into the top surface.
+  scrubSink: 'basin',
+  dialysisMachine: 'basin',
+  nebulizer: 'basin',
+  hotLabBench: 'basin',
 };
 
 /** A box prism filling one tile — the per-tile slice of (multi-tile) furniture. */
@@ -74,30 +160,56 @@ function propSlice(id: PropId, slice: PropSlice): Graphics {
     .fill(shade(color, 0.78));
   // Top face — west slices slightly lighter so strips read as one object.
   g.poly(top).fill(slice === 'west' ? shade(color, 1.12) : color);
+  // Soft highlight rim along the lit top edges — gives the prism a little pop.
+  g.poly([0, TILE_H / 2 - rise, TILE_W / 2, -rise, TILE_W, TILE_H / 2 - rise])
+    .stroke({ color: shade(color, 1.28), width: 1, alpha: 0.55 });
+
   const decor = PROP_DECOR[id];
-  if (decor === 'pillow' && slice !== 'east') {
+  const headEnd = slice !== 'east'; // single-ended decor lives on the west/single slice
+  if (decor === 'pillow' && headEnd) {
     // Pillow on the head end (west slice of a strip, or a single tile).
     g.ellipse(TILE_W / 2, TILE_H / 2 - rise - 2, 12, 6).fill(0xffffff);
   } else if (decor === 'backrest') {
     // Little backrest so seats read at a glance.
     g.poly([0, TILE_H / 2 - rise, TILE_W / 2, TILE_H / 4 - rise, TILE_W / 2, TILE_H / 4 - rise - 8, 0, TILE_H / 2 - rise - 8])
       .fill(shade(color, 0.9));
+  } else if (decor === 'monitor' && headEnd) {
+    // A small screen perched on the back of the top surface → a workstation.
+    const sy = -rise - 6;
+    g.rect(TILE_W / 2 - 3, sy + 3, 6, 5).fill(shade(color, 0.7)); // stand
+    g.rect(TILE_W / 2 - 9, sy - 2, 18, 8).fill(shade(color, 0.42)); // screen
+    g.rect(TILE_W / 2 - 7, sy, 14, 3).fill(shade(color, 1.25)); // screen glow
+  } else if (decor === 'basin') {
+    // A basin sunk into the top surface → sink / dialysis / nebulizer tub.
+    g.ellipse(TILE_W / 2, TILE_H / 2 - rise, 13, 6).fill(shade(color, 0.58));
+    g.ellipse(TILE_W / 2, TILE_H / 2 - rise - 1, 9, 4).fill(shade(color, 0.85));
+  } else if (decor === 'panel') {
+    // Recessed control panel with a status light on the SE (front) face.
+    // Face basis: base corner + u (along top toward SE) + v (downward).
+    const bx = TILE_W / 2;
+    const by = TILE_H - rise;
+    const ux = TILE_W / 2;
+    const uy = -rise;
+    const at = (a: number, b: number): [number, number] => [bx + ux * a, by + uy * a + rise * b];
+    g.poly([...at(0.28, 0.2), ...at(0.72, 0.2), ...at(0.72, 0.8), ...at(0.28, 0.8)])
+      .fill(shade(color, 0.5));
+    const [lx, ly] = at(0.6, 0.42);
+    g.circle(lx, ly, 1.6).fill(shade(color, 1.6));
   }
   return g;
 }
 
 export function generateTileTextures(renderer: Renderer): TileTextures {
-  const groundA = diamond(new Graphics(), 0xd8d3c8).stroke({ color: 0xc4bfb2, width: 1 });
-  const groundB = diamond(new Graphics(), 0xcfc9bd).stroke({ color: 0xc4bfb2, width: 1 });
-  const plain = diamond(new Graphics(), 0xffffff);
+  const groundA = groundTile(0xd8d3c8);
+  const groundB = groundTile(0xcfc9bd);
+  const plain = floorTile();
   const highlight = diamond(new Graphics(), 0xffe066, 0.55).stroke({ color: 0xe0a800, width: 2 });
   const marker = diamond(new Graphics(), 0x2a9d8f, 0.85).stroke({ color: 0x1d6f66, width: 2 });
-  const entrance = diamond(new Graphics(), 0x8a6f4d).stroke({ color: 0x6b5439, width: 2 });
+  const entrance = entranceTile();
 
   const props = new Map<string, Texture>();
   for (const id of Object.keys(PROP_STYLE) as PropId[]) {
-    const slices: PropSlice[] =
-      PROP_STYLE[id].tiles > 1 ? ['single', 'west', 'east'] : ['single'];
+    const slices: PropSlice[] = PROP_STYLE[id].tiles > 1 ? ['single', 'west', 'east'] : ['single'];
     for (const slice of slices) {
       props.set(propKey(id, slice), renderer.generateTexture(propSlice(id, slice)));
     }
@@ -111,138 +223,4 @@ export function generateTileTextures(renderer: Renderer): TileTextures {
     entrance: renderer.generateTexture(entrance),
     props,
   };
-}
-
-// --------------------------------------------------------------- characters
-//
-// "Placeholder-plus": still 100% procedural, but with role silhouettes, limbs,
-// a 4-frame walk cycle, and per-person skin/hair variety. The renderer looks
-// textures up through characterKey() — exactly the contract a sprite atlas
-// will satisfy later (§2.6), so the future art pass changes nothing here.
-
-export type CharacterKind = RoleId | 'patient';
-/** Frame 0 = idle; frames 1..4 = walk cycle. */
-export const CHARACTER_FRAMES = 5;
-export const PATIENT_VARIANTS = 8;
-export const STAFF_VARIANTS = 4;
-/** Feet anchor inside the padded texture (pad rect spans x −9..9, y −46..1). */
-export const FEET_ANCHOR = { x: 0.5, y: 46 / 47 };
-
-const SKIN_TONES = [0xf2c9a8, 0xd9a377, 0xb07b4f, 0x8a5a3a] as const;
-const HAIR_COLORS = [0x3b2f2f, 0x6e4f2f, 0xc7873a, 0x8f8f8f] as const;
-/**
- * Roles drawn with a scrub cap instead of hair. Typed against RoleId so a
- * typo'd id is a compile error; any role absent here gets the generic hair
- * treatment — new roles need no code change anywhere in this module (the
- * generator iterates ROLE_IDS and reads ROLE_DEFS[role].color, both SSOT).
- */
-const SCRUB_CAP_ROLES: ReadonlySet<RoleId> = new Set(['nurse', 'respTherapist', 'surgeon']);
-
-const GOWN_COLOR = 0xdfe8f5;
-const GOWN_TRIM = 0x9fb0c5;
-const PATIENT_PANTS = 0xb9c8de;
-const COAT_WHITE = 0xf4f4f0;
-const COAT_SHIRT = 0x51698a;
-
-interface WalkPhase {
-  /** Horizontal leg split (px). */
-  split: number;
-  /** Body bob (px, negative = up). */
-  bob: number;
-  /** Arm swing (px, applied ± to the two arms). */
-  arm: number;
-}
-
-const PHASES: readonly WalkPhase[] = [
-  { split: 1, bob: 0, arm: 0 }, // idle
-  { split: 4, bob: 0, arm: 2 },
-  { split: 1, bob: -1, arm: 0 },
-  { split: -4, bob: 0, arm: -2 },
-  { split: 1, bob: -1, arm: 0 },
-];
-
-function shade(color: number, factor: number): number {
-  const r = Math.min(255, Math.floor(((color >> 16) & 0xff) * factor));
-  const g = Math.min(255, Math.floor(((color >> 8) & 0xff) * factor));
-  const b = Math.min(255, Math.floor((color & 0xff) * factor));
-  return (r << 16) | (g << 8) | b;
-}
-
-function drawCharacter(kind: CharacterKind, skin: number, hair: number, frame: number): Graphics {
-  const g = new Graphics();
-  // Padding rect pins texture bounds to exactly (−9,−46)..(9,1) so the feet
-  // anchor is a constant fraction for every kind/frame.
-  g.rect(-9, -46, 18, 47).fill({ color: 0xffffff, alpha: 0.001 });
-
-  const { split, bob, arm } = PHASES[frame]!;
-  const isPatient = kind === 'patient';
-  const outfit = isPatient ? GOWN_COLOR : ROLE_DEFS[kind].color;
-  const pants = isPatient ? PATIENT_PANTS : shade(outfit, 0.55);
-  const sleeve = kind === 'doctor' ? COAT_WHITE : outfit;
-
-  // Contact shadow
-  g.ellipse(0, -2, 8, 3.5).fill({ color: 0x000000, alpha: 0.18 });
-  // Legs
-  g.roundRect(-5 - split, -12 + bob, 4, 12, 2).fill(pants);
-  g.roundRect(1 + split, -12 + bob, 4, 12, 2).fill(pants);
-  // Arms (swing opposite phases)
-  g.roundRect(-9, -28 + bob - arm, 3, 11, 2).fill(sleeve);
-  g.roundRect(6, -28 + bob + arm, 3, 11, 2).fill(sleeve);
-  // Torso
-  if (kind === 'doctor') {
-    // White coat over a shirt: coat body, center gap, collar V.
-    g.roundRect(-8, -30 + bob, 16, 20, 4)
-      .fill(COAT_WHITE)
-      .stroke({ color: 0xc9c9c2, width: 1 });
-    g.rect(-1, -28 + bob, 2, 18).fill(COAT_SHIRT);
-    g.poly([-4, -30 + bob, 4, -30 + bob, 0, -25 + bob]).fill(COAT_SHIRT);
-  } else if (isPatient) {
-    g.roundRect(-8, -30 + bob, 16, 20, 4)
-      .fill(GOWN_COLOR)
-      .stroke({ color: GOWN_TRIM, width: 1 });
-    g.rect(-8, -14 + bob, 16, 2).fill(shade(GOWN_COLOR, 0.85)); // gown hem
-  } else {
-    g.roundRect(-8, -30 + bob, 16, 20, 4)
-      .fill(outfit)
-      .stroke({ color: shade(outfit, 0.7), width: 1 });
-    g.rect(-3, -30 + bob, 6, 3).fill(shade(outfit, 0.8)); // neckline
-  }
-  // Head: hair/cap behind, face in front.
-  const headY = -36 + bob;
-  const scrubCap = !isPatient && SCRUB_CAP_ROLES.has(kind);
-  if (scrubCap) {
-    g.circle(0, headY - 2, 6.2).fill(shade(outfit, 0.9));
-  } else {
-    g.circle(0, headY - 1.5, 6.2).fill(hair);
-  }
-  g.ellipse(0, headY + 0.5, 5.4, 5.4).fill(skin);
-  return g;
-}
-
-export function characterKey(kind: CharacterKind, variant: number, frame: number): string {
-  return `${kind}:${variant}:${frame}`;
-}
-
-/** Deterministic per-entity look — id-hashed, never touching the sim RNG. */
-export function variantFor(kind: CharacterKind, entityId: number): number {
-  return entityId % (kind === 'patient' ? PATIENT_VARIANTS : STAFF_VARIANTS);
-}
-
-export function generateCharacterTextures(renderer: Renderer): Map<string, Texture> {
-  const textures = new Map<string, Texture>();
-  const kinds: CharacterKind[] = ['patient', ...ROLE_IDS];
-  for (const kind of kinds) {
-    const variants = kind === 'patient' ? PATIENT_VARIANTS : STAFF_VARIANTS;
-    for (let variant = 0; variant < variants; variant++) {
-      const skin = SKIN_TONES[variant % SKIN_TONES.length]!;
-      const hair = HAIR_COLORS[(variant * 3 + 1) % HAIR_COLORS.length]!;
-      for (let frame = 0; frame < CHARACTER_FRAMES; frame++) {
-        textures.set(
-          characterKey(kind, variant, frame),
-          renderer.generateTexture(drawCharacter(kind, skin, hair, frame)),
-        );
-      }
-    }
-  }
-  return textures;
 }
