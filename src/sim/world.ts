@@ -112,7 +112,8 @@ export class World implements PathGrid {
 
   constructor(
     readonly events: EventBus,
-    seed: number,
+    /** The boot seed — display/bookkeeping only once ticks have run (saves carry rng state). */
+    readonly seed: number,
   ) {
     this.rng = new SeededRng(seed);
     this.grid = Array.from({ length: this.cols }, () =>
@@ -130,6 +131,23 @@ export class World implements PathGrid {
 
   takeId(): number {
     return this.nextEntityId++;
+  }
+
+  /**
+   * SAVE-SCOPED (src/sim/save.ts only): snapshot the private fields a save
+   * must carry — one-shot hint keys and the id counter. Gameplay code uses
+   * `hintOnce()`/`takeId()`; this pair exists so serialization never needs to
+   * widen those fields' visibility.
+   */
+  exportPrivateState(): { hintedOnce: string[]; nextEntityId: number } {
+    return { hintedOnce: [...this.hintedOnce], nextEntityId: this.nextEntityId };
+  }
+
+  /** SAVE-SCOPED (src/sim/save.ts only): counterpart of exportPrivateState(). */
+  restorePrivateState(state: { hintedOnce: string[]; nextEntityId: number }): void {
+    this.hintedOnce.clear();
+    for (const key of state.hintedOnce) this.hintedOnce.add(key);
+    this.nextEntityId = state.nextEntityId;
   }
 
   private makeCandidate(role: RoleId): Candidate {

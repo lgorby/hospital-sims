@@ -19,6 +19,11 @@ export function ticksToGameMinutes(ticks: number): number {
   return ticks * GAME_MINUTES_PER_TICK;
 }
 
+/** 1-based day number of a tick — the ONE day derivation (UI slot metadata uses it too). */
+export function dayOfTick(tick: number): number {
+  return Math.floor(tick / TICKS_PER_DAY) + 1;
+}
+
 export class GameClock {
   /** Total sim ticks since new game. The sim's canonical time unit. */
   tick = 0;
@@ -29,7 +34,7 @@ export class GameClock {
 
   /** 1-based day number. */
   get day(): number {
-    return Math.floor(this.tick / TICKS_PER_DAY) + 1;
+    return dayOfTick(this.tick);
   }
 
   /** Game-minutes elapsed within the current day [0, 1440). */

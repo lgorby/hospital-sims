@@ -49,6 +49,11 @@ Design rules:
      survives browser wipes. Saves are ~tens of KB; gzip via
      `CompressionStream` if slots get tight.
    - The `?seed=` URL stays as the lightweight "share a fresh run" channel.
+6. **Adding a World-level mutable field is a manual checklist** — the compiler
+   only guards ENTITY fields (the explicit per-entity serializers must return
+   complete objects); nothing forces a new `World` scalar/collection into the
+   snapshot. The checklist: add it to `SaveData`, write it in `serializeWorld`,
+   validate and restore it in `loadWorld`, and **bump `saveVersion`**.
 
 ## Phase 2 — Async multiplayer without a backend (cheap, high fun-per-effort)
 

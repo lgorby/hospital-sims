@@ -505,6 +505,154 @@ body {
   filter: brightness(1.1);
 }
 
+/* -------------------------------------------- Phase 1: save/load UI */
+
+.title-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.title-buttons .modal-continue {
+  margin-top: 0;
+}
+
+.title-alt {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  background: transparent;
+  color: #e8e6e0;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.title-alt:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.hud-button {
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  background: transparent;
+  color: #e8e6e0;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.hud-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.saveload-card {
+  width: 440px;
+}
+
+.save-slot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.save-slot .slot-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.save-slot .slot-name {
+  font-weight: 600;
+}
+
+.save-slot .slot-meta {
+  color: #9fb0c5;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.save-slot .slot-meta.empty {
+  color: #7f8a99;
+  font-style: italic;
+}
+
+.slot-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.slot-actions button {
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  background: transparent;
+  color: #e8e6e0;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.slot-actions button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.slot-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.slot-actions button.danger {
+  border-color: #b0413e;
+  color: #e08585;
+}
+
+.slot-actions button.danger.confirm {
+  background: #b0413e;
+  color: #fff;
+}
+
+.saveload-status {
+  margin-top: 8px;
+  min-height: 1.3em;
+  color: #ffe066;
+  font-size: 12px;
+}
+
+.saveload-import-row {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+.saveload-import-row button {
+  flex: 1;
+  padding: 5px 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.35);
+  border-radius: 4px;
+  background: transparent;
+  color: #e8e6e0;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.saveload-import-row button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.saveload-drophint {
+  margin-top: 6px;
+  color: #7f8a99;
+  font-size: 11px;
+  text-align: center;
+}
+
+.saveload-card.dragover {
+  outline: 2px dashed #2a9d8f;
+  outline-offset: -6px;
+}
+
 #checklist {
   position: fixed;
   top: 48px;

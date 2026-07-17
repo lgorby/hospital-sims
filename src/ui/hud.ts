@@ -31,7 +31,6 @@ export class Hud {
     private loop: GameLoop,
     private renderer: WorldRenderer,
     private events: EventBus,
-    private seed: number,
   ) {}
 
   mount(hudRoot: HTMLElement, readoutRoot: HTMLElement): void {
@@ -40,8 +39,9 @@ export class Hud {
     this.repEl = Hud.chip(hudRoot, 'hud-rep');
     this.tickEl = Hud.chip(hudRoot, 'hud-tick');
     // The seed is part of the new-game contract (M4): display it so a run can
-    // be named, shared, and replayed via ?seed=.
-    Hud.chip(hudRoot, 'hud-seed').textContent = `Seed ${this.seed}`;
+    // be named, shared, and replayed via ?seed=. Read from the World (the
+    // authoritative field) — a loaded save carries its original seed.
+    Hud.chip(hudRoot, 'hud-seed').textContent = `Seed ${this.world.seed}`;
 
     const speedGroup = document.createElement('div');
     speedGroup.className = 'speed-group';
