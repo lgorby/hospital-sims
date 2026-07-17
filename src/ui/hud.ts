@@ -1,8 +1,8 @@
 import type { EventBus } from '../events';
 import type { GameLoop, Speed } from '../loop';
 import { CONDITION_DEFS } from '../sim/data/conditions';
-import { isTextEditable } from './dom';
-import { money } from './format';
+import { isModalOpen, isTextEditable } from './dom';
+import { money, patientStageLabel } from './format';
 import type { WorldRenderer } from '../render/renderer';
 import type { World } from '../sim/world';
 
@@ -14,16 +14,31 @@ const SPEEDS: { value: Speed; label: string }[] = [
 ];
 
 /**
+ * Write-if-changed text cell: update() runs every frame, and unconditional
+ * textContent writes measured as costly as the whole Pixi actor sync
+ * (2026-07-17 QA profile) — the browser doesn't dedupe them for us.
+ */
+class CachedText {
+  private last: string | null = null;
+  constructor(private readonly el: HTMLElement) {}
+  set(text: string): void {
+    if (text === this.last) return;
+    this.last = text;
+    this.el.textContent = text;
+  }
+}
+
+/**
  * DOM overlay HUD — a pure projection of World state (tech plan §3.1 rule 3):
  * continuous values (clock, cash, tick) are polled each frame; speed buttons
  * react to the speedChanged event.
  */
 export class Hud {
-  private clockEl!: HTMLElement;
-  private cashEl!: HTMLElement;
-  private repEl!: HTMLElement;
-  private tickEl!: HTMLElement;
-  private readoutEl!: HTMLElement;
+  private clockEl!: CachedText;
+  private cashEl!: CachedText;
+  private repEl!: CachedText;
+  private tickEl!: CachedText;
+  private readoutEl!: CachedText;
   private speedButtons = new Map<Speed, HTMLButtonElement>();
 
   constructor(
@@ -34,10 +49,10 @@ export class Hud {
   ) {}
 
   mount(hudRoot: HTMLElement, readoutRoot: HTMLElement): void {
-    this.clockEl = Hud.chip(hudRoot, 'hud-clock');
-    this.cashEl = Hud.chip(hudRoot, 'hud-cash');
-    this.repEl = Hud.chip(hudRoot, 'hud-rep');
-    this.tickEl = Hud.chip(hudRoot, 'hud-tick');
+    this.clockEl = new CachedText(Hud.chip(hudRoot, 'hud-clock'));
+    this.cashEl = new CachedText(Hud.chip(hudRoot, 'hud-cash'));
+    this.repEl = new CachedText(Hud.chip(hudRoot, 'hud-rep'));
+    this.tickEl = new CachedText(Hud.chip(hudRoot, 'hud-tick'));
     // The seed is part of the new-game contract (M4): display it so a run can
     // be named, shared, and replayed via ?seed=. Read from the World (the
     // authoritative field) — a loaded save carries its original seed.
@@ -60,7 +75,7 @@ export class Hud {
     }
     hudRoot.appendChild(speedGroup);
 
-    this.readoutEl = readoutRoot;
+    this.readoutEl = new CachedText(readoutRoot);
     this.events.on('speedChanged', ({ speed }) => this.markActiveSpeed(speed));
     this.markActiveSpeed(this.loop.speed);
     this.bindShortcuts();
@@ -76,7 +91,7 @@ export class Hud {
       if (isTextEditable(e.target)) return;
       // A visible modal owns the clock (M4 review #3): shortcuts must not
       // unpause the sim behind the daily report / game-over overlay.
-      if (document.querySelector('.modal-overlay:not(.hidden)')) return;
+      if (isModalOpen()) return;
       if (e.key === ' ') {
         e.preventDefault(); // Space must not "click" the last-focused button
         this.loop.setSpeed(this.loop.speed === 0 ? lastRunningSpeed : 0);
@@ -104,12 +119,12 @@ export class Hud {
 
   /** Polled once per frame by the loop's render callback. */
   update(): void {
-    this.clockEl.textContent = this.world.clock.display;
+    this.clockEl.set(this.world.clock.display);
     // money() handles debt correctly ("−$20,080", not "$-20,080") — negative
     // cash is a first-class state now that bankruptcy exists (M4 review #9).
-    this.cashEl.textContent = money(this.world.cash);
-    this.repEl.textContent = `Rep ${Math.round(this.world.reputation)}`;
-    this.tickEl.textContent = `tick ${this.world.clock.tick}`;
+    this.cashEl.set(money(this.world.cash));
+    this.repEl.set(`Rep ${Math.round(this.world.reputation)}`);
+    this.tickEl.set(`tick ${this.world.clock.tick}`);
 
     const parts: string[] = [];
     const hovered = this.renderer.hoveredTile;
@@ -117,11 +132,17 @@ export class Hud {
     const selectedId = this.renderer.selectedPatientId;
     const selected = selectedId === null ? undefined : this.world.patients.get(selectedId);
     if (selected) {
+      // Same raw-identifier leak as the inspect panel (QA nit) — one label map.
+      const phase =
+        selected.stage.kind === 'reserved'
+          ? this.world.reservations.get(selected.stage.reservationId)?.phase
+          : undefined;
       parts.push(
         `${selected.name.full}, ${selected.age} — ${CONDITION_DEFS[selected.condition].label}` +
-          ` · ${selected.stage.kind} · ❤${Math.ceil(selected.health)} ☺${Math.ceil(selected.patience)}`,
+          ` · ${patientStageLabel(selected.stage, phase)}` +
+          ` · ❤${Math.ceil(selected.health)} ☺${Math.ceil(selected.patience)}`,
       );
     }
-    this.readoutEl.textContent = parts.join('   ');
+    this.readoutEl.set(parts.join('   '));
   }
 }

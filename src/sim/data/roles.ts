@@ -15,6 +15,9 @@ export const ROLE_DEFS = {
     color: 0x52b788,
     standingPost: false,
   },
+  // Expansion 1 (GDD §12): the cheap imaging on-ramp and the OR's dual-staff lead.
+  sonographer: { label: 'Sonographer', salaryPerDay: 180, color: 0x76c7e0, standingPost: false },
+  surgeon: { label: 'Surgeon', salaryPerDay: 500, color: 0x2d6a4f, standingPost: false },
   greeter: { label: 'Volunteer Greeter', salaryPerDay: 50, color: 0xe9c46a, standingPost: true },
 } as const;
 

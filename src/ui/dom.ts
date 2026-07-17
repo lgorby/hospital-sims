@@ -7,3 +7,8 @@ export function isTextEditable(target: EventTarget | null): boolean {
     (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
   );
 }
+
+/** A visible modal owns the keyboard (M4 review #3) — the one shared check. */
+export function isModalOpen(): boolean {
+  return document.querySelector('.modal-overlay:not(.hidden)') !== null;
+}

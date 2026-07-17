@@ -87,6 +87,121 @@ export const CONDITION_DEFS = {
       },
     ],
   },
+  // ---- Expansion 1 (GDD §12): referral-heavy roster — five of eight at
+  // acuity ≤ 3 ride the §7 case-mix shift, so these paths matter as rep grows.
+  kidneyStones: {
+    label: 'Kidney Stones',
+    acuityMin: 3,
+    acuityMax: 3,
+    steps: [
+      { label: 'CT scan', room: 'ct', roles: ['radTech'], durationGameMinutes: 25, fee: 350 },
+      { label: 'Consult', room: 'exam', roles: ['doctor'], durationGameMinutes: 30, fee: 300 },
+    ],
+  },
+  backInjury: {
+    label: 'Back Injury',
+    acuityMin: 4,
+    acuityMax: 4,
+    steps: [
+      { label: 'MRI scan', room: 'mri', roles: ['radTech'], durationGameMinutes: 40, fee: 500 },
+      { label: 'Consult', room: 'exam', roles: ['doctor'], durationGameMinutes: 30, fee: 250 },
+    ],
+  },
+  thyroid: {
+    label: 'Thyroid Disorder',
+    acuityMin: 4,
+    acuityMax: 5,
+    steps: [
+      {
+        label: 'Nuclear scan',
+        room: 'nucMed',
+        roles: ['radTech'],
+        durationGameMinutes: 45,
+        fee: 450,
+      },
+      { label: 'Consult', room: 'exam', roles: ['doctor'], durationGameMinutes: 25, fee: 250 },
+    ],
+  },
+  kidneyFailure: {
+    label: 'Kidney Failure',
+    acuityMin: 2,
+    acuityMax: 3,
+    steps: [
+      { label: 'Dialysis', room: 'dialysis', roles: ['nurse'], durationGameMinutes: 120, fee: 700 },
+    ],
+  },
+  gallstones: {
+    label: 'Gallstones',
+    acuityMin: 3,
+    acuityMax: 3,
+    steps: [
+      {
+        label: 'Ultrasound',
+        room: 'ultrasound',
+        roles: ['sonographer'],
+        durationGameMinutes: 25,
+        fee: 250,
+      },
+      {
+        label: 'Surgery',
+        room: 'surgery',
+        roles: ['surgeon', 'nurse'],
+        durationGameMinutes: 120,
+        fee: 1_500,
+      },
+    ],
+  },
+  headInjury: {
+    label: 'Head Injury',
+    acuityMin: 2,
+    acuityMax: 2,
+    steps: [
+      { label: 'CT scan', room: 'ct', roles: ['radTech'], durationGameMinutes: 25, fee: 350 },
+      {
+        label: 'ER treatment',
+        room: 'er',
+        roles: ['doctor', 'nurse'],
+        durationGameMinutes: 75,
+        fee: 1_000,
+      },
+    ],
+  },
+  appendicitis: {
+    label: 'Appendicitis',
+    acuityMin: 2,
+    acuityMax: 2,
+    steps: [
+      {
+        label: 'Ultrasound',
+        room: 'ultrasound',
+        roles: ['sonographer'],
+        durationGameMinutes: 25,
+        fee: 250,
+      },
+      {
+        label: 'Surgery',
+        room: 'surgery',
+        roles: ['surgeon', 'nurse'],
+        durationGameMinutes: 100,
+        fee: 1_800,
+      },
+    ],
+  },
+  stroke: {
+    label: 'Stroke',
+    acuityMin: 1,
+    acuityMax: 1,
+    steps: [
+      { label: 'CT scan', room: 'ct', roles: ['radTech'], durationGameMinutes: 20, fee: 350 },
+      {
+        label: 'ER treatment',
+        room: 'er',
+        roles: ['doctor', 'nurse'],
+        durationGameMinutes: 120,
+        fee: 1_600,
+      },
+    ],
+  },
 } as const satisfies Record<string, ConditionDef>;
 
 export type ConditionId = keyof typeof CONDITION_DEFS;

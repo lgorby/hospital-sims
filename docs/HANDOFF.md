@@ -1,7 +1,7 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-17 (after the Phase-1 save/load commit)
-**State: M0–M4 + audit + Phase-1 save/load complete. Next: deploy (Vercel) + art pass + V1 DoD checks; Phase 2 (seed challenges) is unblocked.**
+**Last updated:** 2026-07-17 (after the Expansion 1 commit)
+**State: M0–M4 + audit + save/load + V1 DoD checks (SSOT/perf/QA, all passed) + Expansion 1 (GDD §12: 6 rooms, 2 roles, 8 conditions, category dropdowns) complete. Next: deploy (Vercel) + art pass; Phase 2 (seed challenges) unblocked; balance-watch the expansion roster.**
 
 ## What this project is
 
@@ -26,6 +26,7 @@ Both were hardened by independent adversarial reviews before any code was writte
 | `12e6aef` | M4 feel & finish: daily report modal + per-day tally (`src/sim/dailyStats.ts`), day-close wait bonus, bankruptcy lose-state + game-over screen, title screen + `?seed=` new-game flow, first-run checklist, keyboard shortcuts (Space/1/2/3), hover cursors, headless balance harness + balance pass (arrivals 3.0→1.5/h, wait-bonus threshold 120→240m), `debugSetCash` + fixes from the M4 adversarial review (2 major, 3 minor, 4 nit) |
 | *(audit)* | Full-codebase audit (owner-requested, 14 findings fixed): triage lost-timeout strand bug (MAJOR), stage-transition guard table (`setPatientStage` + `stageViolations`), EventBus handler isolation + rAF-chain protection, Pixi-init failure screen, GDD §5 waiting-room-quality patience decay implemented, shared `ui/dom.ts`·`ui/modal.ts`·renderer `pickAt`, `BALANCE.stats` scale SSOT, debug-command payload guards, entrance-overflow standing spots, tech-plan drift corrections + `docs/PERSISTENCE_PLAN.md` |
 | *(save/load)* | Persistence Phase 1 (plan §1): `SeededRng.getState/setState`, explicit per-entity serializers + grid RLE in `src/sim/save.ts` (`serializeWorld`/`saveToString`/`loadWorld`), border validation of shape AND referential integrity, localStorage slots (3 manual + midnight autosave) + file export/import (`src/ui/saveStore.ts`, `src/ui/saveLoad.ts`), `?load=<slot>` boot path, title Continue/Load/Import + fixes from the save/load adversarial review (2 major, 6 minor, 2 nit) |
+| *(expansion 1)* | V1 DoD sweep (SSOT audit clean of majors; perf PASS 60fps @110 patients; hostile QA playthrough: zero game errors) + GDD §12 Expansion 1: ultrasound/CT/MRI/nucMed/dialysis/surgery, sonographer+surgeon, 8 conditions (imaging→consult chains, imaging→OR dual-staff, dialysis, CT→ER), `SAVE_VERSION` 2 with v1 loadable (candidate-pool top-up migration), §9 bottom-bar category dropdowns (mutually exclusive), aura-overlay render caching, staff-age fix, checklist load-seeding + fixes from two parallel adversarial reviews (1 major, 5 minor, ~10 nit) |
 
 **V1 is playable end-to-end:** `npm run dev` → localhost:5173 shows the title screen; New Game navigates to `?seed=<random>` (seed shown in the HUD — a bare `?seed=1337` boots deterministically, which the `/run-hospital-simms` driver skill relies on). All 6 conditions arrive on a reputation-shifted weighted mix; wayfinding/atriums/auras as before. New in M4: a pausing daily-report modal at midnight (counters, money, avg door-to-first-treatment wait, day-close rep bonus ★), bankruptcy lose-state (below −$10k a full day → foreclosure screen → New Game), guided first-run checklist, Space/1/2/3 speed shortcuts (suppressed while a modal is open), Esc peels build-mode→selection, hover cursors. Backtick debug panel gains "Set cash to double debt limit" (drives the game-over path). 130 Vitest tests, lint and build green.
 
@@ -71,6 +72,11 @@ Both were hardened by independent adversarial reviews before any code was writte
 - **The save payload string IS the contract:** slots store exactly `saveToString` output (no envelope); UI metadata (savedAt/day/cash/seed) lives in a separate meta key. Byte-identity of save→load→save is pinned by test and depends on serializer key/insertion order — don't reorder.
 - **Adding a World-level mutable field requires a deliberate save decision** (plan rule 6): `SaveData` + `serializeWorld` + validate/restore in `loadWorld` + `SAVE_VERSION` bump. Entity fields are compile-enforced by the `Saved*` readers; World-level fields are NOT — the checklist is the guard.
 - **Day derivation lives only in `clock.ts`** (`dayOfTick`) — the UI slot metadata uses it; never re-derive from `TICKS_PER_DAY`.
+- **`isLoadableVersion` is the ONE version-acceptance policy** (Expansion 1): accepts 1..`SAVE_VERSION`; loadWorld's gate and the UI import pre-check both call it. The v1→v2 migration is a no-op EXCEPT `World.topUpCandidates()` (restore-time pool refill so predated roles are hireable) — a strict no-op on complete pools, proven by the untouched byte-identity test. Runs AFTER `restorePrivateState` (minted ids must come from the restored counter).
+- **`auraCoversTile` (formulas.ts) is the one aura-membership formula** — `refreshAuras` fills its grid with it, the render ghost/hover preview asks it directly. **The render overlay is cache-keyed on `World.auraRevision`** (+ ghost rect / hovered tile only while placing an atrium) — a new overlay input must join the key. `auraRevision` is deliberately NOT saved (derived, resets on load).
+- **Bottom-bar panels are mutually exclusive dropdowns** (§9 owner ruling): the `BottomBarDropdowns` coordinator owns ALL open/close state; panels register and never know each other. Its Escape listener is capture-phase and consumes the event ONLY when it closed a panel — that's what keeps M4's "Esc peels one layer" true; don't add independent Esc listeners.
+- **Build-menu categories derive from `CATEGORY_LABELS`** (compile-complete `Record<RoomCategory, string>`, insertion order = display order) — a new category cannot be labeled yet invisible. `PROP_STYLE[*].tiles ≤ 2` is test-enforced (renderer strips slice single/west/east only).
+- **The harness's black-envelope assertion measures the OPERATING envelope** (Expansion 1 ruling): the reference build's expansion wing is bankrolled in the fixture; capital costs are deliberately outside the assertion (see `test/harness.test.ts`). Every §12 condition must discharge ≥1 patient in the 5-day run — don't drop those per-condition asserts.
 
 ## Working agreements (user-established)
 
@@ -85,7 +91,7 @@ Both were hardened by independent adversarial reviews before any code was writte
 - **Deploy** (Vercel, stretch).
 - **Art pass** (tech plan §2.6 contract — `characterKey()` and the prop-slice lookups are atlas-ready).
 - **V1 DoD still unchecked:** 60fps with 100 patients + 20 staff on a mid-range laptop (profile it); a manual full-session playthrough for console errors; the §3.1 SSOT grep audit.
-- **Balance watch:** the M4 pass tuned arrivals to 1.5/h and the wait-bonus threshold to 240m against the harness's 6-room reference build (see `balance.ts` comments). Rep now oscillates gently 350–500 for that build — revisit after real playtesting, via the harness.
+- **Balance watch:** the M4 pass tuned arrivals to 1.5/h and the wait-bonus threshold to 240m against the harness's then-6-room reference build (see `balance.ts` comments); the harness build now includes an Expansion-1 wing (12 rooms, capital bankrolled — operating envelope only). Expansion roster numbers are initial values: watch stroke (acuity 1, 20m CT → 120m ER) death rates at low rep, and OR contention (gallstones+appendicitis share it) — via the harness.
 
 ## Gotchas
 

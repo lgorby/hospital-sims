@@ -33,6 +33,12 @@ export class Checklist {
   ) {}
 
   mount(parent: HTMLElement): void {
+    // A loaded world arrives with progress: seed from state so a ?load= boot
+    // never re-shows a completed tutorial. If there is nothing left to teach,
+    // the panel never mounts at all.
+    this.seedFromWorld();
+    if ([...this.items.values()].every((i) => i.done)) return;
+
     this.panel = document.createElement('div');
     this.panel.id = 'checklist';
     this.panel.setAttribute('data-ui', '');
@@ -55,6 +61,22 @@ export class Checklist {
     });
     // First treatment fee = first successfully treated step (triage is free).
     this.events.on('feeBilled', () => this.complete('treat'));
+  }
+
+  /** Mirror of the live-event conditions, evaluated against current World state. */
+  private seedFromWorld(): void {
+    const roles = new Set([...this.world.staff.values()].map((s) => s.role));
+    const seeded: Record<string, boolean> = {
+      triage: this.world.roomsOfType('triage').length > 0,
+      exam: this.world.roomsOfType('exam').length > 0,
+      nurse: roles.has('nurse'),
+      doctor: roles.has('doctor'),
+      // Same signal as the live feeBilled path: any billed treatment counts.
+      treat: this.world.lifetimeTreated > 0,
+    };
+    for (const [key, done] of Object.entries(seeded)) {
+      if (done) this.items.get(key)!.done = true;
+    }
   }
 
   private complete(key: string): void {

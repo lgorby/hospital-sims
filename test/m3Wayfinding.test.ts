@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CommandQueue } from '../src/commands';
 import { EventBus } from '../src/events';
-import { gameMinutesToTicks } from '../src/sim/clock';
+import { gameMinutesToTicks, TICKS_PER_DAY } from '../src/sim/clock';
 import { BALANCE } from '../src/sim/data/balance';
 import { ROLE_DEFS } from '../src/sim/data/roles';
 import type { Patient } from '../src/sim/entities/patient';
@@ -399,7 +399,7 @@ describe('determinism (fixed-seed replay)', () => {
       t.world.addStaffMember('nurse', 3, 150);
       t.world.addStaffMember('doctor', 3, 300);
       t.world.addStaffMember('greeter', 2, 50);
-      for (let i = 0; i < 4800; i++) t.world.tick();
+      for (let i = 0; i < TICKS_PER_DAY; i++) t.world.tick(); // one full day (SSOT audit #7)
       log.push(
         `final|${JSON.stringify({
           cash: t.world.cash,

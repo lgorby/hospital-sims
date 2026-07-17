@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { CommandQueue } from '../src/commands';
 import { EventBus, type EventName } from '../src/events';
 import { TICKS_PER_DAY } from '../src/sim/clock';
+import { BALANCE } from '../src/sim/data/balance';
+import { ROLE_IDS } from '../src/sim/data/roles';
 import { setupNewGame } from '../src/sim/newGame';
 import {
   SAVE_VERSION,
@@ -305,9 +307,67 @@ describe('load border (audit #8: garbage dies here)', () => {
     expect(result.reason.toLowerCase()).toContain('version');
   });
 
-  it('refuses an unrecognized (older/nonsense) version', () => {
+  it('refuses an unrecognized (below-v1/nonsense) version', () => {
     const zero = { ...parsedSmallSave(), saveVersion: 0 };
     expect(loadOf(zero).ok).toBe(false);
+  });
+
+  it('loads a version-1 save (v1→v2 ruling: Expansion 1 is purely additive content)', () => {
+    // A v1 payload IS a v2 payload minus the new enum values: every v1
+    // room/role/condition/prop id still exists in the v2 tables, so a
+    // version-1-stamped save must validate against the current tables as-is.
+    const v1 = { ...parsedSmallSave(), saveVersion: 1 };
+    const result = loadOf(v1);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // A re-save stamps the CURRENT version — migration happens on load, once.
+    const resaved = JSON.parse(saveToString(result.world)) as SaveData;
+    expect(resaved.saveVersion).toBe(SAVE_VERSION);
+  });
+
+  it('a GENUINE v1 pool (no Expansion-1 candidates) is topped up on load (review MAJOR)', () => {
+    // The earlier v1 fixture was a current-code save restamped v1 — its pool
+    // already held the v2 roles. A REAL v1 save has only the six v1 roles;
+    // without a restore-time top-up no code path ever mints a sonographer or
+    // surgeon candidate, leaving the dispatcher hinting for an unhirable role.
+    const save = parsedSmallSave();
+    save.saveVersion = 1;
+    save.candidates = save.candidates.filter(
+      (c) => c.role !== 'sonographer' && c.role !== 'surgeon',
+    );
+    // Premise: the fixture genuinely lacks the new roles entirely.
+    expect(save.candidates.length).toBe(
+      (ROLE_IDS.length - 2) * BALANCE.hiring.candidatesPerRole,
+    );
+    const result = loadOf(save);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    for (const role of ROLE_IDS) {
+      const count = result.world.candidates.filter((c) => c.role === role).length;
+      expect(count, `${role} candidates after v1 migration`).toBe(
+        BALANCE.hiring.candidatesPerRole,
+      );
+    }
+    // Minted candidates got fresh unique ids above the restored counter.
+    const ids = result.world.candidates.map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(Math.max(...ids)).toBeGreaterThanOrEqual(save.nextEntityId);
+
+    // Control: an UNMODIFIED v2 save's pool is untouched by the top-up —
+    // byte-identical candidates, no rng consumed on their behalf.
+    const v2 = loadWorld(new EventBus(), smallSave());
+    expect(v2.ok).toBe(true);
+    if (!v2.ok) return;
+    expect(JSON.stringify(serializeWorld(v2.world).candidates)).toBe(
+      JSON.stringify(parsedSmallSave().candidates),
+    );
+  });
+
+  it('refuses version 3 (one past SAVE_VERSION — the policy is 1..2, not >=1)', () => {
+    const v3 = { ...parsedSmallSave(), saveVersion: 3 };
+    const result = loadOf(v3);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason.toLowerCase()).toContain('version');
   });
 
   it('refuses a finished-game save (gameOver) with a readable reason', () => {

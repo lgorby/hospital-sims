@@ -1,4 +1,5 @@
 import type { EventBus } from '../events';
+import type { BottomBarDropdowns } from './bottomBar';
 
 /** Capped scrollback (M3 ruling): the feed keeps the most recent 100 thoughts. */
 const MAX_ENTRIES = 100;
@@ -6,7 +7,8 @@ const MAX_ENTRIES = 100;
 /**
  * The thought log (GDD §9) — the RCT guest-thoughts analog. A pure projection
  * of `patientThought` events; entries are clickable jumps to where the
- * thought happened. Toggled by a 💭 button.
+ * thought happened. Toggled by a 💭 button, coordinated by BottomBarDropdowns
+ * (§9 mutual-exclusion ruling).
  */
 export class ThoughtLog {
   private panel!: HTMLElement;
@@ -15,6 +17,7 @@ export class ThoughtLog {
   constructor(
     private events: EventBus,
     private onJump: (col: number, row: number) => void,
+    private bottomBar: BottomBarDropdowns,
   ) {}
 
   mount(parent: HTMLElement, toggleHost: HTMLElement): void {
@@ -32,11 +35,8 @@ export class ThoughtLog {
     const toggle = document.createElement('button');
     toggle.textContent = '💭 Thoughts';
     toggle.setAttribute('data-ui', '');
-    toggle.addEventListener('click', () => {
-      this.panel.classList.toggle('hidden');
-      toggle.blur();
-    });
     toggleHost.appendChild(toggle);
+    this.bottomBar.register(toggle, this.panel);
 
     this.events.on('patientThought', ({ name, text, col, row }) => {
       const entry = document.createElement('div');

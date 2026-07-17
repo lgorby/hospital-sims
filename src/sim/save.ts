@@ -17,7 +17,26 @@ import { World, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
+
+/**
+ * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
+ * import pre-check both call this, so they can never disagree about which save
+ * files are loadable. Widen here (not at call sites) when a migration lands.
+ *
+ * v1 → v2 migration ruling (Expansion 1, PERSISTENCE_PLAN rule 6): v2 added
+ * rooms/roles/conditions/props — new enum VALUES in the tables, no field
+ * changed shape or meaning. Every v1 id still exists in the v2 tables, so a
+ * v1 payload VALIDATES against the current tables unchanged (forward-
+ * compatible by construction). ONE restore-time transform is required all the
+ * same: the hiring pool is minted at construction and replenished only
+ * like-for-like, so restoreInto tops up candidates for roles the save
+ * predates (sonographer/surgeon) — a no-op for complete (v2) pools. A
+ * re-save stamps v2. Anything below 1 or above SAVE_VERSION is refused.
+ */
+export function isLoadableVersion(version: number): boolean {
+  return version >= 1 && version <= SAVE_VERSION;
+}
 
 // --------------------------------------------------------------- saved shapes
 
@@ -898,6 +917,12 @@ function restoreInto(world: World, data: RestorePayload): void {
   for (const reservation of data.reservations) world.reservations.set(reservation.id, reservation);
   for (const [roomId, ids] of data.checkInQueues) world.checkInQueues.set(roomId, ids);
   world.restorePrivateState({ hintedOnce: data.hintedOnce, nextEntityId: data.nextEntityId });
+  // Cross-version pool repair (v1→v2 review MAJOR): a save minted before a
+  // role existed can never offer its candidates otherwise. Complete pools
+  // (every same-version save) make this a strict no-op — zero rng draws, so
+  // byte-identity of save→load→save holds. Must follow restorePrivateState:
+  // new candidate ids come from the restored counter.
+  world.topUpCandidates();
 }
 
 /**
@@ -917,7 +942,9 @@ export function loadWorld(events: EventBus, raw: string): LoadResult {
         reason: `Save version ${version} is newer than this game understands (version ${SAVE_VERSION}) — update the game to load it`,
       };
     }
-    if (version !== SAVE_VERSION) {
+    // The accept/refuse decision is isLoadableVersion's alone (SSOT): v1 loads
+    // via the additive-content ruling documented on that function.
+    if (!isLoadableVersion(version)) {
       return { ok: false, reason: `Unrecognized save version ${version}` };
     }
     // Validate EVERYTHING before a World exists — a failure below never

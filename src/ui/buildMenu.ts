@@ -1,25 +1,46 @@
 import type { CommandQueue } from '../commands';
 import type { EventBus } from '../events';
-import { ROOM_DEFS, ROOM_TYPES, type RoomType } from '../sim/data/rooms';
+import { ROOM_DEFS, ROOM_TYPES, type RoomCategory, type RoomType } from '../sim/data/rooms';
 import type { UiMode, WorldRenderer } from '../render/renderer';
+import type { BottomBarDropdowns } from './bottomBar';
 
 const HEX_RADIX = 16;
 const CSS_HEX_DIGITS = 6;
 
 /**
- * Bottom bar: room catalog (rendered FROM ROOM_DEFS — SSOT rule 1), sell
+ * GDD §9 owner ruling: category groups render in exactly this order —
+ * insertion order here IS the display order. The Record is the single
+ * compile-checked source: a new RoomCategory fails to compile until it gets a
+ * label, and the render loop iterates these keys, so nothing can be labeled
+ * yet silently missing from the bar.
+ */
+const CATEGORY_LABELS: Record<RoomCategory, string> = {
+  basics: 'Basics',
+  imaging: 'Imaging',
+  treatment: 'Treatment',
+  comfort: 'Comfort',
+};
+const CATEGORIES = Object.keys(CATEGORY_LABELS) as RoomCategory[];
+
+/**
+ * Bottom bar: the room catalog as §9 category dropdowns (rendered FROM
+ * ROOM_DEFS — SSOT rule 1; whatever the table contains is what shows), sell
  * toggle, debug spawn, and a hint line fed by the renderer + buildRejected.
+ * Dropdown exclusivity lives in the BottomBarDropdowns coordinator.
  */
 export class BuildMenu {
-  private buttons = new Map<string, HTMLButtonElement>();
+  private roomButtons = new Map<RoomType, HTMLButtonElement>();
+  private categoryButtons = new Map<RoomCategory, HTMLButtonElement>();
+  private sellButton!: HTMLButtonElement;
   private hintEl!: HTMLElement;
-  /** The hire panel attaches its toggle behavior to this button. */
+  /** The hire panel registers this button with the coordinator. */
   staffButton!: HTMLButtonElement;
 
   constructor(
     private renderer: WorldRenderer,
     private commands: CommandQueue,
     private events: EventBus,
+    private bottomBar: BottomBarDropdowns,
   ) {}
 
   mount(root: HTMLElement): void {
@@ -27,20 +48,21 @@ export class BuildMenu {
     bar.id = 'buildbar';
     bar.setAttribute('data-ui', '');
 
-    for (const type of ROOM_TYPES) {
-      const def = ROOM_DEFS[type];
-      const button = this.addButton(bar, `room:${type}`, '', () => this.toggleBuild(type));
-      const swatch = document.createElement('span');
-      swatch.className = 'swatch';
-      swatch.style.background = `#${def.floorColor.toString(HEX_RADIX).padStart(CSS_HEX_DIGITS, '0')}`;
-      button.append(swatch, `${def.label} $${def.cost.toLocaleString()}`);
+    for (const category of CATEGORIES) {
+      // Table order within a category (§9); an empty category renders nothing.
+      const types = ROOM_TYPES.filter((type) => ROOM_DEFS[type].category === category);
+      if (types.length === 0) continue;
+      bar.appendChild(this.categoryDropdown(category, types));
     }
 
-    this.staffButton = this.addButton(bar, 'staff', 'Staff', () => {});
-    this.addButton(bar, 'sell', 'Sell', () => this.toggleSell()).classList.add('sell');
-    this.addButton(bar, 'spawn', 'Spawn Patient', () =>
+    this.staffButton = BuildMenu.button('Staff'); // wired by HirePanel via the coordinator
+    this.sellButton = BuildMenu.button('Sell', () => this.toggleSell());
+    this.sellButton.classList.add('sell');
+    const spawn = BuildMenu.button('Spawn Patient', () =>
       this.commands.push({ type: 'debugSpawnPatient' }),
-    ).classList.add('debug');
+    );
+    spawn.classList.add('debug');
+    bar.append(this.staffButton, this.sellButton, spawn);
 
     this.hintEl = document.createElement('div');
     this.hintEl.id = 'hint';
@@ -53,21 +75,53 @@ export class BuildMenu {
     this.events.on('buildRejected', ({ reason }) => this.setHint(reason));
   }
 
-  private addButton(
-    parent: HTMLElement,
-    key: string,
-    label: string,
-    onClick: () => void,
-  ): HTMLButtonElement {
+  /** One §9 category group: a toggle button plus its dropdown of room entries. */
+  private categoryDropdown(category: RoomCategory, types: readonly RoomType[]): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'dropdown-wrap';
+
+    const toggle = BuildMenu.button(`${CATEGORY_LABELS[category]} ▾`);
+    const panel = document.createElement('div');
+    panel.className = 'dropdown-panel hidden';
+    panel.setAttribute('data-ui', '');
+
+    for (const type of types) {
+      const def = ROOM_DEFS[type];
+      const button = BuildMenu.button('', () => {
+        this.toggleBuild(type);
+        // Picking a tool dismisses the catalog — ghost preview and hint take over.
+        this.bottomBar.closeAll();
+      });
+      const swatch = document.createElement('span');
+      swatch.className = 'swatch';
+      swatch.style.background = `#${def.floorColor.toString(HEX_RADIX).padStart(CSS_HEX_DIGITS, '0')}`;
+      const label = document.createElement('span');
+      label.className = 'room-label';
+      label.textContent = def.label;
+      const size = document.createElement('span');
+      size.className = 'room-size';
+      size.textContent = `${def.minCols}×${def.minRows}`;
+      button.append(swatch, label, size, `$${def.cost.toLocaleString()}`);
+      panel.appendChild(button);
+      this.roomButtons.set(type, button);
+    }
+
+    wrap.append(toggle, panel);
+    this.bottomBar.register(toggle, panel);
+    this.categoryButtons.set(category, toggle);
+    return wrap;
+  }
+
+  private static button(label: string, onClick?: () => void): HTMLButtonElement {
     const button = document.createElement('button');
     button.setAttribute('data-ui', '');
     if (label) button.textContent = label;
-    button.addEventListener('click', () => {
-      onClick();
-      button.blur();
-    });
-    parent.appendChild(button);
-    this.buttons.set(key, button);
+    if (onClick) {
+      button.addEventListener('click', () => {
+        onClick();
+        button.blur();
+      });
+    }
     return button;
   }
 
@@ -82,15 +136,22 @@ export class BuildMenu {
 
   private toggleSell(): void {
     this.renderer.setMode(this.renderer.mode.kind === 'sell' ? { kind: 'idle' } : { kind: 'sell' });
+    this.bottomBar.closeAll(); // a mode swap shouldn't leave a panel floating over it
   }
 
   private syncButtons(mode: UiMode): void {
-    for (const [key, button] of this.buttons) {
-      const active =
-        (mode.kind === 'build' && key === `room:${mode.type}`) ||
-        (mode.kind === 'sell' && key === 'sell');
-      button.classList.toggle('active', active);
+    for (const [type, button] of this.roomButtons) {
+      button.classList.toggle('active', mode.kind === 'build' && mode.type === type);
     }
+    // With its dropdown closed, the category button still shows where the
+    // active build tool lives.
+    for (const [category, button] of this.categoryButtons) {
+      button.classList.toggle(
+        'active',
+        mode.kind === 'build' && ROOM_DEFS[mode.type].category === category,
+      );
+    }
+    this.sellButton.classList.toggle('active', mode.kind === 'sell');
   }
 
   private setHint(hint: string): void {

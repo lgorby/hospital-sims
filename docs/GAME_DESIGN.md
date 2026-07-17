@@ -259,7 +259,7 @@ So an untreated chest-pain patient (acuity 1, full health) dies in ~8 game-hours
 ## 9. UI
 
 - **HUD (top bar):** cash, reputation, date/time, speed controls, daily patient counter.
-- **Build menu (bottom):** room catalog with cost/footprint preview; hire menu with candidate cards (role, skill stars, salary).
+- **Build menu (bottom):** room catalog with cost/footprint preview; hire menu with candidate cards (role, skill stars, salary). *(Owner ruling, 2026-07-17 playtest: the bottom-bar panels — build catalog, hire panel, thought log — behave as **mutually exclusive dropdowns**: opening one closes the others; they must never overlap. With the §12 room roster the build catalog additionally splits into category groups — Basics · Imaging · Treatment · Comfort — instead of one flat strip.)*
 - **Inspection panels:** click a patient → condition, acuity, health/patience bars, current state. Click a staff member → role, skill, salary, current task, **Fire** button. Click a room → type, quality, assigned staff, patient inside, **Sell** button (disabled while occupied/reserved).
 - **Notifications (toast queue):** death, AMA departure, bankruptcy warning, "no room can treat X" hints. **Clicking a toast snaps the camera** to the entity or tile it references — a death report on a 40×40 map is useless if you can't jump to where it happened. *(M3 ruling: every jumpable event carries a `{col,row}` tile snapshot at emit time; a click pans to the live entity if it still exists, else to the snapshot — a death toast must outlive its patient, whose entity fades in ~3 s.)*
 - **Coverage overlay:** while placing or selecting an atrium, tiles inside guidance auras are tinted — both the ghost's radius and all existing coverage — so wayfinding gaps are visible instead of guessed. *(M3 ruling: staffed atriums tint solid; an unstaffed atrium's potential radius renders dimmed/hollow. Comfort coverage shares the same footprint, so one tint suffices.)* (General overlay infrastructure also serves the debug panel.)
@@ -282,7 +282,7 @@ Ordered by likely value:
 3. **Janitors & messes** — the true RCT handyman analog, currently absent: patients vomit and bleed, dirty tiles tank comfort and reputation, janitors sweep. A whole new actor loop, which is why it waits.
 4. **Staff fatigue & morale** — breaks, staff room, burnout quits.
 5. **Emergencies** — ambulance arrivals, multi-casualty events, code blues with CPR minigame odds.
-6. **More departments** — ICU (post-ER holding), OR + surgeon, lab, pharmacy, inpatient ward.
+6. **More departments** — ICU (post-ER holding), lab, pharmacy, inpatient ward. *(OR + surgeon and the imaging suite were promoted to §12 Expansion 1, owner-requested 2026-07-17.)*
 7. **Equipment breakdown + maintenance techs** (the RCT mechanic analog).
 8. **Décor, comfort & concessions** — plants and TVs affecting patience; **wall signage** as a cheap, unstaffed wayfinding item that lowers wrong-turn chance along a corridor (the budget alternative to an atrium); **vending machines, gift shop, cafeteria** as RCT's food-stall economy — secondary revenue from waiting patients plus a patience boost.
 9. **Insurance/billing mix** — payer types with different reimbursement and paperwork delay.
@@ -290,3 +290,52 @@ Ordered by likely value:
 11. **Scenario sharing & unlockable maps** — "reach rep 600 in 10 days." (Save/load itself is a V1 stretch goal in the tech plan's M4, not a post-V1 item.)
 12. **Epidemics/seasonal events** — flu season surges.
 13. **Options & accessibility** — pause-on-death toggle (RCT tradition), autosave, colorblind-safe role palette.
+14. **Roaming volunteers** *(owner-requested, 2026-07-17 playtest)* — a patrolling counterpart to the posted Volunteer Greeter (§4): walks a beat between waypoints (or wanders a wing) and rescues lost patients via the existing staff-proximity rule, effectively a **mobile guidance presence** instead of a fixed aura. Design tension to resolve: V1 deliberately made lostness counterable by *placement* (atrium coverage); a cheap roamer that solves lostness everywhere would undercut the atrium economy, so the roamer should be weaker per-dollar than coverage (small rescue radius, no wrong-turn prevention — cure, not prophylaxis). Slots into the dispatcher as a new duty kind (`patrol`); pairs with item 2's Transporter (shared "movement staff" scheduling) and item 8's wall signage as the third wayfinding tier: signage (passive, cheap) < roamer (mobile, mid) < staffed atrium (area denial, premium).
+15. **Family & visitors** *(owner-requested, 2026-07-17 playtest)* — companions arrive with some patients (weighted by age/acuity: children and acuity 1–2 rarely arrive alone), walk with them to waiting areas, occupy seats, and slow the patient's patience decay while nearby (a portable comfort aura, weaker than the atrium's). They leave on the patient's terminal event — including grieving exits on death (reputation sting amplifier). Visitors are non-actors to the dispatcher (never treated, never block treatment spots) but DO consume waiting-room seats — bigger waiting rooms become genuinely necessary. Natural revenue hook for item 8's concessions (visitors are who buys from the gift shop/cafeteria). Sim-cost note: roughly doubles walker count at high traffic — the V1 perf headroom (60fps at ~110 patients, measured 2026-07-17) supports it, but seat-search and `isTileClaimed` scans should get spatial indexing first if visitor counts push actors past ~300.
+
+## 12. Expansion 1 — Departments & Imaging (owner-requested 2026-07-17; first content milestone after the V1 DoD closes)
+
+The owner asked for a wider hospital: surgery, a fuller imaging suite (ultrasound, CT, MRI, nuclear medicine), dialysis, and more ER traffic — "not limited to just these rooms." This section is the design; numbers are initial values, SSOT moves to `balance.ts` at implementation per §6's rule. The §3/§4/§5 design rules all still bind: every room earns ≥1 condition path, every role earns ≥1 condition, multi-step paths drive re-queueing, dual-staff rooms stress the dispatcher.
+
+### New rooms
+| Room | Min size | Cost | Required equipment | Staffed by |
+|---|---|---|---|---|
+| Ultrasound | 2×3 | $4,000 | Ultrasound cart, exam bed | Sonographer |
+| CT scanner | 4×4 | $14,000 | CT gantry, control desk | Rad Tech |
+| MRI | 4×4 | $18,000 | MRI bore, shield screen, control desk | Rad Tech |
+| Nuclear medicine | 3×4 | $16,000 | Gamma camera, hot-lab bench | Rad Tech |
+| Dialysis | 3×4 | $9,000 | Dialysis chairs ×2, machine | Nurse |
+| Operating room | 4×4 | $20,000 | OR table, anesthesia cart, scrub sink | Surgeon + Nurse |
+
+### New roles
+| Role | Works in | Salary/day | Notes |
+|---|---|---|---|
+| Sonographer | Ultrasound | $180 | The cheap imaging on-ramp |
+| Surgeon | Operating room | $500 | Dual-staff with a nurse — the second assignment-system stress test after chest pain |
+
+**Rad Tech becomes a deliberate multi-room bottleneck** (X-ray, CT, MRI, nuclear medicine): one tech cannot staff two scanners at once, so scaling imaging means hiring techs — the imaging mirror of the doctor-generalist bottleneck (§4). Dialysis reuses the Nurse (as in real units), deepening nurse demand rather than adding a fourth niche role.
+
+### New conditions
+| Condition | Typical acuity | Path | Payout | Base weight |
+|---|---|---|---|---|
+| Kidney stones | 3 | CT (Rad Tech) → Exam (Doctor) | $$$ | 8 |
+| Back injury | 4 | MRI (Rad Tech) → Exam (Doctor) | $$$ | 8 |
+| Thyroid disorder | 4 | Nuclear medicine (Rad Tech) → Exam (Doctor) | $$$ | 6 |
+| Kidney failure | 2 | Dialysis (Nurse) | $$$ | 6 |
+| Gallstones | 3 | Ultrasound (Sonographer) → Operating room (Surgeon + Nurse) | $$$$ | 6 |
+| Head injury | 2 | CT (Rad Tech) → ER bay (Doctor + Nurse) | $$$$ | 5 |
+| Appendicitis | 2 | Ultrasound (Sonographer) → Operating room (Surgeon + Nurse) | $$$$$ | 5 |
+| Stroke | 1 | CT (Rad Tech) → ER bay (Doctor + Nurse) | $$$$$ | 4 |
+
+Design notes:
+- **The ER gets busier without a new room kind:** head injury and stroke both terminate in the existing ER bay — the owner's "rooms in the ER" ask is served first by traffic; dedicated trauma/resus variants and ICU holding stay §11 item 6.
+- **Late-game by case mix, not by lockout:** the new roster is referral-heavy (six of eight at acuity ≤ 3, four at acuity ≤ 2), so §3's reputation case-mix shift naturally makes expansion rooms matter as the hospital's rep grows; low base weights (48 added against the existing 100) keep the early game recognizably V1.
+- **Appendicitis/gallstones are the new longest chains** (imaging → OR with two staff) — the congestion showcase; a lost post-ultrasound appendicitis patient wandering while their surgeon waits is the expansion's "quiet emergency."
+- **UI prerequisite:** the §9 dropdown/category ruling ships before or with this roster — 14 room types do not fit a flat strip.
+- **Save compatibility:** new rooms/roles/conditions extend the `as const` data tables; per `PERSISTENCE_PLAN.md` rule 6 this is a `SAVE_VERSION` bump (new enum values in saves), with a migration decision for old saves at implementation time.
+
+**Implementation rulings (Expansion-1 review, 2026-07-17 — code is authoritative, recorded here per the doc-pointer rule):**
+- **Acuity ranges:** the table's "typical acuity" scalars became ranges where triage variety helps: thyroid 4–5, kidney failure 2–3 (both contain the typical value; kidney failure keeps `acuityMin 2`, preserving referral-grade status). Others are pinned scalars.
+- **Prop reuse (SSOT-friendly):** ultrasound's "exam bed" is the existing `bed` prop; CT/MRI "control desk" is the existing `desk`. Dialysis is realized as 2 generic chairs + 2 `dialysisMachine` units (one per station).
+- **Save migration (v1→v2):** v1 saves load unchanged EXCEPT the hire-candidate pool, which is topped up per role on load so the new roles are hireable (a v1 pool predates sonographer/surgeon and would otherwise never offer them).
+- **Balance harness semantics:** the reference build gained an Expansion-1 wing whose capital is bankrolled in the fixture — the harness's "stays in the black" assertion measures the OPERATING envelope only, by design (documented in `test/harness.test.ts`).

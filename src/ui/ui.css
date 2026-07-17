@@ -109,7 +109,8 @@ body {
   background: rgba(255, 255, 255, 0.12);
 }
 
-#buildbar button.active {
+#buildbar button.active,
+#buildbar button.open {
   background: #2a9d8f;
   border-color: #2a9d8f;
   color: #fff;
@@ -130,6 +131,50 @@ body {
   height: 10px;
   border-radius: 2px;
   display: inline-block;
+  flex-shrink: 0;
+}
+
+/* ------------------------- Expansion 1: bottom-bar category dropdowns (§9) */
+
+.dropdown-wrap {
+  position: relative;
+}
+
+.dropdown-panel {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: max-content;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(24, 28, 33, 0.94);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.dropdown-panel.hidden {
+  display: none;
+}
+
+.dropdown-panel button {
+  width: 100%;
+  justify-content: flex-start;
+  white-space: nowrap;
+}
+
+.dropdown-panel .room-label {
+  flex: 1;
+  text-align: left;
+}
+
+.dropdown-panel .room-size {
+  color: #7f8a99;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 #hint {
@@ -337,7 +382,7 @@ body {
   position: fixed;
   right: 12px;
   bottom: 56px;
-  width: 340px;
+  width: 380px;
   max-height: 60vh;
   overflow-y: auto;
   padding: 12px;
@@ -372,6 +417,13 @@ body {
 
 #hirepanel .muted {
   color: #7f8a99;
+}
+
+/* Per-role candidate group headers — 8 roles scan cleanly (Expansion 1). */
+#hirepanel .role-head {
+  margin-top: 6px;
+  color: #9fb0c5;
+  font-size: 12px;
 }
 
 .person-row {

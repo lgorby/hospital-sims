@@ -13,6 +13,8 @@ export const BALANCE = {
   stats: {
     min: 1,
     max: 5,
+    /** Health/patience scale ceiling (SSOT audit #1): spawn values and UI bars share it. */
+    vitalsMax: 100,
   },
   map: {
     /** Map dims are BAKED INTO SAVES (the grid RLE is cols×rows tiles and
@@ -59,6 +61,16 @@ export const BALANCE = {
       asthma: 15,
       pneumonia: 10,
       chestPain: 10,
+      // Expansion 1 (GDD §12): 48 added against the existing 100 keeps the
+      // early game recognizably V1; the §7 case-mix shift grows these with rep.
+      kidneyStones: 8,
+      backInjury: 8,
+      thyroid: 6,
+      kidneyFailure: 6,
+      gallstones: 6,
+      headInjury: 5,
+      appendicitis: 5,
+      stroke: 4,
     },
     /** Conditions with acuityMin ≤ this are "referral-grade" and shift with reputation (GDD §7). */
     referralAcuityMax: 2,

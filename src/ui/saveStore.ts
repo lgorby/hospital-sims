@@ -1,5 +1,5 @@
 import { dayOfTick } from '../sim/clock';
-import { SAVE_VERSION } from '../sim/save';
+import { isLoadableVersion, SAVE_VERSION } from '../sim/save';
 
 /**
  * Phase-1 save storage (docs/PERSISTENCE_PLAN.md rule 5): localStorage slots.
@@ -152,20 +152,20 @@ export function validateSaveString(raw: string): StoreResult {
   if (typeof version !== 'number') {
     return { ok: false, reason: 'the file has no saveVersion — not a Hospital Simms save' };
   }
-  // Mirror loadWorld's exact gate: anything but the current version is refused
-  // there, so accepting it here would let an import overwrite a slot with a
-  // file whose Load can only fail.
-  if (version > SAVE_VERSION) {
-    return {
-      ok: false,
-      reason: `the save is from a newer game version (v${version}; this build loads v${SAVE_VERSION})`,
-    };
-  }
-  if (version < SAVE_VERSION) {
-    return {
-      ok: false,
-      reason: `the save is from an older game version (v${version}) this build can no longer load (v${SAVE_VERSION})`,
-    };
+  // The sim border owns the version policy (isLoadableVersion — the same gate
+  // loadWorld enforces); accepting a version it refuses would let an import
+  // overwrite a slot with a file whose Load can only fail. Direction only
+  // picks the wording.
+  if (!isLoadableVersion(version)) {
+    return version > SAVE_VERSION
+      ? {
+          ok: false,
+          reason: `the save is from a newer game version (v${version}) — update the game to load it`,
+        }
+      : {
+          ok: false,
+          reason: `the save is from an older game version (v${version}) that this build can no longer load`,
+        };
   }
   return { ok: true };
 }

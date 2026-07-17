@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../src/sim/data/balance';
 import { CONDITION_DEFS, CONDITION_IDS } from '../src/sim/data/conditions';
-import { ROLE_DEFS } from '../src/sim/data/roles';
-import { ROOM_DEFS, ROOM_TYPES } from '../src/sim/data/rooms';
+import { ROLE_DEFS, ROLE_IDS } from '../src/sim/data/roles';
+import { PROP_STYLE, ROOM_DEFS, ROOM_TYPES, type RoomType } from '../src/sim/data/rooms';
+
+/**
+ * Rooms that legitimately appear in NO condition step (GDD §3 "every room
+ * earns ≥1 condition path" applies to treatment paths): the check-in/waiting
+ * pipeline and the atrium are infrastructure, not treatment. Adding a room
+ * type without either a condition path or an entry here fails the roster
+ * integrity test below — that's the point.
+ */
+const CONDITION_STEP_EXEMPT_ROOMS: readonly RoomType[] = ['waiting', 'reception', 'triage', 'atrium'];
 
 describe('SSOT data integrity', () => {
   it('every condition step references a real room and real roles', () => {
@@ -30,12 +39,52 @@ describe('SSOT data integrity', () => {
     }
   });
 
+  it('every room type is used by ≥1 condition step or is explicitly exempt (GDD §3/§12)', () => {
+    const usedRooms = new Set<RoomType>();
+    for (const id of CONDITION_IDS) {
+      for (const step of CONDITION_DEFS[id].steps) usedRooms.add(step.room);
+    }
+    for (const type of ROOM_TYPES) {
+      const earnsItsKeep = usedRooms.has(type) || CONDITION_STEP_EXEMPT_ROOMS.includes(type);
+      expect(earnsItsKeep, `${type}: no condition path and not exempt`).toBe(true);
+    }
+    // The exemption list must not mask a room that HAS gained a path.
+    for (const type of CONDITION_STEP_EXEMPT_ROOMS) {
+      expect(usedRooms.has(type), `${type} is exempt but appears in a condition step`).toBe(false);
+    }
+  });
+
+  it('every role appears in ≥1 condition step or staffs a standing-post room (GDD §4/§12)', () => {
+    const usedRoles = new Set<string>();
+    for (const id of CONDITION_IDS) {
+      for (const step of CONDITION_DEFS[id].steps) {
+        for (const role of step.roles) usedRoles.add(role);
+      }
+    }
+    for (const role of ROLE_IDS) {
+      const standingPostSomewhere =
+        ROLE_DEFS[role].standingPost &&
+        ROOM_TYPES.some((type) => (ROOM_DEFS[type].staffedBy as readonly string[]).includes(role));
+      expect(
+        usedRoles.has(role) || standingPostSomewhere,
+        `${role}: earns no condition step and no standing post`,
+      ).toBe(true);
+    }
+  });
+
   it('acuity ranges are valid (1–5, min ≤ max)', () => {
     for (const id of CONDITION_IDS) {
       const { acuityMin, acuityMax } = CONDITION_DEFS[id];
       expect(acuityMin).toBeGreaterThanOrEqual(1);
       expect(acuityMax).toBeLessThanOrEqual(5);
       expect(acuityMin).toBeLessThanOrEqual(acuityMax);
+    }
+  });
+
+  it('every prop strip is 1–2 tiles (the renderer slices single/west/east segments only)', () => {
+    for (const [id, style] of Object.entries(PROP_STYLE)) {
+      expect(style.tiles, `${id}.tiles`).toBeGreaterThanOrEqual(1);
+      expect(style.tiles, `${id}.tiles`).toBeLessThanOrEqual(2);
     }
   });
 
