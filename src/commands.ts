@@ -15,6 +15,7 @@ export type Command =
   | { type: 'debugSpawnPatient'; condition?: ConditionId }
   | { type: 'debugForce'; patientId: number; outcome: 'death' | 'ama' | 'complication' }
   | { type: 'debugFastForward'; ticks: number }
+  | { type: 'debugSetCash'; amount: number }
   | { type: 'debugWalkTo'; col: number; row: number }
   | { type: 'debugToggleMarker'; col: number; row: number };
 

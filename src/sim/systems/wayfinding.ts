@@ -31,6 +31,7 @@ export function onPatientTileStep(world: World, patient: Patient): void {
   if (world.hasGuidanceAura(patient.at)) return;
   if (!world.rng.chance(wrongTurnChance(patient.wayfinding))) return;
   patient.lost = { since: world.clock.tick };
+  world.today.lostEpisodes += 1;
   // Abandon the route but RETAIN the goal: the reservation target survives
   // and the gathering stall check exempts lost walkers (M3-gate ruling).
   patient.path = [];

@@ -179,7 +179,25 @@ export class WorldRenderer {
   }
 
   private cancelMode(): void {
+    // Esc peels one layer at a time: build/sell mode first, then the selection
+    // (which closes the inspect panel) — RCT muscle memory (M4 polish).
     if (this.build || this.sellMode) this.setMode({ kind: 'idle' });
+    else this.selected = null;
+  }
+
+  /** Would an idle-mode click on this tile select something? (hover cursor) */
+  private pickableAt(tile: TilePoint): boolean {
+    for (const patient of this.world.patients.values()) {
+      if (samePoint(patient.at, tile) || (patient.next && samePoint(patient.next, tile))) {
+        return true;
+      }
+    }
+    for (const member of this.world.staff.values()) {
+      if (samePoint(member.at, tile) || (member.next && samePoint(member.next, tile))) {
+        return true;
+      }
+    }
+    return this.world.roomAt(tile) !== null;
   }
 
   // ------------------------------------------------------------- world views
@@ -713,6 +731,15 @@ export class WorldRenderer {
       } else {
         this.highlight.visible = false;
       }
+      // Hover affordance (M4 polish): crosshair while placing/selling,
+      // pointer over anything clickable, default otherwise.
+      const cursor =
+        this.build || this.sellMode
+          ? 'crosshair'
+          : this.hoveredTile && this.pickableAt(this.hoveredTile)
+            ? 'pointer'
+            : 'default';
+      this.app.canvas.style.cursor = cursor;
     }
 
     this.updateActors(alpha);

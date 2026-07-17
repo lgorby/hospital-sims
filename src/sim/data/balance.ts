@@ -23,7 +23,11 @@ export const BALANCE = {
     bankruptcyGraceGameMinutes: 24 * 60,
   },
   arrivals: {
-    basePatientsPerGameHour: 3.0,
+    /** M4 balance pass: 3.0 overwhelmed a full 6-room build (~50 arrivals vs
+     *  ~23 treatable/day → rep death-spiral to double digits by day 4); 2.0
+     *  still oscillated (recovering rep re-floods the queues). 1.5 puts
+     *  starting arrivals just above that build's throughput — busy, climbable. */
+    basePatientsPerGameHour: 1.5,
     /**
      * Piecewise multiplier blocks covering the whole day (GDD §3). Blocks are
      * NON-uniform — a block applies to hours [previous untilHour, untilHour).
@@ -94,7 +98,10 @@ export const BALANCE = {
     deathLoss: 25,
     amaLoss: 8,
     dayCloseWaitBonus: 10,
-    dayCloseWaitThresholdGameMinutes: 120,
+    /** M4 balance pass: 120 was unreachable — even an overstaffed 6-room build
+     *  bottoms out ~230m door-to-first-treatment (check-in + triage + walking
+     *  are ~4h structural). 240 makes the bonus reward keeping up with demand. */
+    dayCloseWaitThresholdGameMinutes: 240,
   },
   wayfinding: {
     /** Wrong-turn chance per tile step = perTileBase × (statCeiling − wayfinding) (GDD §3). */

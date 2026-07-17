@@ -8,5 +8,6 @@ export function updateEconomy(world: World): void {
   for (const member of world.staff.values()) payrollPerDay += member.salaryPerDay;
   if (payrollPerDay === 0) return;
   world.cash -= payrollPerDay / HOURS_PER_DAY;
+  world.today.payroll += payrollPerDay / HOURS_PER_DAY;
   world.events.emit('cashChanged', { cash: world.cash });
 }

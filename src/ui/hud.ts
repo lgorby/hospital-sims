@@ -1,6 +1,7 @@
 import type { EventBus } from '../events';
 import type { GameLoop, Speed } from '../loop';
 import { CONDITION_DEFS } from '../sim/data/conditions';
+import { money } from './format';
 import type { WorldRenderer } from '../render/renderer';
 import type { World } from '../sim/world';
 
@@ -29,6 +30,7 @@ export class Hud {
     private loop: GameLoop,
     private renderer: WorldRenderer,
     private events: EventBus,
+    private seed: number,
   ) {}
 
   mount(hudRoot: HTMLElement, readoutRoot: HTMLElement): void {
@@ -36,6 +38,9 @@ export class Hud {
     this.cashEl = Hud.chip(hudRoot, 'hud-cash');
     this.repEl = Hud.chip(hudRoot, 'hud-rep');
     this.tickEl = Hud.chip(hudRoot, 'hud-tick');
+    // The seed is part of the new-game contract (M4): display it so a run can
+    // be named, shared, and replayed via ?seed=.
+    Hud.chip(hudRoot, 'hud-seed').textContent = `Seed ${this.seed}`;
 
     const speedGroup = document.createElement('div');
     speedGroup.className = 'speed-group';
@@ -57,6 +62,35 @@ export class Hud {
     this.readoutEl = readoutRoot;
     this.events.on('speedChanged', ({ speed }) => this.markActiveSpeed(speed));
     this.markActiveSpeed(this.loop.speed);
+    this.bindShortcuts();
+  }
+
+  /** M4 keyboard shortcuts: Space toggles pause, digits pick a speed. */
+  private bindShortcuts(): void {
+    let lastRunningSpeed: Speed = this.loop.speed === 0 ? 1 : this.loop.speed;
+    this.events.on('speedChanged', ({ speed }) => {
+      if (speed !== 0) lastRunningSpeed = speed;
+    });
+    window.addEventListener('keydown', (e) => {
+      const target = e.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || ['INPUT', 'TEXTAREA'].includes(target.tagName))
+      ) {
+        return;
+      }
+      // A visible modal owns the clock (M4 review #3): shortcuts must not
+      // unpause the sim behind the daily report / game-over overlay.
+      if (document.querySelector('.modal-overlay:not(.hidden)')) return;
+      if (e.key === ' ') {
+        e.preventDefault(); // Space must not "click" the last-focused button
+        this.loop.setSpeed(this.loop.speed === 0 ? lastRunningSpeed : 0);
+        return;
+      }
+      for (const { value } of SPEEDS) {
+        if (value !== 0 && e.key === String(value)) this.loop.setSpeed(value);
+      }
+    });
   }
 
   private static chip(parent: HTMLElement, className: string): HTMLElement {
@@ -76,7 +110,9 @@ export class Hud {
   /** Polled once per frame by the loop's render callback. */
   update(): void {
     this.clockEl.textContent = this.world.clock.display;
-    this.cashEl.textContent = `$${Math.floor(this.world.cash).toLocaleString()}`;
+    // money() handles debt correctly ("−$20,080", not "$-20,080") — negative
+    // cash is a first-class state now that bankruptcy exists (M4 review #9).
+    this.cashEl.textContent = money(this.world.cash);
     this.repEl.textContent = `Rep ${Math.round(this.world.reputation)}`;
     this.tickEl.textContent = `tick ${this.world.clock.tick}`;
 

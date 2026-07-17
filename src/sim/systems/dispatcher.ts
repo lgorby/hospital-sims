@@ -317,6 +317,13 @@ function promoteGatheredReservations(world: World): void {
     if (reservation.kind === 'triage') {
       reservation.ticksRemaining = gameMinutesToTicks(BALANCE.triage.durationGameMinutes);
     } else {
+      // Door-to-first-treatment wait (M4 daily report): recorded when the
+      // FIRST treatment goes active — triage doesn't count as treatment.
+      if (patient.firstTreatedAtTick === null) {
+        patient.firstTreatedAtTick = world.clock.tick;
+        world.today.waitSumTicks += world.clock.tick - patient.arrivedAtTick;
+        world.today.waitCount += 1;
+      }
       const step = CONDITION_DEFS[patient.condition].steps[reservation.stepIndex]!;
       const averageSkill = members.reduce((sum, m) => sum + m.skill, 0) / members.length;
       reservation.ticksRemaining = treatmentDurationTicks(

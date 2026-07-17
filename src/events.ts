@@ -1,3 +1,5 @@
+import type { DayReport } from './sim/dailyStats';
+
 /**
  * Typed pub/sub — the sim→render/ui channel (tech plan §2.2).
  * Event payloads are declared once, here, and imported everywhere.
@@ -9,7 +11,10 @@ export interface EventMap {
   /** Loop-layer speed changed (0 = paused). */
   speedChanged: { speed: Speed };
   cashChanged: { cash: number };
-  dayEnded: { day: number };
+  /** Midnight day-close snapshot (M4 daily report). */
+  dayEnded: DayReport;
+  /** Bankruptcy lose-state (M4): cash below threshold for a full game day. Sim is frozen. */
+  gameOver: { day: number; cash: number; reputation: number; treated: number; died: number };
   roomBuilt: { roomId: number };
   roomSold: { roomId: number };
   /** A build/sell command failed sim-side validation (UI shows the reason). */

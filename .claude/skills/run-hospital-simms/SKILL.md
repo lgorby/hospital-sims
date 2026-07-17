@@ -54,7 +54,7 @@ Driver commands (one per line on stdin; `#` comments allowed):
 
 | Command | Effect |
 |---|---|
-| `goto [url]` | Load the game (default localhost:5173), wait for HUD |
+| `goto [url]` | Load the game (default `localhost:5173/?seed=1337`), wait for HUD |
 | `hud` | Print clock / cash / rep / tick chips |
 | `ss <name>` | Screenshot → `.claude/skills/run-hospital-simms/shots/<name>.png` |
 | `debug` | Toggle the backtick debug panel (spawn/force/fast-forward buttons) |
@@ -93,6 +93,18 @@ npm run lint
 ```
 
 ## Gotchas
+
+- **The bare origin shows the title screen, not the game** (M4 new-game
+  flow): `goto` without a URL therefore defaults to `?seed=1337`. To exercise
+  the title→game path: `goto http://localhost:5173` times out its HUD wait
+  (expected — no HUD on the title screen), then `button New Game` navigates
+  to a random-seed URL and the game boots.
+- **Game over is drivable**: debug panel → `button Set cash to double debt
+  limit` → `button Fast-forward 1 day` → the foreclosure screen (`#gameover`)
+  appears; `button New Game` restarts with a fresh seed.
+- **The daily report modal (`#dailyreport`) opens at every midnight** and
+  pauses the game — after any fast-forward crossing midnight, `button
+  Continue` before expecting the sim to run.
 
 - **HUD chips are classes, not ids**: `.hud-clock`, `.hud-cash`, `.hud-rep`,
   `.hud-tick` (`Hud.chip` in `src/ui/hud.ts`). The inspect panel is

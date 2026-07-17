@@ -1,0 +1,80 @@
+import type { EventBus } from '../events';
+import { ROLE_DEFS } from '../sim/data/roles';
+import { ROOM_DEFS } from '../sim/data/rooms';
+import type { World } from '../sim/world';
+
+const DISMISS_DELAY_MS = 2500;
+
+interface Item {
+  label: string;
+  done: boolean;
+}
+
+/**
+ * Guided first-run checklist (GDD §9): replaces a tutorial. Items check off
+ * as the events land — in any order — and the panel dismisses itself once
+ * everything is done.
+ */
+export class Checklist {
+  private panel!: HTMLElement;
+  private list!: HTMLElement;
+  // Labels compose from the defs (§3.1, M4 review #5) — renames stay in sync.
+  private items = new Map<string, Item>([
+    ['triage', { label: `Build a ${ROOM_DEFS.triage.label}`, done: false }],
+    ['nurse', { label: `Hire a ${ROLE_DEFS.nurse.label}`, done: false }],
+    ['exam', { label: `Build an ${ROOM_DEFS.exam.label}`, done: false }],
+    ['doctor', { label: `Hire a ${ROLE_DEFS.doctor.label}`, done: false }],
+    ['treat', { label: 'Treat your first patient', done: false }],
+  ]);
+
+  constructor(
+    private world: World,
+    private events: EventBus,
+  ) {}
+
+  mount(parent: HTMLElement): void {
+    this.panel = document.createElement('div');
+    this.panel.id = 'checklist';
+    this.panel.setAttribute('data-ui', '');
+    const h = document.createElement('h3');
+    h.textContent = 'Getting started';
+    this.list = document.createElement('div');
+    this.panel.append(h, this.list);
+    parent.appendChild(this.panel);
+    this.render();
+
+    this.events.on('roomBuilt', ({ roomId }) => {
+      const type = this.world.rooms.get(roomId)?.type;
+      if (type === 'triage') this.complete('triage');
+      if (type === 'exam') this.complete('exam');
+    });
+    this.events.on('staffHired', ({ staffId }) => {
+      const role = this.world.staff.get(staffId)?.role;
+      if (role === 'nurse') this.complete('nurse');
+      if (role === 'doctor') this.complete('doctor');
+    });
+    // First treatment fee = first successfully treated step (triage is free).
+    this.events.on('feeBilled', () => this.complete('treat'));
+  }
+
+  private complete(key: string): void {
+    const item = this.items.get(key);
+    if (!item || item.done) return;
+    item.done = true;
+    this.render();
+    if ([...this.items.values()].every((i) => i.done)) {
+      this.panel.classList.add('done');
+      window.setTimeout(() => this.panel.remove(), DISMISS_DELAY_MS);
+    }
+  }
+
+  private render(): void {
+    this.list.replaceChildren();
+    for (const item of this.items.values()) {
+      const row = document.createElement('div');
+      row.className = item.done ? 'check-item checked' : 'check-item';
+      row.textContent = `${item.done ? '☑' : '☐'} ${item.label}`;
+      this.list.appendChild(row);
+    }
+  }
+}
