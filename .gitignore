@@ -5,3 +5,5 @@ dist/
 
 # Internal dev instructions — intentionally not published
 CLAUDE.md
+
+.vercel
