@@ -2,6 +2,7 @@ import { CommandQueue } from './commands';
 import { EventBus } from './events';
 import { GameLoop } from './loop';
 import { WorldRenderer } from './render/renderer';
+import { BottomBarDropdowns } from './ui/bottomBar';
 import { BuildMenu } from './ui/buildMenu';
 import { Checklist } from './ui/checklist';
 import { DailyReportModal } from './ui/dailyReport';
@@ -91,12 +92,15 @@ async function bootstrap(boot: Boot): Promise<void> {
   hud.mount(document.getElementById('hud')!, document.getElementById('readout')!);
 
   const uiRoot = document.getElementById('ui')!;
-  const buildMenu = new BuildMenu(renderer, commands, events);
+  // GDD §9 ruling: bottom-bar panels are mutually exclusive dropdowns — the
+  // coordinator is shared so no panel needs to know about the others.
+  const bottomBar = new BottomBarDropdowns();
+  const buildMenu = new BuildMenu(renderer, commands, events, bottomBar);
   buildMenu.mount(uiRoot);
   const jump = (col: number, row: number): void => renderer.jumpTo(col, row);
   new Toasts(events, world, jump).mount(uiRoot);
-  new HirePanel(world, commands, events).mount(uiRoot, buildMenu.staffButton);
-  new ThoughtLog(events, jump).mount(uiRoot, document.getElementById('buildbar')!);
+  new HirePanel(world, commands, events, bottomBar).mount(uiRoot, buildMenu.staffButton);
+  new ThoughtLog(events, jump, bottomBar).mount(uiRoot, document.getElementById('buildbar')!);
   const inspect = new InspectPanel(world, commands, renderer);
   inspect.mount(uiRoot);
   new DebugPanel(renderer, commands).mount(uiRoot);

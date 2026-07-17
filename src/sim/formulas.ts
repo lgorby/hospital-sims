@@ -1,6 +1,8 @@
 import { GAME_MINUTES_PER_HOUR, GAME_MINUTES_PER_TICK, gameMinutesToTicks } from './clock';
 import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditions';
+import { ROOM_DEFS, type RoomType } from './data/rooms';
+import { rectTiles, type GridPoint, type Rect } from './types';
 
 /**
  * Derived-value SSOT (tech plan §3.1 rule 4): every formula lives here as one
@@ -118,5 +120,32 @@ export function wrongTurnChance(wayfindingStat: number): number {
 
 /** Candidate salary from role base and skill (GDD §4 hiring pool tradeoffs). */
 export function candidateSalary(baseSalary: number, skill: number): number {
-  return Math.round(baseSalary * (1 + (skill - 3) * BALANCE.hiring.salaryPerSkillStep));
+  const baseline = (BALANCE.stats.min + BALANCE.stats.max) / 2;
+  return Math.round(baseSalary * (1 + (skill - baseline) * BALANCE.hiring.salaryPerSkillStep));
+}
+
+/** GDD §5 sell-back refund (SSOT audit #2): the sim's payout AND the UI's button label. */
+export function sellbackAmount(roomType: RoomType): number {
+  return Math.floor(ROOM_DEFS[roomType].cost * BALANCE.economy.roomSellbackRatio);
+}
+
+/** Flow rule 1 check-in capacity (SSOT audit #5): the desk slot + the queue tiles behind it. */
+export function checkInCapacity(): number {
+  return BALANCE.reception.queueDepthTiles + 1;
+}
+
+/**
+ * GDD §3 aura membership (SSOT audit #3): Euclidean ≤ radius from ANY footprint
+ * tile, walls ignored. The ONE implementation — `World.refreshAuras` fills its
+ * grid with it and the build-ghost preview asks it directly, so the preview can
+ * never drift from live coverage.
+ */
+export function auraCoversTile(footprint: Rect, p: GridPoint, radius: number): boolean {
+  const radiusSq = radius * radius;
+  for (const foot of rectTiles(footprint)) {
+    const dc = p.col - foot.col;
+    const dr = p.row - foot.row;
+    if (dc * dc + dr * dr <= radiusSq) return true;
+  }
+  return false;
 }

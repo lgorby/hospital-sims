@@ -6,7 +6,7 @@ import { ROOM_DEFS } from '../data/rooms';
 import type { Room } from '../entities/room';
 import type { Patient } from '../entities/patient';
 import type { Reservation, Staff } from '../entities/staff';
-import { effectivePriority, treatmentDurationTicks } from '../formulas';
+import { checkInCapacity, effectivePriority, treatmentDurationTicks } from '../formulas';
 import { findPath } from '../path/astar';
 import { ORTHOGONAL_STEPS, samePoint } from '../types';
 import type { Walker, World } from '../world';
@@ -91,7 +91,7 @@ function postStandingStaff(world: World): void {
 function reRouteEntranceWaiters(world: World): void {
   const receptions = world.roomsOfType('reception').filter((r) => r.door);
   const hasCapacity = (roomId: number): boolean =>
-    world.queueFor(roomId).length < BALANCE.reception.queueDepthTiles + 1;
+    world.queueFor(roomId).length < checkInCapacity();
   if (receptions.some((r) => hasCapacity(r.id))) {
     for (const patient of world.patients.values()) {
       if (patient.stage.kind === 'atEntrance') world.routeToCheckIn(patient);

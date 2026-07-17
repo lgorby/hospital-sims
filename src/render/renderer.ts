@@ -8,7 +8,7 @@ import { ROOM_DEFS, type RoomType } from '../sim/data/rooms';
 import type { WallEdge } from '../sim/entities/room';
 import { boundaryEdges } from '../sim/entities/room';
 import type { Patient } from '../sim/entities/patient';
-import { moodOf } from '../sim/formulas';
+import { auraCoversTile, moodOf } from '../sim/formulas';
 import { PATIENT_TILES_PER_TICK, STAFF_TILES_PER_TICK } from '../sim/systems/movement';
 import { samePoint, type GridPoint, type Rect } from '../sim/types';
 import type { Walker, World } from '../sim/world';
@@ -745,9 +745,22 @@ export class WorldRenderer {
     return this.world.rooms.get(this.selected.id)?.type === 'atrium';
   }
 
+  /**
+   * Overlay rebuild cache (perf DoD finding: the per-frame per-tile hasAura
+   * queries + full Graphics rebuild cost ~2ms/frame at 40×40 — ~10× the rest
+   * of the render pass). The aura overlay is rebuilt ONLY when this key moves:
+   * `world.auraRevision` (bumped solely when the aura grid actually
+   * recomputes) plus the overlay-relevant local state (mode on/off, atrium
+   * build-ghost rect). Otherwise the existing Graphics is reused untouched.
+   * The debug walk overlay stays uncached: walkability has no revision
+   * counter, and it's a debug toggle, not the measured hot path.
+   */
+  private lastOverlayKey: string | null = null;
+
   private drawOverlay(): void {
-    this.overlay.clear();
     if (this.showWalkOverlay) {
+      this.lastOverlayKey = null; // uncached debug path — always rebuilt
+      this.overlay.clear();
       for (let col = 0; col < this.world.cols; col++) {
         for (let row = 0; row < this.world.rows; row++) {
           if (this.world.tileAt(col, row)!.walkable) continue;
@@ -756,24 +769,53 @@ export class WorldRenderer {
       }
       return;
     }
-    if (!this.auraOverlayActive()) return;
-
-    // Ghost radius: potential coverage of the pending atrium rect.
-    const ghostRect = this.build?.type === 'atrium' ? this.build.rect : null;
-    const radius = BALANCE.wayfinding.guidanceAuraRadius;
-    const radiusSq = radius * radius;
-    const inGhostAura = (col: number, row: number): boolean => {
-      if (!ghostRect) return false;
-      for (let fc = ghostRect.col; fc < ghostRect.col + ghostRect.cols; fc++) {
-        for (let fr = ghostRect.row; fr < ghostRect.row + ghostRect.rows; fr++) {
-          const dc = col - fc;
-          const dr = row - fr;
-          if (dc * dc + dr * dr <= radiusSq) return true;
-        }
+    if (!this.auraOverlayActive()) {
+      if (this.lastOverlayKey !== 'off') {
+        this.overlay.clear();
+        this.lastOverlayKey = 'off';
       }
-      return false;
-    };
+      return;
+    }
 
+    // One refresh per frame BEFORE the revision compare: the signature check
+    // is what detects same-tick staffing changes (movement can deliver a
+    // greeter mid-tick — HANDOFF invariant), bumping auraRevision so this
+    // very frame rebuilds instead of showing one stale frame.
+    this.world.refreshAuras();
+
+    // Ghost radius: potential coverage of the pending atrium rect — or, before
+    // any drag has anchored one (GDD §9 "while placing"), of a MIN-SIZE atrium
+    // footprint anchored at the hovered tile, so arming the tool previews
+    // reach immediately. WHICH atrium is selected is deliberately not in the
+    // key — the overlay draws coverage for ALL atriums, so the picture only
+    // depends on the aura grid (auraRevision) and the preview geometry.
+    const atriumBuild = this.build?.type === 'atrium' ? this.build : null;
+    const ghostRect = atriumBuild?.rect ?? null;
+    const hoverRect =
+      atriumBuild && !ghostRect && this.hoveredTile
+        ? {
+            col: this.hoveredTile.col,
+            row: this.hoveredTile.row,
+            cols: ROOM_DEFS.atrium.minCols,
+            rows: ROOM_DEFS.atrium.minRows,
+          }
+        : null;
+    const previewRect = ghostRect ?? hoverRect;
+    // The hover leg makes the key pointer-dependent ONLY in the
+    // tool-armed-but-not-dragging state (and even then it moves per tile
+    // crossed, not per frame); every other state's key is pointer-independent,
+    // so the no-per-frame-rebuild guarantee holds outside placement.
+    let key = `aura:${this.world.auraRevision}`;
+    if (ghostRect) {
+      key += `:${ghostRect.col},${ghostRect.row},${ghostRect.cols},${ghostRect.rows}`;
+    } else if (atriumBuild) {
+      key += `:hover:${hoverRect ? `${hoverRect.col},${hoverRect.row}` : 'none'}`;
+    }
+    if (key === this.lastOverlayKey) return;
+    this.lastOverlayKey = key;
+
+    this.overlay.clear();
+    const radius = BALANCE.wayfinding.guidanceAuraRadius;
     for (let col = 0; col < this.world.cols; col++) {
       for (let row = 0; row < this.world.rows; row++) {
         const p = { col, row };
@@ -781,8 +823,12 @@ export class WorldRenderer {
           this.tintTile(col, row, 0x57bb6a, 0.32); // live guidance coverage
         } else if (this.world.hasComfortAura(p)) {
           this.tintTile(col, row, 0x57bb6a, 0.12); // unstaffed: dimmed potential
-        } else if (inGhostAura(col, row)) {
-          this.tintTile(col, row, 0xffe066, 0.18); // the ghost's future radius
+        } else if (previewRect && auraCoversTile(previewRect, p, radius)) {
+          // SSOT (audit #3): the preview asks THE membership formula, so it
+          // can never drift from the live coverage refreshAuras computes.
+          // Anchored-drag ghost keeps its wash; the pre-anchor hover preview
+          // is dimmed (same convention as the unstaffed comfort tint).
+          this.tintTile(col, row, 0xffe066, ghostRect ? 0.18 : 0.12);
         }
       }
     }

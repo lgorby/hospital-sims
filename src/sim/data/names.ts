@@ -37,3 +37,15 @@ export function generateAge(rng: SeededRng): number {
   const MAX_AGE = 94;
   return MIN_AGE + rng.intBelow(MAX_AGE - MIN_AGE + 1);
 }
+
+/**
+ * Staff are working-age (Expansion-1 QA fix: the shared 4–94 generator could
+ * mint an age-4 surgeon). Deliberately consumes EXACTLY one rng draw, the same
+ * as generateAge — swapping generators must not shift the seeded rng stream
+ * any further than the range change itself.
+ */
+export function generateStaffAge(rng: SeededRng): number {
+  const MIN_AGE = 22;
+  const MAX_AGE = 68;
+  return rng.intInRange(MIN_AGE, MAX_AGE);
+}

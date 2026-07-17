@@ -35,6 +35,25 @@ function diamond(g: Graphics, fill: number, alpha = 1): Graphics {
     .fill({ color: fill, alpha });
 }
 
+/**
+ * Placeholder-art embellishments drawn on top of the generic prism. Typed
+ * against PropId so a typo'd id is a compile error; Partial means any id
+ * absent here renders as a plain prism by default — a brand-new prop needs
+ * NO code in this file. This is placeholder paint only: the atlas lookup
+ * contract (`propKey`, §2.6) is untouched, and strip length still lives ONLY
+ * in `PROP_STYLE[id].tiles`.
+ */
+type PropDecor = 'pillow' | 'backrest';
+const PROP_DECOR: Readonly<Partial<Record<PropId, PropDecor>>> = {
+  bed: 'pillow',
+  traumaBed: 'pillow',
+  // Expansion 1: patients lie on the OR table, so it reads as a bed. Scanner
+  // gantries/bores and lab benches stay deliberately plain prisms — correct
+  // placeholder art until the §2.6 atlas pass.
+  orTable: 'pillow',
+  chair: 'backrest',
+};
+
 /** A box prism filling one tile — the per-tile slice of (multi-tile) furniture. */
 function propSlice(id: PropId, slice: PropSlice): Graphics {
   const { color, rise } = PROP_STYLE[id];
@@ -55,11 +74,11 @@ function propSlice(id: PropId, slice: PropSlice): Graphics {
     .fill(shade(color, 0.78));
   // Top face — west slices slightly lighter so strips read as one object.
   g.poly(top).fill(slice === 'west' ? shade(color, 1.12) : color);
-  if ((id === 'bed' || id === 'traumaBed') && slice !== 'east') {
-    // Pillow on the head end
+  const decor = PROP_DECOR[id];
+  if (decor === 'pillow' && slice !== 'east') {
+    // Pillow on the head end (west slice of a strip, or a single tile).
     g.ellipse(TILE_W / 2, TILE_H / 2 - rise - 2, 12, 6).fill(0xffffff);
-  }
-  if (id === 'chair') {
+  } else if (decor === 'backrest') {
     // Little backrest so seats read at a glance.
     g.poly([0, TILE_H / 2 - rise, TILE_W / 2, TILE_H / 4 - rise, TILE_W / 2, TILE_H / 4 - rise - 8, 0, TILE_H / 2 - rise - 8])
       .fill(shade(color, 0.9));
@@ -111,6 +130,14 @@ export const FEET_ANCHOR = { x: 0.5, y: 46 / 47 };
 
 const SKIN_TONES = [0xf2c9a8, 0xd9a377, 0xb07b4f, 0x8a5a3a] as const;
 const HAIR_COLORS = [0x3b2f2f, 0x6e4f2f, 0xc7873a, 0x8f8f8f] as const;
+/**
+ * Roles drawn with a scrub cap instead of hair. Typed against RoleId so a
+ * typo'd id is a compile error; any role absent here gets the generic hair
+ * treatment — new roles need no code change anywhere in this module (the
+ * generator iterates ROLE_IDS and reads ROLE_DEFS[role].color, both SSOT).
+ */
+const SCRUB_CAP_ROLES: ReadonlySet<RoleId> = new Set(['nurse', 'respTherapist', 'surgeon']);
+
 const GOWN_COLOR = 0xdfe8f5;
 const GOWN_TRIM = 0x9fb0c5;
 const PATIENT_PANTS = 0xb9c8de;
@@ -182,7 +209,7 @@ function drawCharacter(kind: CharacterKind, skin: number, hair: number, frame: n
   }
   // Head: hair/cap behind, face in front.
   const headY = -36 + bob;
-  const scrubCap = kind === 'nurse' || kind === 'respTherapist';
+  const scrubCap = !isPatient && SCRUB_CAP_ROLES.has(kind);
   if (scrubCap) {
     g.circle(0, headY - 2, 6.2).fill(shade(outfit, 0.9));
   } else {

@@ -3,7 +3,7 @@ import type { GameLoop, Speed } from '../loop';
 import { GAME_MINUTES_PER_HOUR } from '../sim/clock';
 import { BALANCE } from '../sim/data/balance';
 import { dayNet, type DayReport } from '../sim/dailyStats';
-import { money } from './format';
+import { money, signedDelta } from './format';
 import { modalRow, modalSection } from './modal';
 
 const RESUME_FALLBACK: Speed = 1;
@@ -80,9 +80,14 @@ export class DailyReportModal {
         : formatGameMinutes(report.avgWaitGameMinutes) + (report.waitBonusAwarded ? ' ★' : '');
     this.row(standing, 'Avg wait to treatment', wait, report.waitBonusAwarded ? 'good' : '');
     if (report.waitBonusAwarded) {
-      this.row(standing, 'Fast-care bonus', `+${BALANCE.reputation.dayCloseWaitBonus} rep`, 'good');
+      this.row(
+        standing,
+        'Fast-care bonus',
+        `${signedDelta(BALANCE.reputation.dayCloseWaitBonus)} rep`,
+        'good',
+      );
     }
-    const repText = `${report.repDelta >= 0 ? '+' : ''}${report.repDelta} → ${Math.round(report.reputation)}`;
+    const repText = `${signedDelta(report.repDelta)} → ${Math.round(report.reputation)}`;
     this.row(standing, 'Reputation', repText, report.repDelta >= 0 ? 'good' : 'bad');
 
     const cont = document.createElement('button');

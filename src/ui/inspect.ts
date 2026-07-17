@@ -5,10 +5,16 @@ import { CONDITION_DEFS } from '../sim/data/conditions';
 import { ROOM_DEFS } from '../sim/data/rooms';
 import { ROLE_DEFS } from '../sim/data/roles';
 import { BALANCE } from '../sim/data/balance';
-import { moodOf } from '../sim/formulas';
+import { moodOf, sellbackAmount } from '../sim/formulas';
+import type { PatientStage } from '../sim/entities/patient';
+import type { Reservation, StaffDuty } from '../sim/entities/staff';
 import type { World } from '../sim/world';
+import { patientStageLabel, staffDutyLabel } from './format';
 
-const PERCENT_MAX = 100;
+/** Health/patience scale ceiling comes from the balance table (SSOT audit #1). */
+const VITALS_MAX = BALANCE.stats.vitalsMax;
+/** CSS width percentage scale — presentation, not a game number. */
+const CSS_PERCENT = 100;
 const MAX_SKILL_STARS = BALANCE.stats.max;
 
 /** Escape interpolations — names/thoughts are data and must never be markup. */
@@ -113,16 +119,24 @@ export class InspectPanel {
     }
   }
 
+  /** Phase of the reservation a reserved stage/duty is bound to (else undefined). */
+  private reservationPhase(state: PatientStage | StaffDuty): Reservation['phase'] | undefined {
+    return state.kind === 'reserved'
+      ? this.world.reservations.get(state.reservationId)?.phase
+      : undefined;
+  }
+
   private line(label: string, value: string): string {
     return `<div class="inspect-row"><span>${esc(label)}</span><span>${esc(value)}</span></div>`;
   }
 
   private bar(label: string, value: number, color: string): string {
-    const pct = Math.max(0, Math.min(PERCENT_MAX, value));
+    const clamped = Math.max(0, Math.min(VITALS_MAX, value));
+    const pct = (clamped / VITALS_MAX) * CSS_PERCENT;
     return (
       `<div class="inspect-row"><span>${label}</span>` +
       `<span class="bar"><span style="width:${pct.toFixed(0)}%;background:${color}"></span></span>` +
-      `<span class="bar-num">${Math.ceil(pct)}</span></div>`
+      `<span class="bar-num">${Math.ceil(clamped)}</span></div>`
     );
   }
 
@@ -138,7 +152,7 @@ export class InspectPanel {
         this.line('Acuity', p.acuity === null ? 'not triaged' : `${p.acuity}`) +
         this.bar('Health', p.health, '#57bb6a') +
         this.bar('Patience', p.patience, '#e0a800') +
-        this.line('State', p.stage.kind) +
+        this.line('State', patientStageLabel(p.stage, this.reservationPhase(p.stage))) +
         this.line('Billed', `$${p.billed.toLocaleString()}`);
       return;
     }
@@ -150,7 +164,11 @@ export class InspectPanel {
         this.line('Role', ROLE_DEFS[s.role].label) +
         this.line('Skill', stars) +
         this.line('Salary', `$${s.salaryPerDay}/day`) +
-        this.line('Duty', s.duty.kind + (s.firing ? ' (leaving after this patient)' : ''));
+        this.line(
+          'Duty',
+          staffDutyLabel(s.duty, this.reservationPhase(s.duty)) +
+            (s.firing ? ' (leaving after this patient)' : ''),
+        );
       return;
     }
     const room = this.world.rooms.get(selection.id)!;
@@ -170,7 +188,8 @@ export class InspectPanel {
       this.line('Quality', `+${room.quality}`) +
       this.line('Staffed by', posted.map((s) => s.name.short).join(', ') || '—') +
       this.line('Treating', occupant);
-    const refund = Math.floor(def.cost * BALANCE.economy.roomSellbackRatio);
+    // sellbackAmount is the sim's payout AND this label (SSOT audit #2).
+    const refund = sellbackAmount(room.type);
     this.actionButton.textContent = sellCheck.ok
       ? `Sell (+$${refund.toLocaleString()})`
       : `Sell — ${sellCheck.reason}`;

@@ -5,7 +5,7 @@ import { GameClock, gameMinutesToTicks, TICKS_PER_DAY, ticksToGameMinutes } from
 import { emptyDayTally, type DayReport, type DayTally } from './dailyStats';
 import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, type ConditionId } from './data/conditions';
-import { generateAge, generateName } from './data/names';
+import { generateAge, generateName, generateStaffAge } from './data/names';
 import { ROLE_DEFS, ROLE_IDS, type RoleId } from './data/roles';
 import {
   PROP_STYLE,
@@ -18,7 +18,13 @@ import {
 import type { Door, Room } from './entities/room';
 import { LEGAL_STAGE_TRANSITIONS, type Patient, type PatientStage } from './entities/patient';
 import type { Candidate, Reservation, Staff } from './entities/staff';
-import { candidateSalary, dischargeReputationGain } from './formulas';
+import {
+  auraCoversTile,
+  candidateSalary,
+  checkInCapacity,
+  dischargeReputationGain,
+  sellbackAmount,
+} from './formulas';
 import { findPath, type PathGrid } from './path/astar';
 import { SeededRng } from './rng';
 import { updateDecay } from './systems/decay';
@@ -150,13 +156,35 @@ export class World implements PathGrid {
     this.nextEntityId = state.nextEntityId;
   }
 
+  /**
+   * SAVE-SCOPED (src/sim/save.ts only): refill the hiring pool to
+   * candidatesPerRole for every role, via the normal makeCandidate path.
+   * The pool is minted once in the constructor and only replenished
+   * like-for-like on hire, so a save from BEFORE a role existed could
+   * otherwise never offer it (v1→v2 review MAJOR: an unhirable Surgeon the
+   * dispatcher still hints for). A complete pool — every same-version save —
+   * is a strict NO-OP: zero rng draws, zero ids issued, so byte-identity of
+   * save→load→save is untouched. Topping up a deficit consumes rng draws and
+   * ids, deliberately diverging the migrated world from its origin version.
+   * MUST run after restorePrivateState (ids come from the restored counter).
+   */
+  topUpCandidates(): void {
+    for (const role of ROLE_IDS) {
+      let have = 0;
+      for (const c of this.candidates) if (c.role === role) have += 1;
+      for (let i = have; i < BALANCE.hiring.candidatesPerRole; i++) {
+        this.candidates.push(this.makeCandidate(role));
+      }
+    }
+  }
+
   private makeCandidate(role: RoleId): Candidate {
     const skill = this.rng.intInRange(BALANCE.stats.min, BALANCE.stats.max);
     return {
       id: this.takeId(),
       role,
       name: generateName(this.rng),
-      age: generateAge(this.rng),
+      age: generateStaffAge(this.rng),
       skill,
       salaryPerDay: candidateSalary(ROLE_DEFS[role].salaryPerDay, skill),
     };
@@ -293,6 +321,11 @@ export class World implements PathGrid {
 
   // ------------------------------------------------------------------- auras
 
+  /** Bumped each time the aura grid actually recomputes — cheap dirty-check
+   *  for overlays. Deliberately NOT saved (plan rule 6 checklist): a derived
+   *  render-cache stamp with no sim meaning; it resets to 0 on load and the
+   *  'never' aura signature rebuilds coverage lazily on first query. */
+  auraRevision = 0;
   /** Aura state is fully determined by this signature — atrium footprints + staffing. */
   private auraSignature = 'never';
   /** Signature is rechecked at most once per tick (M3 review: overlay queries per frame). */
@@ -329,24 +362,27 @@ export class World implements PathGrid {
       .join('|');
     if (signature === this.auraSignature) return;
     this.auraSignature = signature;
+    // Public change stamp: render-side overlay caches rebuild ONLY when this
+    // moves (perf DoD finding: per-frame full rebuilds cost ~2ms at 40×40).
+    this.auraRevision += 1;
     this.auraGuidance = Array.from({ length: this.cols }, () => Array(this.rows).fill(false));
     this.auraComfort = Array.from({ length: this.cols }, () => Array(this.rows).fill(false));
 
     const radius = BALANCE.wayfinding.guidanceAuraRadius;
-    const radiusSq = radius * radius;
     for (const room of atriums) {
       const staffed = this.atriumStaffed(room);
-      // Euclidean ≤ radius from ANY footprint tile, walls ignored (M3 ruling).
-      for (const foot of rectTiles(room.rect)) {
-        for (let col = foot.col - radius; col <= foot.col + radius; col++) {
-          for (let row = foot.row - radius; row <= foot.row + radius; row++) {
-            if (col < 0 || row < 0 || col >= this.cols || row >= this.rows) continue;
-            const dc = col - foot.col;
-            const dr = row - foot.row;
-            if (dc * dc + dr * dr > radiusSq) continue;
-            this.auraComfort[col]![row] = true;
-            if (staffed) this.auraGuidance[col]![row] = true;
-          }
+      // Membership via the ONE aura formula (SSOT audit #3): Euclidean ≤
+      // radius from ANY footprint tile, walls ignored (M3 ruling) — the
+      // build-ghost preview asks auraCoversTile directly, so it can't drift.
+      const minCol = Math.max(0, room.rect.col - radius);
+      const maxCol = Math.min(this.cols - 1, room.rect.col + room.rect.cols - 1 + radius);
+      const minRow = Math.max(0, room.rect.row - radius);
+      const maxRow = Math.min(this.rows - 1, room.rect.row + room.rect.rows - 1 + radius);
+      for (let col = minCol; col <= maxCol; col++) {
+        for (let row = minRow; row <= maxRow; row++) {
+          if (!auraCoversTile(room.rect, { col, row }, radius)) continue;
+          this.auraComfort[col]![row] = true;
+          if (staffed) this.auraGuidance[col]![row] = true;
         }
       }
     }
@@ -593,7 +629,8 @@ export class World implements PathGrid {
         this.routeToCheckIn(p);
       }
     }
-    const sellback = Math.floor(ROOM_DEFS[room.type].cost * BALANCE.economy.roomSellbackRatio);
+    // SSOT (audit #2): the sim's payout and the UI's button label share this.
+    const sellback = sellbackAmount(room.type);
     this.cash += sellback;
     this.today.sellIncome += sellback;
     this.events.emit('cashChanged', { cash: this.cash });
@@ -609,7 +646,7 @@ export class World implements PathGrid {
     skill: number,
     salaryPerDay: number,
     name = generateName(this.rng),
-    age = generateAge(this.rng),
+    age = generateStaffAge(this.rng),
   ): Staff {
     const member: Staff = {
       id: this.takeId(),
@@ -686,8 +723,8 @@ export class World implements PathGrid {
       age: generateAge(this.rng),
       condition,
       acuity: null,
-      health: 100,
-      patience: 100,
+      health: BALANCE.stats.vitalsMax,
+      patience: BALANCE.stats.vitalsMax,
       wayfinding: this.rng.intInRange(BALANCE.stats.min, BALANCE.stats.max),
       lost: null,
       reportedMood: 'content',
@@ -725,8 +762,9 @@ export class World implements PathGrid {
   routeToCheckIn(patient: Patient): void {
     const receptions = this.roomsOfType('reception').filter((r) => r.door);
     const staffed = this.staffedReceptionIds();
-    // Capacity = the desk slot + queueDepthTiles behind it (GDD Flow rule 1).
-    const capacity = BALANCE.reception.queueDepthTiles + 1;
+    // Capacity = the desk slot + queueDepthTiles behind it (GDD Flow rule 1;
+    // SSOT audit #5 — the dispatcher and UI share checkInCapacity()).
+    const capacity = checkInCapacity();
     let best: Room | null = null;
     let bestKey = Infinity;
     for (const room of receptions) {
