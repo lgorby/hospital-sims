@@ -36,7 +36,7 @@ export interface PropSpec {
  */
 export const PROP_STYLE: Record<PropId, { color: number; rise: number; tiles: number }> = {
   desk: { color: 0xa07444, rise: 14, tiles: 1 },
-  chair: { color: 0x7d9463, rise: 8, tiles: 1 },
+  chair: { color: 0x6d7f99, rise: 8, tiles: 1 }, // muted steel-blue: contrasts the green waiting-room floor (art review)
   vitalsCart: { color: 0xd9d4c9, rise: 14, tiles: 1 },
   bed: { color: 0xbcd0e6, rise: 12, tiles: 2 },
   xrayMachine: { color: 0x4a4258, rise: 22, tiles: 2 },

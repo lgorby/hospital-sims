@@ -16,11 +16,14 @@ import { depthKey, TILE_H, TILE_W, toScreen, toTile, type TilePoint } from './is
 import {
   CHARACTER_FRAMES,
   characterKey,
+  facingFromStep,
   FEET_ANCHOR,
   generateCharacterTextures,
   generateTileTextures,
+  IDLE_FACING,
   PROP_RISE_PAD,
   propKey,
+  shade,
   variantFor,
   type CharacterKind,
   type PropSlice,
@@ -34,6 +37,13 @@ const PAN_SPEED_PX_PER_SEC = 700; // dt-scaled so pan speed is refresh-rate inde
 const EDGE_SCROLL_MARGIN_PX = 24;
 const MAX_DRAW_DT_SEC = 0.1;
 const WALL_HEIGHT = 34;
+/** Warm off-white wall base; per-edge light factor shades it for volume. */
+const WALL_BASE = 0xe9e5dd;
+/** Height of the lit top-cap rim and the floor-line baseboard band (screen px). */
+const WALL_CAP = 5;
+const WALL_BASEBOARD = 4;
+/** Near walls stay translucent so actors inside the room aren't occluded. */
+const WALL_NEAR_ALPHA = 0.55;
 /** Depth bias: far walls behind their tile's occupants, near walls in front. */
 const WALL_Z_FAR = -0.45;
 const WALL_Z_NEAR = 0.45;
@@ -292,7 +302,13 @@ export class WorldRenderer {
     this.roomVisuals.set(roomId, visuals);
   }
 
-  /** One boundary edge extruded upward; far edges sort behind the tile, near in front. */
+  /**
+   * One boundary edge extruded upward into a soft-shaded wall: a lit/shadowed
+   * outward face (light from the NW), a lit top-cap rim, a floor-line baseboard,
+   * and a subtle top-to-bottom gradient — so walls read as volume, not slabs.
+   * KEPT: far edges (N/W) opaque & sort behind the tile; near edges (S/E) stay
+   * translucent & sort in front, so actors inside the room aren't occluded.
+   */
   private wallGraphic(edge: WallEdge): Graphics {
     const { x, y } = toScreen(edge.inside.col, edge.inside.row);
     const dc = edge.outside.col - edge.inside.col;
@@ -300,24 +316,35 @@ export class WorldRenderer {
     let p1: [number, number];
     let p2: [number, number];
     let far: boolean;
+    let light: number; // per-face light factor: brightest facing NW, darkest facing SE
     if (dr === -1) {
-      [p1, p2, far] = [[x, y], [x + TILE_W / 2, y + TILE_H / 2], true]; // N
+      [p1, p2, far, light] = [[x, y], [x + TILE_W / 2, y + TILE_H / 2], true, 0.97]; // N
     } else if (dc === -1) {
-      [p1, p2, far] = [[x, y], [x - TILE_W / 2, y + TILE_H / 2], true]; // W
+      [p1, p2, far, light] = [[x, y], [x - TILE_W / 2, y + TILE_H / 2], true, 1.06]; // W
     } else if (dr === 1) {
-      [p1, p2, far] = [[x - TILE_W / 2, y + TILE_H / 2], [x, y + TILE_H], false]; // S
+      [p1, p2, far, light] = [[x - TILE_W / 2, y + TILE_H / 2], [x, y + TILE_H], false, 0.9]; // S
     } else {
-      [p1, p2, far] = [[x, y + TILE_H], [x + TILE_W / 2, y + TILE_H / 2], false]; // E
+      [p1, p2, far, light] = [[x, y + TILE_H], [x + TILE_W / 2, y + TILE_H / 2], false, 0.82]; // E
     }
+    const alpha = far ? 1 : WALL_NEAR_ALPHA;
+    const face = shade(WALL_BASE, light);
+    const H = WALL_HEIGHT;
     const g = new Graphics();
-    g.poly([
-      p1[0], p1[1],
-      p2[0], p2[1],
-      p2[0], p2[1] - WALL_HEIGHT,
-      p1[0], p1[1] - WALL_HEIGHT,
-    ])
-      .fill({ color: far ? 0xe9e5dd : 0xcfc8bc, alpha: far ? 1 : 0.55 })
-      .stroke({ color: 0xa89f90, width: 1 });
+    // Outward face.
+    g.poly([p1[0], p1[1], p2[0], p2[1], p2[0], p2[1] - H, p1[0], p1[1] - H])
+      .fill({ color: face, alpha });
+    // Gentle gradient — brighter toward the top of the face.
+    g.poly([p1[0], p1[1] - H * 0.45, p2[0], p2[1] - H * 0.45, p2[0], p2[1] - H, p1[0], p1[1] - H])
+      .fill({ color: shade(face, 1.08), alpha: alpha * 0.5 });
+    // Baseboard band at the floor line.
+    g.poly([p1[0], p1[1] - WALL_BASEBOARD, p2[0], p2[1] - WALL_BASEBOARD, p2[0], p2[1], p1[0], p1[1]])
+      .fill({ color: shade(face, 0.72), alpha });
+    // Lit top-cap rim.
+    g.poly([p1[0], p1[1] - H, p2[0], p2[1] - H, p2[0], p2[1] - H + WALL_CAP, p1[0], p1[1] - H + WALL_CAP])
+      .fill({ color: shade(face, 1.16), alpha });
+    // Subtle seam outline.
+    g.poly([p1[0], p1[1], p2[0], p2[1], p2[0], p2[1] - H, p1[0], p1[1] - H])
+      .stroke({ color: shade(face, 0.68), width: 1, alpha: alpha * 0.85 });
     g.zIndex = depthKey(edge.inside.col, edge.inside.row) + (far ? WALL_Z_FAR : WALL_Z_NEAR);
     return g;
   }
@@ -342,7 +369,7 @@ export class WorldRenderer {
 
   private makeCharacterSprite(kind: CharacterKind, entityId: number): Sprite {
     const sprite = new Sprite(
-      this.characterTextures.get(characterKey(kind, variantFor(kind, entityId), 0))!,
+      this.characterTextures.get(characterKey(kind, variantFor(kind, entityId), IDLE_FACING, 0))!,
     );
     sprite.anchor.set(FEET_ANCHOR.x, FEET_ANCHOR.y);
     this.sortedLayer.addChild(sprite);
@@ -359,14 +386,15 @@ export class WorldRenderer {
   ): void {
     let fc = walker.at.col;
     let fr = walker.at.row;
+    // Facing drives texture selection now (4 diagonal facings, §2.6); idle
+    // actors rest toward the viewer. scale.x stays 1 — mirroring, if any, is
+    // baked into the facing textures, not applied at draw time.
+    let facing = IDLE_FACING;
     if (walker.next) {
       const frac = Math.min(walker.progress + alpha * perTick, 1);
       fc += (walker.next.col - walker.at.col) * frac;
       fr += (walker.next.row - walker.at.row) * frac;
-      // Facing: every orthogonal step has a horizontal screen component
-      // (dc − dr is ±1), so mirror toward the direction of travel.
-      const screenDx = walker.next.col - walker.at.col - (walker.next.row - walker.at.row);
-      sprite.scale.x = screenDx > 0 ? 1 : -1;
+      facing = facingFromStep(walker.next.col - walker.at.col, walker.next.row - walker.at.row);
     }
     // Deterministic stance offset (Flow rule 14): transient tile-sharing never
     // renders as one person. Hash the id, never the sim RNG.
@@ -384,7 +412,7 @@ export class WorldRenderer {
           (CHARACTER_FRAMES - 1))
       : 0;
     sprite.texture = this.characterTextures.get(
-      characterKey(kind, variantFor(kind, entityId), frame),
+      characterKey(kind, variantFor(kind, entityId), facing, frame),
     )!;
   }
 
