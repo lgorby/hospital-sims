@@ -1,6 +1,7 @@
 import type { EventBus } from '../events';
 import type { GameLoop } from '../loop';
 import { money } from './format';
+import { modalRow, modalSection } from './modal';
 
 /**
  * Bankruptcy game-over screen (M4, GDD §2). The sim is already frozen when
@@ -28,30 +29,19 @@ export class GameOverScreen {
       const blurb = document.createElement('p');
       blurb.textContent = `Your hospital ran below the debt limit for a full day. It lasted ${day} day${day === 1 ? '' : 's'}.`;
 
-      const rows = document.createElement('div');
-      rows.className = 'modal-rows';
-      const stat = (label: string, value: string): void => {
-        const row = document.createElement('div');
-        row.className = 'modal-row';
-        const l = document.createElement('span');
-        l.textContent = label;
-        const v = document.createElement('span');
-        v.textContent = value;
-        row.append(l, v);
-        rows.appendChild(row);
-      };
-      stat('Patients treated', String(treated));
-      stat('Patients died', String(died));
-      stat('Final reputation', String(Math.round(reputation)));
-      stat('Final cash', money(cash));
+      card.append(title, blurb);
+      const rows = modalSection(card, 'Final standing');
+      modalRow(rows, 'Patients treated', String(treated));
+      modalRow(rows, 'Patients died', String(died));
+      modalRow(rows, 'Final reputation', String(Math.round(reputation)));
+      modalRow(rows, 'Final cash', money(cash));
 
       const again = document.createElement('button');
       again.textContent = 'New Game';
       again.className = 'modal-continue';
       again.setAttribute('data-ui', '');
       again.addEventListener('click', () => this.onNewGame());
-
-      card.append(title, blurb, rows, again);
+      card.appendChild(again);
       overlay.appendChild(card);
       parent.appendChild(overlay);
     });

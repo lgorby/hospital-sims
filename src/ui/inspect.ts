@@ -9,7 +9,7 @@ import { moodOf } from '../sim/formulas';
 import type { World } from '../sim/world';
 
 const PERCENT_MAX = 100;
-const MAX_SKILL_STARS = 5;
+const MAX_SKILL_STARS = BALANCE.stats.max;
 
 /** Escape interpolations — names/thoughts are data and must never be markup. */
 function esc(s: string): string {

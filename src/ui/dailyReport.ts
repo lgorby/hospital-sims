@@ -4,6 +4,7 @@ import { GAME_MINUTES_PER_HOUR } from '../sim/clock';
 import { BALANCE } from '../sim/data/balance';
 import { dayNet, type DayReport } from '../sim/dailyStats';
 import { money } from './format';
+import { modalRow, modalSection } from './modal';
 
 const RESUME_FALLBACK: Speed = 1;
 
@@ -96,25 +97,11 @@ export class DailyReportModal {
   }
 
   private section(label: string): HTMLElement {
-    const h = document.createElement('h3');
-    h.textContent = label;
-    this.card.appendChild(h);
-    const box = document.createElement('div');
-    box.className = 'modal-rows';
-    this.card.appendChild(box);
-    return box;
+    return modalSection(this.card, label);
   }
 
   private row(parent: HTMLElement, label: string, value: string, tone = ''): void {
-    const row = document.createElement('div');
-    row.className = 'modal-row';
-    const l = document.createElement('span');
-    l.textContent = label;
-    const v = document.createElement('span');
-    v.textContent = value;
-    if (tone) v.classList.add(tone);
-    row.append(l, v);
-    parent.appendChild(row);
+    modalRow(parent, label, value, tone);
   }
 }
 

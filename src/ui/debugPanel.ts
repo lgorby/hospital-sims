@@ -3,6 +3,7 @@ import type { WorldRenderer } from '../render/renderer';
 import { TICKS_PER_DAY, TICKS_PER_GAME_HOUR } from '../sim/clock';
 import { BALANCE } from '../sim/data/balance';
 import { CONDITION_DEFS, CONDITION_IDS } from '../sim/data/conditions';
+import { isTextEditable } from './dom';
 
 const SPAWN_BATCH = 5;
 
@@ -59,13 +60,7 @@ export class DebugPanel {
 
     window.addEventListener('keydown', (e) => {
       if (e.key !== '`') return;
-      const target = e.target;
-      if (
-        target instanceof HTMLElement &&
-        (target.isContentEditable || ['INPUT', 'TEXTAREA'].includes(target.tagName))
-      ) {
-        return;
-      }
+      if (isTextEditable(e.target)) return;
       this.panel.classList.toggle('hidden');
     });
   }

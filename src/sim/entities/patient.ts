@@ -22,6 +22,27 @@ export type PatientStage =
   | { kind: 'leaving'; reason: 'discharged' | 'ama' }
   | { kind: 'dead'; since: number };
 
+/**
+ * Legal lifecycle transitions, declared in one table (tech plan §2.3, audit
+ * #5). Self-transitions (same kind, new payload — re-slotting, re-queueing)
+ * are always legal and not listed. `World.setPatientStage` is the enforcement
+ * point; violations are counted, never thrown (prod degrades gracefully,
+ * tests assert the counter is empty).
+ */
+export const LEGAL_STAGE_TRANSITIONS: Record<
+  PatientStage['kind'],
+  readonly PatientStage['kind'][]
+> = {
+  atEntrance: ['queuedCheckIn', 'leaving', 'dead'],
+  queuedCheckIn: ['checkingIn', 'atEntrance', 'leaving', 'dead'],
+  checkingIn: ['queuedCheckIn', 'waitingTriage', 'atEntrance', 'leaving', 'dead'],
+  waitingTriage: ['reserved', 'leaving', 'dead'],
+  waiting: ['reserved', 'leaving', 'dead'],
+  reserved: ['waitingTriage', 'waiting', 'leaving', 'dead'],
+  leaving: [],
+  dead: [],
+};
+
 export interface Patient {
   id: number;
   name: PersonName;

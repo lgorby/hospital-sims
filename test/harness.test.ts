@@ -128,6 +128,9 @@ function runHospital(
       if (world.patients.get(reservation.patientId)?.lost) summary.lostHolderObserved = true;
     }
   }
+  // Stage discipline (audit #5): days of full-pipeline sim must produce zero
+  // illegal lifecycle transitions.
+  expect(world.stageViolations).toEqual([]);
   return summary;
 }
 
