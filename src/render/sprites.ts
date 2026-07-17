@@ -45,16 +45,24 @@ function bedSlice(westHalf: boolean): Graphics {
   return g;
 }
 
-function person(): Graphics {
+function person(bodyColor: number): Graphics {
   const g = new Graphics();
   // Near-invisible padding rect pins the texture bounds to exactly
   // (-8,-44)..(8,1) so the renderer's PERSON_OFFSET stays trivially correct.
   g.rect(-8, -44, 16, 45).fill({ color: 0xffffff, alpha: 0.001 });
-  // Feet at (0,0) in local space; drawn upward. Gown-colored capsule + head.
+  // Feet at (0,0) in local space; drawn upward. Role-colored capsule + head
+  // (the palette-swap scheme from tech plan §2.6, placeholder edition).
   g.ellipse(0, -4, 7, 4).fill({ color: 0x000000, alpha: 0.18 }); // contact shadow
-  g.roundRect(-7, -30, 14, 26, 7).fill(0xdfe8f5).stroke({ color: 0x9fb0c5, width: 1 });
+  g.roundRect(-7, -30, 14, 26, 7).fill(bodyColor).stroke({ color: 0x555f6b, width: 1 });
   g.circle(0, -36, 7).fill(0xf2c9a8).stroke({ color: 0xc9a184, width: 1 });
   return g;
+}
+
+/** Patient gown color — staff use their ROLE_DEFS color via generatePersonTexture. */
+const GOWN_COLOR = 0xdfe8f5;
+
+export function generatePersonTexture(renderer: Renderer, bodyColor: number): Texture {
+  return renderer.generateTexture(person(bodyColor));
 }
 
 export function generateTileTextures(renderer: Renderer): TileTextures {
@@ -73,6 +81,6 @@ export function generateTileTextures(renderer: Renderer): TileTextures {
     entrance: renderer.generateTexture(entrance),
     bedWest: renderer.generateTexture(bedSlice(true)),
     bedEast: renderer.generateTexture(bedSlice(false)),
-    patient: renderer.generateTexture(person()),
+    patient: generatePersonTexture(renderer, GOWN_COLOR),
   };
 }

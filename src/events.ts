@@ -15,6 +15,18 @@ export interface EventMap {
   /** A build/sell command failed sim-side validation (UI shows the reason). */
   buildRejected: { reason: string };
   patientSpawned: { patientId: number };
+  patientDied: { patientId: number; name: string; condition: string };
+  patientLeftAma: { patientId: number; name: string };
+  patientDischarged: { patientId: number; name: string; totalBilled: number };
+  patientComplication: { patientId: number; name: string };
+  feeBilled: { amount: number; label: string };
+  staffHired: { staffId: number };
+  staffFired: { staffId: number };
+  /** Non-terminal staff change (e.g. fire deferred while mid-job) — UI re-renders. */
+  staffUpdated: { staffId: number };
+  /** Advisory toast: layout blocked a dispatch, or a needed facility is missing (Flow rules 5/8). */
+  hint: { message: string };
+  reputationChanged: { reputation: number };
   /** M0 debug: a marker was toggled on a tile via the command queue. */
   debugMarkerToggled: { col: number; row: number; present: boolean };
 }

@@ -31,7 +31,12 @@ function fitsMinimum(type: RoomType, rect: Rect): boolean {
  * Used by both the UI ghost preview and the sim's command handler — one
  * function, per SSOT rule 4.
  */
-export function validateRoomRect(world: World, type: RoomType, rect: Rect): Validation {
+export function validateRoomRect(
+  world: World,
+  type: RoomType,
+  rect: Rect,
+  free = false,
+): Validation {
   if (rect.cols < 1 || rect.rows < 1) return fail('Drag out a room footprint');
   if (
     rect.col < 0 ||
@@ -45,7 +50,7 @@ export function validateRoomRect(world: World, type: RoomType, rect: Rect): Vali
     const def = ROOM_DEFS[type];
     return fail(`${def.label} needs at least ${def.minCols}×${def.minRows}`);
   }
-  if (world.cash < ROOM_DEFS[type].cost) return fail('Not enough cash');
+  if (!free && world.cash < ROOM_DEFS[type].cost) return fail('Not enough cash');
 
   const entrance = BALANCE.map.entrance;
   for (const tile of rectTiles(rect)) {
@@ -63,8 +68,9 @@ export function validateRoomRect(world: World, type: RoomType, rect: Rect): Vali
       }
     }
   }
-  for (const patient of world.patients.values()) {
-    if (rectContains(rect, patient.at) || (patient.next && rectContains(rect, patient.next))) {
+  // GDD §5 "no actors on the footprint" — patients AND staff (M2 review #2).
+  for (const person of [...world.patients.values(), ...world.staff.values()]) {
+    if (rectContains(rect, person.at) || (person.next && rectContains(rect, person.next))) {
       return fail('Someone is standing there');
     }
   }
@@ -98,8 +104,9 @@ export function validateRoomBuild(
   type: RoomType,
   rect: Rect,
   door: Door | null,
+  free = false,
 ): Validation {
-  const rectCheck = validateRoomRect(world, type, rect);
+  const rectCheck = validateRoomRect(world, type, rect, free);
   if (!rectCheck.ok) return rectCheck;
 
   const isOpen = ROOM_DEFS[type].kind === 'open';
@@ -161,24 +168,28 @@ export function validateRoomBuild(
     }
   }
   // No one may be sealed into a pocket the walls create (M1 review M-5;
-  // GDD §5): everyone's standing tile must stay entrance-reachable.
-  for (const patient of world.patients.values()) {
-    const standing = patient.next ?? patient.at;
+  // GDD §5): everyone's standing tile must stay entrance-reachable —
+  // patients AND staff (M2 review #2).
+  for (const person of [...world.patients.values(), ...world.staff.values()]) {
+    const standing = person.next ?? person.at;
     if (!visited.has(keyOf(standing))) {
-      return fail(`Would trap ${patient.name.full}`);
+      return fail(`Would trap ${person.name.full}`);
     }
   }
   return OK;
 }
 
-/** Sell validation: M1 proxy for "unoccupied and unreserved" (Flow rule 9). */
+/** Sell validation: unoccupied and unreserved (Flow rule 9). */
 export function validateRoomSell(world: World, roomId: number): Validation {
   const room = world.rooms.get(roomId);
   if (!room) return fail('No such room');
-  for (const patient of world.patients.values()) {
+  for (const reservation of world.reservations.values()) {
+    if (reservation.roomId === roomId) return fail('Room is reserved');
+  }
+  for (const person of [...world.patients.values(), ...world.staff.values()]) {
     if (
-      rectContains(room.rect, patient.at) ||
-      (patient.next && rectContains(room.rect, patient.next))
+      rectContains(room.rect, person.at) ||
+      (person.next && rectContains(room.rect, person.next))
     ) {
       return fail('Someone is inside');
     }

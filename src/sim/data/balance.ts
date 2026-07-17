@@ -70,6 +70,8 @@ export const BALANCE = {
     durationSkillBase: 1.3,
     durationSkillFactor: 0.1,
     durationQualityFactor: 0.02,
+    /** Quality can never speed a treatment beyond this multiplier (exploit guard). */
+    durationQualityFloor: 0.7,
   },
   reputation: {
     starting: 300,
@@ -91,6 +93,13 @@ export const BALANCE = {
     selfRecoveryRollGameMinutes: 5,
     lostReservationTimeoutGameMinutes: 60,
   },
+  hiring: {
+    candidatesPerRole: 3,
+    /** Candidate salary = role base × (1 + (skill − 3) × this). */
+    salaryPerSkillStep: 0.08,
+  },
+  /** Ticks a dead patient remains visible before removal (render fade window). */
+  deathFadeTicks: 30,
   movement: {
     patientTilesPerSecond: 1.4,
     staffTilesPerSecond: 1.8,

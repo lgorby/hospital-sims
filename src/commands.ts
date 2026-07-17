@@ -9,7 +9,11 @@ import type { GridPoint, Rect } from './sim/types';
 export type Command =
   | { type: 'buildRoom'; roomType: RoomType; rect: Rect; doorOutside: GridPoint | null }
   | { type: 'sellRoom'; roomId: number }
+  | { type: 'hireStaff'; candidateId: number }
+  | { type: 'fireStaff'; staffId: number }
   | { type: 'debugSpawnPatient' }
+  | { type: 'debugForce'; patientId: number; outcome: 'death' | 'ama' | 'complication' }
+  | { type: 'debugFastForward'; ticks: number }
   | { type: 'debugWalkTo'; col: number; row: number }
   | { type: 'debugToggleMarker'; col: number; row: number };
 

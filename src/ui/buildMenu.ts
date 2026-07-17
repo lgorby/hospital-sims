@@ -13,6 +13,8 @@ const CSS_HEX_DIGITS = 6;
 export class BuildMenu {
   private buttons = new Map<string, HTMLButtonElement>();
   private hintEl!: HTMLElement;
+  /** The hire panel attaches its toggle behavior to this button. */
+  staffButton!: HTMLButtonElement;
 
   constructor(
     private renderer: WorldRenderer,
@@ -34,6 +36,7 @@ export class BuildMenu {
       button.append(swatch, `${def.label} $${def.cost.toLocaleString()}`);
     }
 
+    this.staffButton = this.addButton(bar, 'staff', 'Staff', () => {});
     this.addButton(bar, 'sell', 'Sell', () => this.toggleSell()).classList.add('sell');
     this.addButton(bar, 'spawn', 'Spawn Patient', () =>
       this.commands.push({ type: 'debugSpawnPatient' }),

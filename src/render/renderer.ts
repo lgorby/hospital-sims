@@ -1,16 +1,18 @@
-import { Application, Container, Graphics, Sprite } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
 import type { CommandQueue } from '../commands';
 import type { EventBus } from '../events';
 import { doorFromOutsideTile, validateRoomBuild, validateRoomRect } from '../sim/build';
 import { BALANCE } from '../sim/data/balance';
+import { ROLE_DEFS, type RoleId } from '../sim/data/roles';
 import { ROOM_DEFS, type RoomType } from '../sim/data/rooms';
 import type { WallEdge } from '../sim/entities/room';
 import { boundaryEdges } from '../sim/entities/room';
-import { PATIENT_TILES_PER_TICK } from '../sim/systems/movement';
+import type { Patient } from '../sim/entities/patient';
+import { PATIENT_TILES_PER_TICK, STAFF_TILES_PER_TICK } from '../sim/systems/movement';
 import { samePoint, type GridPoint, type Rect } from '../sim/types';
-import type { World } from '../sim/world';
+import type { Walker, World } from '../sim/world';
 import { depthKey, TILE_H, TILE_W, toScreen, toTile, type TilePoint } from './iso';
-import { generateTileTextures, type TileTextures } from './sprites';
+import { generatePersonTexture, generateTileTextures, type TileTextures } from './sprites';
 
 const ZOOM_STEPS = [0.5, 1, 2] as const;
 const DEFAULT_ZOOM_INDEX = 1;
@@ -50,6 +52,14 @@ export class WorldRenderer {
   private markers = new Map<string, Sprite>();
   private roomVisuals = new Map<number, (Sprite | Graphics)[]>();
   private patientSprites = new Map<number, Sprite>();
+  private staffSprites = new Map<number, Sprite>();
+  private bubbles = new Map<number, Text>();
+  private roleTextures = new Map<RoleId, Texture>();
+  private overlay = new Graphics();
+  /** Debug: tint unwalkable tiles (toggled from the debug panel). */
+  showWalkOverlay = false;
+  /** Idle-click selection — the debug panel and readout use it. */
+  selectedPatientId: number | null = null;
   private zoomIndex: number = DEFAULT_ZOOM_INDEX;
   private heldKeys = new Set<string>();
   private panning: { startX: number; startY: number; camX: number; camY: number } | null = null;
@@ -82,6 +92,9 @@ export class WorldRenderer {
     mount.appendChild(this.app.canvas);
 
     this.textures = generateTileTextures(this.app.renderer);
+    for (const [role, def] of Object.entries(ROLE_DEFS)) {
+      this.roleTextures.set(role as RoleId, generatePersonTexture(this.app.renderer, def.color));
+    }
     this.sortedLayer.sortableChildren = true;
     this.camera.addChild(this.groundLayer, this.roomFloorLayer, this.sortedLayer);
     this.app.stage.addChild(this.camera);
@@ -90,7 +103,7 @@ export class WorldRenderer {
 
     this.highlight = new Sprite(this.textures.highlight);
     this.highlight.visible = false;
-    this.camera.addChild(this.highlight, this.ghost);
+    this.camera.addChild(this.overlay, this.highlight, this.ghost);
 
     this.centerCamera();
     this.bindInput();
@@ -100,7 +113,9 @@ export class WorldRenderer {
     );
     this.events.on('roomBuilt', ({ roomId }) => this.drawRoom(roomId));
     this.events.on('roomSold', ({ roomId }) => this.removeRoom(roomId));
-    this.events.on('patientSpawned', ({ patientId }) => this.addPatient(patientId));
+
+    // Rooms that existed before the renderer (new-game start state).
+    for (const roomId of this.world.rooms.keys()) this.drawRoom(roomId);
   }
 
   // ---------------------------------------------------------------- mode API
@@ -247,31 +262,86 @@ export class WorldRenderer {
     this.roomVisuals.delete(roomId);
   }
 
-  private addPatient(patientId: number): void {
-    const sprite = new Sprite(this.textures.patient);
-    this.sortedLayer.addChild(sprite);
-    this.patientSprites.set(patientId, sprite);
+  /** Mood bubble per GDD §10: 💢 impatient/AMA, 💀 critical, 💚 treated. */
+  private static bubbleFor(patient: Patient): string {
+    if (patient.stage.kind === 'dead') return '';
+    if (patient.stage.kind === 'leaving') {
+      return patient.stage.reason === 'discharged' ? '💚' : '💢';
+    }
+    if (patient.health < 30) return '💀';
+    if (patient.patience < 30) return '💢';
+    return '';
   }
 
-  private updatePatients(alpha: number): void {
-    const perTick = PATIENT_TILES_PER_TICK;
+  private placeWalker(sprite: Sprite, walker: Walker, perTick: number, alpha: number): void {
+    let fc = walker.at.col;
+    let fr = walker.at.row;
+    if (walker.next) {
+      const frac = Math.min(walker.progress + alpha * perTick, 1);
+      fc += (walker.next.col - walker.at.col) * frac;
+      fr += (walker.next.row - walker.at.row) * frac;
+    }
+    const { x, y } = toScreen(fc, fr);
+    sprite.position.set(x + PERSON_OFFSET.x, y + TILE_H / 2 + PERSON_OFFSET.y);
+    sprite.zIndex = depthKey(fc, fr);
+  }
+
+  /** Poll-based actor sync: create/destroy sprites by diffing the world maps. */
+  private updateActors(alpha: number): void {
+    for (const [id, patient] of this.world.patients) {
+      if (!this.patientSprites.has(id)) {
+        const sprite = new Sprite(this.textures.patient);
+        this.sortedLayer.addChild(sprite);
+        this.patientSprites.set(id, sprite);
+      }
+      const sprite = this.patientSprites.get(id)!;
+      this.placeWalker(sprite, patient, PATIENT_TILES_PER_TICK, alpha);
+      sprite.alpha =
+        patient.stage.kind === 'dead'
+          ? Math.max(0, 1 - (this.world.clock.tick - patient.stage.since) / BALANCE.deathFadeTicks)
+          : 1;
+
+      const emoji = WorldRenderer.bubbleFor(patient);
+      let bubble = this.bubbles.get(id);
+      if (emoji && !bubble) {
+        bubble = new Text({ text: emoji, style: { fontSize: 16 } });
+        this.sortedLayer.addChild(bubble);
+        this.bubbles.set(id, bubble);
+      }
+      if (bubble) {
+        if (!emoji) {
+          bubble.destroy();
+          this.bubbles.delete(id);
+        } else {
+          bubble.text = emoji;
+          bubble.position.set(sprite.position.x, sprite.position.y - 16);
+          bubble.zIndex = sprite.zIndex + 0.01;
+        }
+      }
+    }
     for (const [id, sprite] of this.patientSprites) {
-      const patient = this.world.patients.get(id);
-      if (!patient) {
+      if (!this.world.patients.has(id)) {
         sprite.destroy();
         this.patientSprites.delete(id);
-        continue;
+        this.bubbles.get(id)?.destroy();
+        this.bubbles.delete(id);
+        if (this.selectedPatientId === id) this.selectedPatientId = null;
       }
-      let fc = patient.at.col;
-      let fr = patient.at.row;
-      if (patient.next) {
-        const frac = Math.min(patient.progress + alpha * perTick, 1);
-        fc += (patient.next.col - patient.at.col) * frac;
-        fr += (patient.next.row - patient.at.row) * frac;
+    }
+
+    for (const [id, member] of this.world.staff) {
+      if (!this.staffSprites.has(id)) {
+        const sprite = new Sprite(this.roleTextures.get(member.role)!);
+        this.sortedLayer.addChild(sprite);
+        this.staffSprites.set(id, sprite);
       }
-      const { x, y } = toScreen(fc, fr);
-      sprite.position.set(x + PERSON_OFFSET.x, y + TILE_H / 2 + PERSON_OFFSET.y);
-      sprite.zIndex = depthKey(fc, fr);
+      this.placeWalker(this.staffSprites.get(id)!, member, STAFF_TILES_PER_TICK, alpha);
+    }
+    for (const [id, sprite] of this.staffSprites) {
+      if (!this.world.staff.has(id)) {
+        sprite.destroy();
+        this.staffSprites.delete(id);
+      }
     }
   }
 
@@ -349,7 +419,14 @@ export class WorldRenderer {
       else this.onHint?.('No room there');
       return;
     }
-    this.commands.push({ type: 'debugWalkTo', col: tile.col, row: tile.row });
+    // Idle mode: select the patient standing on (or stepping into) the tile.
+    this.selectedPatientId = null;
+    for (const patient of this.world.patients.values()) {
+      if (samePoint(patient.at, tile) || (patient.next && samePoint(patient.next, tile))) {
+        this.selectedPatientId = patient.id;
+        break;
+      }
+    }
   }
 
   private finishDrag(): void {
@@ -554,7 +631,22 @@ export class WorldRenderer {
       }
     }
 
-    this.updatePatients(alpha);
+    this.updateActors(alpha);
     this.drawGhost();
+    this.drawOverlay();
+  }
+
+  private drawOverlay(): void {
+    this.overlay.clear();
+    if (!this.showWalkOverlay) return;
+    for (let col = 0; col < this.world.cols; col++) {
+      for (let row = 0; row < this.world.rows; row++) {
+        if (this.world.tileAt(col, row)!.walkable) continue;
+        const { x, y } = toScreen(col, row);
+        this.overlay
+          .poly([x, y, x + TILE_W / 2, y + TILE_H / 2, x, y + TILE_H, x - TILE_W / 2, y + TILE_H / 2])
+          .fill({ color: 0xd94f4f, alpha: 0.4 });
+      }
+    }
   }
 }

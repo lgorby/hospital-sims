@@ -2,8 +2,11 @@ import { BALANCE } from './data/balance';
 
 const GAME_MINUTES_PER_DAY = 24 * 60;
 const REAL_SECONDS_PER_DAY = BALANCE.time.gameDayRealMinutes * 60;
-/** Exported for tests and systems — never re-derive or hardcode this. */
+/** Exported for tests and systems — never re-derive or hardcode these. */
 export const TICKS_PER_DAY = REAL_SECONDS_PER_DAY * BALANCE.time.ticksPerSecond;
+export const GAME_MINUTES_PER_HOUR = 60;
+export const HOURS_PER_DAY = 24;
+export const TICKS_PER_GAME_HOUR = TICKS_PER_DAY / HOURS_PER_DAY;
 
 /** The one place time conversions live (tech plan §3.1 rule 5). */
 export const GAME_MINUTES_PER_TICK = GAME_MINUTES_PER_DAY / TICKS_PER_DAY;

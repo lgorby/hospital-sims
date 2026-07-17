@@ -1,5 +1,6 @@
 import type { EventBus } from '../events';
 import type { GameLoop, Speed } from '../loop';
+import { CONDITION_DEFS } from '../sim/data/conditions';
 import type { WorldRenderer } from '../render/renderer';
 import type { World } from '../sim/world';
 
@@ -18,6 +19,7 @@ const SPEEDS: { value: Speed; label: string }[] = [
 export class Hud {
   private clockEl!: HTMLElement;
   private cashEl!: HTMLElement;
+  private repEl!: HTMLElement;
   private tickEl!: HTMLElement;
   private readoutEl!: HTMLElement;
   private speedButtons = new Map<Speed, HTMLButtonElement>();
@@ -32,6 +34,7 @@ export class Hud {
   mount(hudRoot: HTMLElement, readoutRoot: HTMLElement): void {
     this.clockEl = Hud.chip(hudRoot, 'hud-clock');
     this.cashEl = Hud.chip(hudRoot, 'hud-cash');
+    this.repEl = Hud.chip(hudRoot, 'hud-rep');
     this.tickEl = Hud.chip(hudRoot, 'hud-tick');
 
     const speedGroup = document.createElement('div');
@@ -73,9 +76,21 @@ export class Hud {
   /** Polled once per frame by the loop's render callback. */
   update(): void {
     this.clockEl.textContent = this.world.clock.display;
-    this.cashEl.textContent = `$${this.world.cash.toLocaleString()}`;
+    this.cashEl.textContent = `$${Math.floor(this.world.cash).toLocaleString()}`;
+    this.repEl.textContent = `Rep ${Math.round(this.world.reputation)}`;
     this.tickEl.textContent = `tick ${this.world.clock.tick}`;
+
+    const parts: string[] = [];
     const hovered = this.renderer.hoveredTile;
-    this.readoutEl.textContent = hovered ? `(${hovered.col}, ${hovered.row})` : '';
+    if (hovered) parts.push(`(${hovered.col}, ${hovered.row})`);
+    const selectedId = this.renderer.selectedPatientId;
+    const selected = selectedId === null ? undefined : this.world.patients.get(selectedId);
+    if (selected) {
+      parts.push(
+        `${selected.name.full}, ${selected.age} — ${CONDITION_DEFS[selected.condition].label}` +
+          ` · ${selected.stage.kind} · ❤${Math.ceil(selected.health)} ☺${Math.ceil(selected.patience)}`,
+      );
+    }
+    this.readoutEl.textContent = parts.join('   ');
   }
 }

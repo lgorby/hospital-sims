@@ -1,0 +1,75 @@
+import { GAME_MINUTES_PER_TICK, gameMinutesToTicks } from './clock';
+import { BALANCE } from './data/balance';
+
+/**
+ * Derived-value SSOT (tech plan §3.1 rule 4): every formula lives here as one
+ * pure function, called by the sim AND any UI that displays the value.
+ */
+
+/** Dispatcher sort key — lower serves first. Aging prevents starvation (Flow rule 6). */
+export function effectivePriority(acuity: number, hoursWaited: number): number {
+  return acuity - BALANCE.dispatcher.agingPerHourWaited * hoursWaited;
+}
+
+/** GDD §2 Treatment resolution. */
+export function successChance(averageSkill: number, health: number): number {
+  const t = BALANCE.treatment;
+  const lowHealth = Math.max(0, (t.lowHealthFloor - health) / t.lowHealthFloor);
+  const p = t.successBase + t.successPerSkill * (averageSkill - 1) - t.lowHealthPenalty * lowHealth;
+  return Math.min(t.successMax, Math.max(t.successMin, p));
+}
+
+/** GDD §2: duration = base × skill modifier × quality modifier, in ticks. */
+export function treatmentDurationTicks(
+  baseGameMinutes: number,
+  averageSkill: number,
+  roomQuality: number,
+): number {
+  const t = BALANCE.treatment;
+  const skillMod = t.durationSkillBase - t.durationSkillFactor * averageSkill;
+  // Floored: room cost is flat per type, so unbounded quality would make an
+  // oversized room an infinite-throughput exploit (M2 review #5).
+  const qualityMod = Math.max(
+    t.durationQualityFloor,
+    1 - t.durationQualityFactor * roomQuality,
+  );
+  return Math.max(1, Math.round(gameMinutesToTicks(baseGameMinutes) * skillMod * qualityMod));
+}
+
+/** GDD §7: +8 for an acuity-1 save down to +2 for an acuity-5 discharge. */
+export function dischargeReputationGain(acuity: number): number {
+  const r = BALANCE.reputation;
+  const span = r.dischargeGainMax - r.dischargeGainMin;
+  return Math.round(r.dischargeGainMax - ((acuity - 1) * span) / 4);
+}
+
+/** Decay tables are points per game-hour (GDD §6); systems tick in ticks. */
+export function healthDecayPerTick(acuity: number | null): number {
+  const a = acuity ?? BALANCE.decay.untriagedAcuity;
+  return (BALANCE.decay.healthPerGameHour[a]! * GAME_MINUTES_PER_TICK) / 60;
+}
+
+export function patienceDecayPerTick(acuity: number | null): number {
+  const a = acuity ?? BALANCE.decay.untriagedAcuity;
+  return (BALANCE.decay.patiencePerGameHour[a]! * GAME_MINUTES_PER_TICK) / 60;
+}
+
+/** GDD §3: linear 0.5×–2.0× arrival multiplier over rep 0–1000. */
+export function reputationArrivalMultiplier(reputation: number): number {
+  const a = BALANCE.arrivals;
+  const t = Math.min(1, Math.max(0, reputation / BALANCE.reputation.max));
+  return a.reputationMultiplierMin + (a.reputationMultiplierMax - a.reputationMultiplierMin) * t;
+}
+
+/** Piecewise time-of-day multiplier (GDD §3). */
+export function timeOfDayMultiplier(hourOfDay: number): number {
+  for (const block of BALANCE.arrivals.timeOfDayCurve) {
+    if (hourOfDay < block.untilHour) return block.multiplier;
+  }
+  return BALANCE.arrivals.timeOfDayCurve[BALANCE.arrivals.timeOfDayCurve.length - 1]!.multiplier;
+}
+
+/** Candidate salary from role base and skill (GDD §4 hiring pool tradeoffs). */
+export function candidateSalary(baseSalary: number, skill: number): number {
+  return Math.round(baseSalary * (1 + (skill - 3) * BALANCE.hiring.salaryPerSkillStep));
+}
