@@ -1,4 +1,4 @@
-import { GAME_MINUTES_PER_TICK, gameMinutesToTicks } from './clock';
+import { GAME_MINUTES_PER_HOUR, GAME_MINUTES_PER_TICK, gameMinutesToTicks } from './clock';
 import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditions';
 
@@ -41,18 +41,27 @@ export function treatmentDurationTicks(
 export function dischargeReputationGain(acuity: number): number {
   const r = BALANCE.reputation;
   const span = r.dischargeGainMax - r.dischargeGainMin;
-  return Math.round(r.dischargeGainMax - ((acuity - 1) * span) / 4);
+  const acuitySpan = BALANCE.stats.max - BALANCE.stats.min;
+  return Math.round(r.dischargeGainMax - ((acuity - BALANCE.stats.min) * span) / acuitySpan);
 }
 
 /** Decay tables are points per game-hour (GDD §6); systems tick in ticks. */
 export function healthDecayPerTick(acuity: number | null): number {
   const a = acuity ?? BALANCE.decay.untriagedAcuity;
-  return (BALANCE.decay.healthPerGameHour[a]! * GAME_MINUTES_PER_TICK) / 60;
+  return (BALANCE.decay.healthPerGameHour[a]! * GAME_MINUTES_PER_TICK) / GAME_MINUTES_PER_HOUR;
 }
 
 export function patienceDecayPerTick(acuity: number | null): number {
   const a = acuity ?? BALANCE.decay.untriagedAcuity;
-  return (BALANCE.decay.patiencePerGameHour[a]! * GAME_MINUTES_PER_TICK) / 60;
+  return (BALANCE.decay.patiencePerGameHour[a]! * GAME_MINUTES_PER_TICK) / GAME_MINUTES_PER_HOUR;
+}
+
+/** GDD §5: a roomier waiting room slows patience decay for its seated waiters
+ *  (audit #4). Floored — like treatment duration — so oversized rooms can't
+ *  freeze patience entirely. */
+export function waitingQualityMultiplier(roomQuality: number): number {
+  const d = BALANCE.decay;
+  return Math.max(d.waitingQualityFloor, 1 - d.waitingQualityFactor * roomQuality);
 }
 
 /** GDD §3: linear 0.5×–2.0× arrival multiplier over rep 0–1000. */

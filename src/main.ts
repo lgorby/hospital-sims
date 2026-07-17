@@ -68,7 +68,23 @@ const seedParam = new URLSearchParams(window.location.search).get('seed');
 // Strict digits-only (M4 review #8): parseInt would silently boot '?seed=1e5'
 // as seed 1, making the URL and the HUD chip disagree about the run's name.
 if (seedParam !== null && /^\d{1,10}$/.test(seedParam)) {
-  void bootstrap(Number.parseInt(seedParam, 10));
+  // A readable failure beats a silent blank page (audit #3): Pixi init can
+  // reject on machines without WebGL.
+  bootstrap(Number.parseInt(seedParam, 10)).catch((error: unknown) => {
+    const failure = document.createElement('div');
+    failure.className = 'modal-overlay';
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    const h2 = document.createElement('h2');
+    h2.textContent = 'Hospital Simms could not start';
+    const p = document.createElement('p');
+    p.textContent =
+      `Renderer initialization failed (${error instanceof Error ? error.message : String(error)}). ` +
+      'A browser with WebGL support is required.';
+    card.append(h2, p);
+    failure.appendChild(card);
+    document.getElementById('ui')!.appendChild(failure);
+  });
 } else if (seedParam !== null) {
   startNewGame(); // malformed seed → roll a fresh one (writes a valid integer)
 } else {

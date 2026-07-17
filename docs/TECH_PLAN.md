@@ -47,8 +47,9 @@ The simulation is **deterministic, fixed-timestep (10 ticks/sec), and renderer-f
     MovementSystem (follows paths)
     TreatmentSystem
     EconomySystem
-    ReputationSystem
-    ClockSystem
+    (reputation + clock live on World itself:
+     applyReputation / GameClock in tick() —
+     never grew into standalone systems)
 ```
 
 Benefits: game speed (1×/2×/3×) is just running more ticks per frame; pause is zero ticks; the whole sim is testable in Vitest with no browser; determinism makes bug reports reproducible (seeded RNG).
@@ -77,7 +78,7 @@ class World {
 }
 ```
 
-- **Patient / Staff** are classes with an explicit state-machine field (discriminated union, e.g. `{ kind: 'waiting', since: Tick } | { kind: 'inTreatment', roomId, step } | …`). Illegal transitions throw in dev.
+- **Patient / Staff** are classes with an explicit state-machine field (discriminated union, e.g. `{ kind: 'waiting', since: Tick } | { kind: 'inTreatment', roomId, step } | …`). Patient transitions are validated by `World.setPatientStage` against `LEGAL_STAGE_TRANSITIONS` (declared beside the type, audit #5) — violations are *counted and warned*, never thrown (prod degrades gracefully; tests assert `world.stageViolations` is empty).
 - **Room** holds type, rect footprint, door tile, equipment tiles, quality score, and a single `occupancy` slot (V1 rooms treat one patient at a time; waiting room is the exception with chair-count capacity). Room defs carry a `kind: 'treatment' | 'open'` — **open** rooms (the atrium) have no walls/door, keep their tiles publicly walkable, and take no occupancy slot; they exist for their auras (GDD §5 atrium rules).
 - **Lostness is a movement sub-state, not a lifecycle state.** The patient's stage machine (waiting/inTreatment/…) is unchanged; the movement component carries `lost: { since: Tick } | null`. This keeps every existing release/re-queue rule working without new lifecycle transitions.
 - **Auras are a precomputed grid.** `World` holds an `auraGrid` (guidance/comfort flags per tile), recomputed on room build/sell, greeter hire/fire/assignment, **and a posted greeter's arrival at / departure from the help desk** (guidance requires posted + *arrived*, matching the reception-desk rule; comfort needs no greeter). The per-tile wrong-turn roll and patience-decay modifier are O(1) lookups; staff-proximity rescue (radius 3) is the only per-tick spatial check, and only runs for lost patients.
@@ -139,19 +140,20 @@ hospital-simms/
 │   │   ├── rng.ts
 │   │   ├── entities/        # patient.ts, staff.ts, room.ts
 │   │   ├── systems/         # spawn.ts, decay.ts, dispatcher.ts, movement.ts,
-│   │   │                    # wayfinding.ts, treatment.ts, economy.ts, reputation.ts
+│   │   │                    # wayfinding.ts, treatment.ts, economy.ts
 │   │   ├── path/astar.ts
-│   │   └── data/            # conditions.ts, rooms.ts, roles.ts, balance.ts, names.ts
+│   │   ├── dailyStats.ts    # M4: DayTally/DayReport + dayNet
+│   │   └── data/            # conditions.ts, rooms.ts, roles.ts, balance.ts, names.ts, thoughts.ts
 │   ├── render/
-│   │   ├── renderer.ts      # Pixi app, layers, camera
+│   │   ├── renderer.ts      # Pixi app, layers, camera, input, actor sync (monolithic by choice)
 │   │   ├── iso.ts           # projection math + picking
-│   │   ├── sprites.ts       # runtime placeholder texture generation
-│   │   └── views/           # tileView, roomView, actorView, buildGhost
+│   │   └── sprites.ts       # runtime placeholder texture generation
 │   └── ui/
-│       ├── hud.ts  buildMenu.ts  hirePanel.ts  inspect.ts  toasts.ts  report.ts
-│       ├── thoughts.ts  debugPanel.ts
+│       ├── hud.ts  buildMenu.ts  hirePanel.ts  inspect.ts  toasts.ts  dailyReport.ts
+│       ├── thoughtLog.ts  debugPanel.ts  checklist.ts  title.ts  gameOver.ts
+│       ├── format.ts  modal.ts  dom.ts   # shared UI helpers (audit #6/#9)
 │       └── ui.css
-└── test/                    # vitest: astar, dispatcher, decay, economy, paths
+└── test/                    # vitest: unit + integration + the M4 balance harness
 ```
 
 ### 3.1 SSOT & DRY conventions (enforced from M0)

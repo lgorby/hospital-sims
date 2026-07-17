@@ -209,6 +209,11 @@ describe('M2 review regression cases', () => {
     doctor.duty = { kind: 'reserved', reservationId: reservation.id };
     patient.stage = { kind: 'reserved', reservationId: reservation.id };
     // Patient is stopped (arrived, no target) far from the room — a stall.
+    // (Spawn now assigns entrance-overflow standing spots — audit #13 — so
+    // clear the walk explicitly to stage the stall this test is about.)
+    patient.next = null;
+    patient.path = [];
+    patient.target = null;
     expect(t.world.walkerArrived(patient)).toBe(true);
 
     t.world.tick();

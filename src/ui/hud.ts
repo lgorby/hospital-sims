@@ -1,6 +1,7 @@
 import type { EventBus } from '../events';
 import type { GameLoop, Speed } from '../loop';
 import { CONDITION_DEFS } from '../sim/data/conditions';
+import { isTextEditable } from './dom';
 import { money } from './format';
 import type { WorldRenderer } from '../render/renderer';
 import type { World } from '../sim/world';
@@ -72,13 +73,7 @@ export class Hud {
       if (speed !== 0) lastRunningSpeed = speed;
     });
     window.addEventListener('keydown', (e) => {
-      const target = e.target;
-      if (
-        target instanceof HTMLElement &&
-        (target.isContentEditable || ['INPUT', 'TEXTAREA'].includes(target.tagName))
-      ) {
-        return;
-      }
+      if (isTextEditable(e.target)) return;
       // A visible modal owns the clock (M4 review #3): shortcuts must not
       // unpause the sim behind the daily report / game-over overlay.
       if (document.querySelector('.modal-overlay:not(.hidden)')) return;

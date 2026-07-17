@@ -28,7 +28,7 @@ function completeTriage(world: World, reservation: Reservation): void {
   if (!patient) return;
   const def = CONDITION_DEFS[patient.condition];
   patient.acuity = world.rng.intInRange(def.acuityMin, def.acuityMax);
-  patient.stage = { kind: 'waiting' };
+  world.setPatientStage(patient, { kind: 'waiting' });
   patient.waitingSince = world.clock.tick;
   world.assignWaitingSpot(patient);
 }
@@ -61,7 +61,7 @@ export function resolveTreatmentOutcome(
       return;
     }
     world.releaseReservation(reservation);
-    patient.stage = { kind: 'waiting' };
+    world.setPatientStage(patient, { kind: 'waiting' });
     // Flow rule 6 ruling: between-steps re-queues keep the accumulated wait —
     // multi-step patients never restart the aged-priority line from zero.
     patient.waitingSince = reservation.patientWaitingSince ?? world.clock.tick;
@@ -83,7 +83,7 @@ export function resolveTreatmentOutcome(
     row: patient.at.row,
   });
   world.releaseReservation(reservation);
-  patient.stage = { kind: 'waiting' };
+  world.setPatientStage(patient, { kind: 'waiting' });
   // "Re-queued, with aged priority per Flow rule 6" (GDD §2): the wait clock
   // survives the complication instead of resetting to the back of the line.
   patient.waitingSince = reservation.patientWaitingSince ?? world.clock.tick;

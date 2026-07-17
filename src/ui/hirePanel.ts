@@ -1,9 +1,10 @@
 import type { CommandQueue } from '../commands';
 import type { EventBus } from '../events';
+import { BALANCE } from '../sim/data/balance';
 import { ROLE_DEFS } from '../sim/data/roles';
 import type { World } from '../sim/world';
 
-const MAX_SKILL = 5;
+const MAX_SKILL = BALANCE.stats.max;
 
 /** Hire/fire panel: candidate cards + current roster, all read from World (SSOT). */
 export class HirePanel {

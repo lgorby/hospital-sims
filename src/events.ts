@@ -69,6 +69,15 @@ export class EventBus {
   }
 
   emit<E extends EventName>(event: E, payload: EventMap[E]): void {
-    this.handlers.get(event)?.forEach((h) => h(payload));
+    // Handler isolation (audit #2): emits fire from inside sim mutation paths
+    // (killPatient, billFee, …). A throwing UI handler must not skip its
+    // siblings or unwind world.tick() mid-mutation.
+    this.handlers.get(event)?.forEach((h) => {
+      try {
+        h(payload);
+      } catch (error) {
+        console.error(`EventBus handler for "${event}" threw:`, error);
+      }
+    });
   }
 }

@@ -1,5 +1,6 @@
 import { Application, Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
 import type { CommandQueue } from '../commands';
+import { isTextEditable } from '../ui/dom';
 import type { EventBus } from '../events';
 import { doorFromOutsideTile, validateRoomBuild, validateRoomRect } from '../sim/build';
 import { BALANCE } from '../sim/data/balance';
@@ -185,19 +186,24 @@ export class WorldRenderer {
     else this.selected = null;
   }
 
-  /** Would an idle-mode click on this tile select something? (hover cursor) */
-  private pickableAt(tile: TilePoint): boolean {
+  /**
+   * Idle-mode pick: patient beats staff beats room. ONE implementation for
+   * both the click handler and the hover cursor (audit #10) — the cursor must
+   * never promise a click that resolves differently.
+   */
+  private pickAt(tile: TilePoint): Selection | null {
     for (const patient of this.world.patients.values()) {
       if (samePoint(patient.at, tile) || (patient.next && samePoint(patient.next, tile))) {
-        return true;
+        return { kind: 'patient', id: patient.id };
       }
     }
     for (const member of this.world.staff.values()) {
       if (samePoint(member.at, tile) || (member.next && samePoint(member.next, tile))) {
-        return true;
+        return { kind: 'staff', id: member.id };
       }
     }
-    return this.world.roomAt(tile) !== null;
+    const room = this.world.roomAt(tile);
+    return room ? { kind: 'room', id: room.id } : null;
   }
 
   // ------------------------------------------------------------- world views
@@ -471,14 +477,6 @@ export class WorldRenderer {
     return target instanceof Element && target.closest('[data-ui]') !== null;
   }
 
-  /** Keyboard guard: only text entry may swallow keys — a focused HUD button must not. */
-  private static isTextEditable(target: EventTarget | null): boolean {
-    return (
-      target instanceof HTMLElement &&
-      (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
-    );
-  }
-
   // ------------------------------------------------------------------- input
 
   private handleLeftClick(tile: TilePoint): void {
@@ -513,22 +511,8 @@ export class WorldRenderer {
       else this.onHint?.('No room there');
       return;
     }
-    // Idle mode: pick the patient on the tile, else staff, else the room.
-    this.selected = null;
-    for (const patient of this.world.patients.values()) {
-      if (samePoint(patient.at, tile) || (patient.next && samePoint(patient.next, tile))) {
-        this.selected = { kind: 'patient', id: patient.id };
-        return;
-      }
-    }
-    for (const member of this.world.staff.values()) {
-      if (samePoint(member.at, tile) || (member.next && samePoint(member.next, tile))) {
-        this.selected = { kind: 'staff', id: member.id };
-        return;
-      }
-    }
-    const room = this.world.roomAt(tile);
-    if (room) this.selected = { kind: 'room', id: room.id };
+    // Idle mode: shared pick (audit #10) — patient beats staff beats room.
+    this.selected = this.pickAt(tile);
   }
 
   private finishDrag(): void {
@@ -654,7 +638,7 @@ export class WorldRenderer {
     );
 
     window.addEventListener('keydown', (e) => {
-      if (WorldRenderer.isTextEditable(e.target)) return;
+      if (isTextEditable(e.target)) return;
       if (e.key === 'Escape') {
         this.cancelMode();
         return;
@@ -736,7 +720,7 @@ export class WorldRenderer {
       const cursor =
         this.build || this.sellMode
           ? 'crosshair'
-          : this.hoveredTile && this.pickableAt(this.hoveredTile)
+          : this.hoveredTile && this.pickAt(this.hoveredTile) !== null
             ? 'pointer'
             : 'default';
       this.app.canvas.style.cursor = cursor;

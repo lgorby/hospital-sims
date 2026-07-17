@@ -8,6 +8,12 @@ export const BALANCE = {
     ticksPerSecond: 10,
     gameDayRealMinutes: 8, // 1 game day = 8 real minutes at 1× speed
   },
+  /** The 1–5 scale shared by acuity, staff skill, and patient wayfinding
+   *  (SSOT — audit #7: rng rolls, UI star rows, and formula spans derive it). */
+  stats: {
+    min: 1,
+    max: 5,
+  },
   map: {
     cols: 40,
     rows: 40,
@@ -72,6 +78,10 @@ export const BALANCE = {
     untriagedAcuity: 3,
     /** Patience decay multiplier while standing in a full waiting room (Flow rule 4). */
     standingMultiplier: 1.5,
+    /** GDD §5 "roomier rooms slow patience decay" (audit #4): multiplier
+     *  1 − factor × waiting-room quality, floored like treatment duration. */
+    waitingQualityFactor: 0.02,
+    waitingQualityFloor: 0.7,
   },
   treatment: {
     /** P(success) = clamp(base + perSkill*(skill-1) - lowHealthPenalty*max(0,(lowHealthFloor-health)/lowHealthFloor)) */

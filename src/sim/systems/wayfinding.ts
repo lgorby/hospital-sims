@@ -123,7 +123,14 @@ export function updateWayfinding(world: World): void {
     ) {
       const reservation = world.reservations.get(patient.stage.reservationId);
       if (reservation) world.releaseReservation(reservation);
-      patient.stage = { kind: 'waiting' };
+      // Kind-aware like cancelReservation (audit #1): a patient lost en route
+      // to TRIAGE has acuity null — dropping them into 'waiting' strands them
+      // forever (assignTriage scans waitingTriage; assignTreatment requires
+      // acuity). Regression: test/audit.test.ts.
+      world.setPatientStage(
+        patient,
+        reservation?.kind === 'triage' ? { kind: 'waitingTriage' } : { kind: 'waiting' },
+      );
       patient.waitingSince = reservation?.patientWaitingSince ?? world.clock.tick;
       patient.target = null;
       patient.path = [];

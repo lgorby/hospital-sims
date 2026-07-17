@@ -136,13 +136,13 @@ function processCheckIn(world: World): void {
       // was fired or hasn't arrived, the check-in reverts to the desk slot and
       // restarts when someone is posted again — never a headless check-in.
       if (!receptionistReady) {
-        front.stage = { kind: 'queuedCheckIn', roomId: room.id, slot: 0 };
+        world.setPatientStage(front, { kind: 'queuedCheckIn', roomId: room.id, slot: 0 });
         continue;
       }
       front.stage.ticksRemaining -= 1;
       if (front.stage.ticksRemaining <= 0) {
         world.leaveQueue(front);
-        front.stage = { kind: 'waitingTriage' };
+        world.setPatientStage(front, { kind: 'waitingTriage' });
         front.waitingSince = world.clock.tick;
         world.assignWaitingSpot(front);
       }
@@ -154,11 +154,11 @@ function processCheckIn(world: World): void {
     if (front.stage.kind !== 'queuedCheckIn' || front.stage.slot !== 0) continue;
     if (!world.walkerArrived(front) || !samePoint(front.at, world.queueSlotTile(room, 0))) continue;
     if (!receptionistReady) continue;
-    front.stage = {
+    world.setPatientStage(front, {
       kind: 'checkingIn',
       roomId: room.id,
       ticksRemaining: gameMinutesToTicks(BALANCE.reception.checkInGameMinutes),
-    };
+    });
   }
 }
 
@@ -182,7 +182,7 @@ function makeReservation(
     patientWaitingSince: patient.waitingSince,
   };
   world.reservations.set(reservation.id, reservation);
-  patient.stage = { kind: 'reserved', reservationId: reservation.id };
+  world.setPatientStage(patient, { kind: 'reserved', reservationId: reservation.id });
   patient.waitingSince = null;
   patient.waitingRoomId = null;
   const patientSpot = world.freeInteriorTile(room, room.door?.inside);

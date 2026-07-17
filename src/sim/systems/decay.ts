@@ -1,5 +1,5 @@
 import { BALANCE } from '../data/balance';
-import { healthDecayPerTick, patienceDecayPerTick } from '../formulas';
+import { healthDecayPerTick, patienceDecayPerTick, waitingQualityMultiplier } from '../formulas';
 import type { Patient } from '../entities/patient';
 import type { World } from '../world';
 
@@ -51,6 +51,11 @@ export function updateDecay(world: World): void {
         patient.waitingRoomId === null
       ) {
         rate *= BALANCE.decay.standingMultiplier;
+      } else if (patient.waitingRoomId !== null) {
+        // Seated in a waiting room: roomier rooms decay slower (GDD §5,
+        // audit #4) — multiplies with the comfort aura below.
+        const room = world.rooms.get(patient.waitingRoomId);
+        if (room) rate *= waitingQualityMultiplier(room.quality);
       }
       // Comfort aura ×0.75 (GDD §5) — MULTIPLIES with the modifiers above
       // (M3-gate ruling): a standing waiter in comfort decays at 1.5 × 0.75.

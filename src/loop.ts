@@ -81,6 +81,9 @@ export class GameLoop {
 
   private frame = (now: number): void => {
     if (!this.running) return;
+    // Schedule the next frame FIRST (audit #2): an exception below must not
+    // sever the rAF chain and freeze the game forever.
+    this.host.requestFrame(this.frame);
 
     // Commands always apply — this is what makes "build while paused" work.
     this.world.applyCommands(this.commands);
@@ -105,6 +108,5 @@ export class GameLoop {
     // Alpha is an interpolation fraction — clamp so a tick-capped frame can't
     // hand the renderer a value outside [0, 1].
     this.render(Math.min(this.accumulator / TICK_MS, 1));
-    this.host.requestFrame(this.frame);
   };
 }

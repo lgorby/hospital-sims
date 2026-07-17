@@ -1,7 +1,7 @@
 import type { CommandQueue, Command } from '../commands';
 import type { EventBus } from '../events';
 import { doorFromOutsideTile, validateRoomBuild, validateRoomSell } from './build';
-import { GameClock, gameMinutesToTicks, ticksToGameMinutes } from './clock';
+import { GameClock, gameMinutesToTicks, TICKS_PER_DAY, ticksToGameMinutes } from './clock';
 import { emptyDayTally, type DayReport, type DayTally } from './dailyStats';
 import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, type ConditionId } from './data/conditions';
@@ -16,7 +16,7 @@ import {
   type RoomType,
 } from './data/rooms';
 import type { Door, Room } from './entities/room';
-import type { Patient } from './entities/patient';
+import { LEGAL_STAGE_TRANSITIONS, type Patient, type PatientStage } from './entities/patient';
 import type { Candidate, Reservation, Staff } from './entities/staff';
 import { candidateSalary, dischargeReputationGain } from './formulas';
 import { findPath, type PathGrid } from './path/astar';
@@ -87,9 +87,28 @@ export class World implements PathGrid {
   bankruptSinceTick: number | null = null;
   /** Terminal state (M4): once set, tick() is a no-op — the world is frozen. */
   gameOver = false;
+  /** Illegal stage-transition log (audit #5) — tests assert it stays empty. */
+  readonly stageViolations: string[] = [];
   /** One-shot advisory hints already shown (Flow rule 5 "once per condition type"). */
   private hintedOnce = new Set<string>();
   private nextEntityId = 1;
+
+  /**
+   * The ONLY way to change a patient's lifecycle stage (tech plan §2.3, audit
+   * #5): kind transitions validate against LEGAL_STAGE_TRANSITIONS, plus the
+   * semantic invariant a kind-table can't see — 'waiting' means "triaged,
+   * awaiting treatment", so it requires acuity (the audit-#1 bug class).
+   */
+  setPatientStage(patient: Patient, next: PatientStage): void {
+    const from = patient.stage.kind;
+    const legalKind = from === next.kind || LEGAL_STAGE_TRANSITIONS[from].includes(next.kind);
+    const triagedOk = next.kind !== 'waiting' || patient.acuity !== null;
+    if (!legalKind || !triagedOk) {
+      this.stageViolations.push(`${from}→${next.kind}#${patient.id}`);
+      console.warn(`Illegal stage transition ${from}→${next.kind} (patient ${patient.id})`);
+    }
+    patient.stage = next;
+  }
 
   constructor(
     readonly events: EventBus,
@@ -114,7 +133,7 @@ export class World implements PathGrid {
   }
 
   private makeCandidate(role: RoleId): Candidate {
-    const skill = this.rng.intInRange(1, 5);
+    const skill = this.rng.intInRange(BALANCE.stats.min, BALANCE.stats.max);
     return {
       id: this.takeId(),
       role,
@@ -362,11 +381,18 @@ export class World implements PathGrid {
       case 'debugForce':
         this.debugForce(command.patientId, command.outcome);
         return;
-      case 'debugFastForward':
-        for (let i = 0; i < command.ticks; i++) this.tick();
+      case 'debugFastForward': {
+        // The CommandQueue is the public mutation API (audit #8): clamp so a
+        // hostile/buggy payload can't block the tab for minutes.
+        const MAX_FAST_FORWARD_TICKS = 7 * TICKS_PER_DAY;
+        const ticks = Math.min(Math.max(0, Math.floor(command.ticks)), MAX_FAST_FORWARD_TICKS);
+        for (let i = 0; i < ticks; i++) this.tick();
         return;
+      }
       case 'debugSetCash':
-        // Balancing/testing aid (M4): drive the bankruptcy path on demand.
+        // Balancing/testing aid (M4). Finite-guarded (audit #8): NaN would
+        // poison every later += AND permanently arm the bankruptcy check.
+        if (!Number.isFinite(command.amount)) return;
         this.cash = command.amount;
         this.events.emit('cashChanged', { cash: this.cash });
         return;
@@ -644,7 +670,7 @@ export class World implements PathGrid {
       acuity: null,
       health: 100,
       patience: 100,
-      wayfinding: this.rng.intInRange(1, 5),
+      wayfinding: this.rng.intInRange(BALANCE.stats.min, BALANCE.stats.max),
       lost: null,
       reportedMood: 'content',
       arrivedAtTick: this.clock.tick,
@@ -697,15 +723,22 @@ export class World implements PathGrid {
       }
     }
     if (!best) {
-      patient.stage = { kind: 'atEntrance' };
+      this.setPatientStage(patient, { kind: 'atEntrance' });
       // ??= so per-tick re-route attempts never reset AMA/aging timing (M2 review #8).
       patient.waitingSince ??= this.clock.tick;
+      // Overflow arrivals cluster NEAR the entrance on exclusive standing
+      // spots (Flow rules 1/14, audit #13) instead of stacking on the exact
+      // entrance tile.
+      if (!patient.target && samePoint(patient.at, BALANCE.map.entrance)) {
+        const spot = this.nearestFreeStandingTile(patient.at, patient);
+        if (spot && !samePoint(spot, patient.at)) this.setWalkerTarget(patient, spot);
+      }
       return;
     }
     const queue = this.queueFor(best.id);
     queue.push(patient.id);
     const slot = queue.length - 1;
-    patient.stage = { kind: 'queuedCheckIn', roomId: best.id, slot };
+    this.setPatientStage(patient, { kind: 'queuedCheckIn', roomId: best.id, slot });
     patient.waitingSince = this.clock.tick;
     this.setWalkerTarget(patient, this.queueSlotTile(best, slot));
   }
@@ -750,7 +783,7 @@ export class World implements PathGrid {
     queue.forEach((id, slot) => {
       const p = this.patients.get(id);
       if (p && p.stage.kind === 'queuedCheckIn') {
-        p.stage = { kind: 'queuedCheckIn', roomId, slot };
+        this.setPatientStage(p, { kind: 'queuedCheckIn', roomId, slot });
         this.setWalkerTarget(p, this.queueSlotTile(room, slot));
       }
     });
@@ -855,8 +888,10 @@ export class World implements PathGrid {
     const patient = this.patients.get(reservation.patientId);
     this.releaseReservation(reservation);
     if (!patient) return;
-    patient.stage =
-      reservation.kind === 'triage' ? { kind: 'waitingTriage' } : { kind: 'waiting' };
+    this.setPatientStage(
+      patient,
+      reservation.kind === 'triage' ? { kind: 'waitingTriage' } : { kind: 'waiting' },
+    );
     // Flow rule 6 ruling: the wait clock survives the failed reservation.
     patient.waitingSince = reservation.patientWaitingSince ?? this.clock.tick;
     // Hot-loop guard (M3-gate review): without a hold, the dispatcher would
@@ -912,7 +947,7 @@ export class World implements PathGrid {
   killPatient(patient: Patient): void {
     if (patient.stage.kind === 'dead') return;
     this.releasePatientHoldings(patient);
-    patient.stage = { kind: 'dead', since: this.clock.tick };
+    this.setPatientStage(patient, { kind: 'dead', since: this.clock.tick });
     patient.lost = null;
     patient.next = null;
     patient.path = [];
@@ -931,7 +966,7 @@ export class World implements PathGrid {
 
   patientLeavesAma(patient: Patient): void {
     this.releasePatientHoldings(patient);
-    patient.stage = { kind: 'leaving', reason: 'ama' };
+    this.setPatientStage(patient, { kind: 'leaving', reason: 'ama' });
     patient.lost = null; // exits clear lostness (M3-gate ruling)
     this.today.leftAma += 1;
     this.applyReputation(-BALANCE.reputation.amaLoss);
@@ -946,7 +981,7 @@ export class World implements PathGrid {
 
   dischargePatient(patient: Patient, totalBilled: number): void {
     this.releasePatientHoldings(patient);
-    patient.stage = { kind: 'leaving', reason: 'discharged' };
+    this.setPatientStage(patient, { kind: 'leaving', reason: 'discharged' });
     patient.lost = null; // exits clear lostness (M3-gate ruling)
     this.today.treated += 1;
     this.lifetimeTreated += 1;
@@ -1109,5 +1144,3 @@ export class World implements PathGrid {
     this.events.emit('dayEnded', report);
   }
 }
-
-export { rectContains };

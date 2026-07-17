@@ -1,7 +1,7 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-17 (after the M4 commit)
-**State: M0–M4 complete and committed — V1 non-stretch scope is DONE. Next: stretch items (save/load, deploy) and the art pass.**
+**Last updated:** 2026-07-17 (after the full-codebase audit commit)
+**State: M0–M4 complete + full-codebase audit (14 findings) fixed and committed. Next: Phase-1 save/load per `docs/PERSISTENCE_PLAN.md`, then deploy + art pass.**
 
 ## What this project is
 
@@ -23,7 +23,8 @@ Both were hardened by independent adversarial reviews before any code was writte
 | `8ede235` | M3 gate: two adversarial pre-M3 reviews (code gaps + plan gaps): 11 code fixes with 12 regression tests, and 19 plan rulings written into the GDD/tech plan (look for "M3-gate ruling" / "M3 ruling" markers) |
 | `16ade07` | Full V1 roster: 6 conditions with weighted spawn mix + rep case-mix shift, multi-step + dual-staff paths, room props, atrium/greeter/aura grid, complete wayfinding system, comfort auras, inspection panels, click-to-jump toasts, aura overlay, thought log, A* per-walker path variety + fixes from the M3 adversarial review (3 major, 5 minor) |
 | `7e27b63` | `/run-hospital-simms` skill: headless browser driver (playwright-core + system Edge) for driving the live game |
-| *(M4)* | Feel & finish: daily report modal + per-day tally (`src/sim/dailyStats.ts`), day-close wait bonus, bankruptcy lose-state + game-over screen, title screen + `?seed=` new-game flow, first-run checklist, keyboard shortcuts (Space/1/2/3), hover cursors, headless balance harness + balance pass (arrivals 3.0→1.5/h, wait-bonus threshold 120→240m), `debugSetCash` + fixes from the M4 adversarial review (2 major, 3 minor, 4 nit) |
+| `12e6aef` | M4 feel & finish: daily report modal + per-day tally (`src/sim/dailyStats.ts`), day-close wait bonus, bankruptcy lose-state + game-over screen, title screen + `?seed=` new-game flow, first-run checklist, keyboard shortcuts (Space/1/2/3), hover cursors, headless balance harness + balance pass (arrivals 3.0→1.5/h, wait-bonus threshold 120→240m), `debugSetCash` + fixes from the M4 adversarial review (2 major, 3 minor, 4 nit) |
+| *(audit)* | Full-codebase audit (owner-requested, 14 findings fixed): triage lost-timeout strand bug (MAJOR), stage-transition guard table (`setPatientStage` + `stageViolations`), EventBus handler isolation + rAF-chain protection, Pixi-init failure screen, GDD §5 waiting-room-quality patience decay implemented, shared `ui/dom.ts`·`ui/modal.ts`·renderer `pickAt`, `BALANCE.stats` scale SSOT, debug-command payload guards, entrance-overflow standing spots, tech-plan drift corrections + `docs/PERSISTENCE_PLAN.md` |
 
 **V1 is playable end-to-end:** `npm run dev` → localhost:5173 shows the title screen; New Game navigates to `?seed=<random>` (seed shown in the HUD — a bare `?seed=1337` boots deterministically, which the `/run-hospital-simms` driver skill relies on). All 6 conditions arrive on a reputation-shifted weighted mix; wayfinding/atriums/auras as before. New in M4: a pausing daily-report modal at midnight (counters, money, avg door-to-first-treatment wait, day-close rep bonus ★), bankruptcy lose-state (below −$10k a full day → foreclosure screen → New Game), guided first-run checklist, Space/1/2/3 speed shortcuts (suppressed while a modal is open), Esc peels build-mode→selection, hover cursors. Backtick debug panel gains "Set cash to double debt limit" (drives the game-over path). 130 Vitest tests, lint and build green.
 
@@ -59,6 +60,11 @@ Both were hardened by independent adversarial reviews before any code was writte
 - **Bankruptcy** (M4): strictly below the threshold, sampled once per tick after all systems (intra-tick dips can't false-trigger); recovery resets the countdown; `gameOver` emits once and `tick()` becomes a no-op — commands still drain, so debug commands after game over are inert by construction.
 - **A visible `.modal-overlay` owns the clock** (M4 review): keyboard speed shortcuts check for one before touching the loop; the game-over screen hides an open daily report.
 - **Harness validity is mutation-checked, not assumed** (M4 review): the zero-atrium test probes reservation ages EVERY tick (a stuck reservation fails the bound even if it resolves by day end) and asserts a lost holder was actually observed; the acuity-5 test pins reputation at max for genuine overload (AMA assertion proves it). Room partitioning (one ER, X-ray throttle) means the aging *mechanism* is guarded by unit tests, not the harness — see the comment in `test/harness.test.ts` before "improving" either.
+- **All patient stage writes go through `World.setPatientStage`** (audit #5): kind transitions validate against `LEGAL_STAGE_TRANSITIONS` (declared in `entities/patient.ts`), plus the semantic invariant that `waiting` requires `acuity !== null` (the audit-#1 strand-bug class). Violations are counted in `world.stageViolations` and console-warned, never thrown; the harness and audit tests assert the counter stays empty. Never assign `patient.stage` directly in sim code (test fixtures may).
+- **Lost-timeout is reservation-kind-aware** (audit #1): a lost patient timing out of a TRIAGE reservation returns to `waitingTriage`, mirroring `cancelReservation`. Regression: `test/audit.test.ts`.
+- **EventBus handlers are isolated** (audit #2): a throwing subscriber is caught + logged, siblings still run, and the loop schedules the next rAF *before* the frame body so no exception can sever the chain. Don't move `requestFrame` back to the end of `frame()`.
+- **`BALANCE.stats` (1–5) is the scale SSOT** (audit #7) for acuity, skill, and wayfinding rolls, UI star rows, and the discharge-gain span. **Waiting-room quality slows seated patience decay** (audit #4, GDD §5): `waitingQualityMultiplier` in formulas.ts, floored like treatment duration.
+- **Debug command payloads are guarded at the sim boundary** (audit #8): `debugSetCash` requires finite, `debugFastForward` clamps to 7 days — the CommandQueue is the public mutation API, so garbage must die at the border.
 
 ## Working agreements (user-established)
 
@@ -69,7 +75,7 @@ Both were hardened by independent adversarial reviews before any code was writte
 
 ## Next: V1 stretch + definition-of-done checks (tech plan §6)
 
-- **Save/load to localStorage** (M4 stretch, not started): entities are classes with Maps and in-flight paths — each needs an explicit `toJSON`/`fromJSON` pair; budget a session. No backend/database by design (tech plan §1).
+- **Save/load — Phase 1 of `docs/PERSISTENCE_PLAN.md`** (owner-approved scope): versioned JSON snapshot, `SeededRng.getState()/setState()` first, explicit `toJSON`/`fromJSON` per entity, localStorage slots + **file export/import for PC-to-PC portability**, round-trip determinism test as the acceptance gate. Phases 2–3 (seed challenges, lockstep multiplayer) are scoped in the same doc — read it before adding entity fields or touching command timing.
 - **Deploy** (Vercel, stretch).
 - **Art pass** (tech plan §2.6 contract — `characterKey()` and the prop-slice lookups are atlas-ready).
 - **V1 DoD still unchecked:** 60fps with 100 patients + 20 staff on a mid-range laptop (profile it); a manual full-session playthrough for console errors; the §3.1 SSOT grep audit.
