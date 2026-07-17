@@ -1,7 +1,7 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-17 (after the full-codebase audit commit)
-**State: M0–M4 complete + full-codebase audit (14 findings) fixed and committed. Next: Phase-1 save/load per `docs/PERSISTENCE_PLAN.md`, then deploy + art pass.**
+**Last updated:** 2026-07-17 (after the Phase-1 save/load commit)
+**State: M0–M4 + audit + Phase-1 save/load complete. Next: deploy (Vercel) + art pass + V1 DoD checks; Phase 2 (seed challenges) is unblocked.**
 
 ## What this project is
 
@@ -25,6 +25,7 @@ Both were hardened by independent adversarial reviews before any code was writte
 | `7e27b63` | `/run-hospital-simms` skill: headless browser driver (playwright-core + system Edge) for driving the live game |
 | `12e6aef` | M4 feel & finish: daily report modal + per-day tally (`src/sim/dailyStats.ts`), day-close wait bonus, bankruptcy lose-state + game-over screen, title screen + `?seed=` new-game flow, first-run checklist, keyboard shortcuts (Space/1/2/3), hover cursors, headless balance harness + balance pass (arrivals 3.0→1.5/h, wait-bonus threshold 120→240m), `debugSetCash` + fixes from the M4 adversarial review (2 major, 3 minor, 4 nit) |
 | *(audit)* | Full-codebase audit (owner-requested, 14 findings fixed): triage lost-timeout strand bug (MAJOR), stage-transition guard table (`setPatientStage` + `stageViolations`), EventBus handler isolation + rAF-chain protection, Pixi-init failure screen, GDD §5 waiting-room-quality patience decay implemented, shared `ui/dom.ts`·`ui/modal.ts`·renderer `pickAt`, `BALANCE.stats` scale SSOT, debug-command payload guards, entrance-overflow standing spots, tech-plan drift corrections + `docs/PERSISTENCE_PLAN.md` |
+| *(save/load)* | Persistence Phase 1 (plan §1): `SeededRng.getState/setState`, explicit per-entity serializers + grid RLE in `src/sim/save.ts` (`serializeWorld`/`saveToString`/`loadWorld`), border validation of shape AND referential integrity, localStorage slots (3 manual + midnight autosave) + file export/import (`src/ui/saveStore.ts`, `src/ui/saveLoad.ts`), `?load=<slot>` boot path, title Continue/Load/Import + fixes from the save/load adversarial review (2 major, 6 minor, 2 nit) |
 
 **V1 is playable end-to-end:** `npm run dev` → localhost:5173 shows the title screen; New Game navigates to `?seed=<random>` (seed shown in the HUD — a bare `?seed=1337` boots deterministically, which the `/run-hospital-simms` driver skill relies on). All 6 conditions arrive on a reputation-shifted weighted mix; wayfinding/atriums/auras as before. New in M4: a pausing daily-report modal at midnight (counters, money, avg door-to-first-treatment wait, day-close rep bonus ★), bankruptcy lose-state (below −$10k a full day → foreclosure screen → New Game), guided first-run checklist, Space/1/2/3 speed shortcuts (suppressed while a modal is open), Esc peels build-mode→selection, hover cursors. Backtick debug panel gains "Set cash to double debt limit" (drives the game-over path). 130 Vitest tests, lint and build green.
 
@@ -65,6 +66,11 @@ Both were hardened by independent adversarial reviews before any code was writte
 - **EventBus handlers are isolated** (audit #2): a throwing subscriber is caught + logged, siblings still run, and the loop schedules the next rAF *before* the frame body so no exception can sever the chain. Don't move `requestFrame` back to the end of `frame()`.
 - **`BALANCE.stats` (1–5) is the scale SSOT** (audit #7) for acuity, skill, and wayfinding rolls, UI star rows, and the discharge-gain span. **Waiting-room quality slows seated patience decay** (audit #4, GDD §5): `waitingQualityMultiplier` in formulas.ts, floored like treatment duration.
 - **Debug command payloads are guarded at the sim boundary** (audit #8): `debugSetCash` requires finite, `debugFastForward` clamps to 7 days — the CommandQueue is the public mutation API, so garbage must die at the border.
+- **`loadWorld` never half-constructs** (save review MAJOR 1): the FULL payload — shape, then referential integrity (global id uniqueness, `nextEntityId` above every saved id, every reservation/stage/duty/queue/grid-tile reference resolves, rects in bounds) — is validated before `new World` exists; every failure is `{ok:false, reason}`, never a throw. File import is untrusted input by design (PC-to-PC). Regressions: `test/save.test.ts` border suites.
+- **The round-trip gate's premises are asserted, not assumed** (save review MAJOR 2): at the save tick the scenario proves lost/queued/checking-in/at-entrance/leaving/dead patients, a firing staff member, a pending `dispatchHoldUntil`, both reservation kinds AND phases — then save→load→run-past-midnight must produce identical event logs and state. A balance change that hollows the scenario fails loudly; don't weaken the asserts.
+- **The save payload string IS the contract:** slots store exactly `saveToString` output (no envelope); UI metadata (savedAt/day/cash/seed) lives in a separate meta key. Byte-identity of save→load→save is pinned by test and depends on serializer key/insertion order — don't reorder.
+- **Adding a World-level mutable field requires a deliberate save decision** (plan rule 6): `SaveData` + `serializeWorld` + validate/restore in `loadWorld` + `SAVE_VERSION` bump. Entity fields are compile-enforced by the `Saved*` readers; World-level fields are NOT — the checklist is the guard.
+- **Day derivation lives only in `clock.ts`** (`dayOfTick`) — the UI slot metadata uses it; never re-derive from `TICKS_PER_DAY`.
 
 ## Working agreements (user-established)
 
@@ -75,7 +81,7 @@ Both were hardened by independent adversarial reviews before any code was writte
 
 ## Next: V1 stretch + definition-of-done checks (tech plan §6)
 
-- **Save/load — Phase 1 of `docs/PERSISTENCE_PLAN.md`** (owner-approved scope): versioned JSON snapshot, `SeededRng.getState()/setState()` first, explicit `toJSON`/`fromJSON` per entity, localStorage slots + **file export/import for PC-to-PC portability**, round-trip determinism test as the acceptance gate. Phases 2–3 (seed challenges, lockstep multiplayer) are scoped in the same doc — read it before adding entity fields or touching command timing.
+- **Save/load Phase 1: DONE** (see commit table). Phases 2–3 (seed challenges, lockstep multiplayer) are scoped in `docs/PERSISTENCE_PLAN.md` — Phase 2 needs only the Phase-1 determinism guarantees, now in place. Owner rulings recorded from the save review: paused-modal close restores speed 0 (deliberate DailyReportModal deviation), `?load=` persists in the URL like `?seed=`, map dims are baked into saves (comment beside `BALANCE.map`).
 - **Deploy** (Vercel, stretch).
 - **Art pass** (tech plan §2.6 contract — `characterKey()` and the prop-slice lookups are atlas-ready).
 - **V1 DoD still unchecked:** 60fps with 100 patients + 20 staff on a mid-range laptop (profile it); a manual full-session playthrough for console errors; the §3.1 SSOT grep audit.

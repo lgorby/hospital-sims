@@ -15,6 +15,9 @@ export const BALANCE = {
     max: 5,
   },
   map: {
+    /** Map dims are BAKED INTO SAVES (the grid RLE is cols×rows tiles and
+     *  loadWorld rejects any other total) — changing them requires a
+     *  SAVE_VERSION bump + migration, or every existing save is refused. */
     cols: 40,
     rows: 40,
     /** Entrance is fixed on the south edge (GDD §5). */

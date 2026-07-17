@@ -18,6 +18,25 @@ describe('SeededRng', () => {
     expect(seqA).not.toEqual(seqB);
   });
 
+  it('getState/setState round-trips mid-stream (persistence plan rule 2)', () => {
+    const rng = new SeededRng(123);
+    // Draw a bunch first — the whole point is that the SEED alone is no longer
+    // enough to reproduce the stream from here.
+    for (let i = 0; i < 57; i++) rng.next();
+    const state = rng.getState();
+    const expected = Array.from({ length: 100 }, () => rng.next());
+
+    // A different-seed rng restored to the state continues the exact stream…
+    const other = new SeededRng(999);
+    other.setState(state);
+    expect(Array.from({ length: 100 }, () => other.next())).toEqual(expected);
+
+    // …and the original can be rewound to it too.
+    rng.setState(state);
+    expect(Array.from({ length: 100 }, () => rng.next())).toEqual(expected);
+    expect(rng.getState()).toBe(other.getState());
+  });
+
   it('stays within [0, 1) and intInRange within bounds', () => {
     const rng = new SeededRng(7);
     for (let i = 0; i < 1000; i++) {

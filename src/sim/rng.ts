@@ -31,4 +31,17 @@ export class SeededRng {
   chance(probability: number): boolean {
     return this.next() < probability;
   }
+
+  /**
+   * Snapshot the internal state for saves (persistence plan rule 2: once
+   * numbers have been drawn, the boot seed alone cannot reproduce the stream).
+   */
+  getState(): number {
+    return this.state;
+  }
+
+  /** Restore a state captured by getState(); the next draw continues that exact stream. */
+  setState(state: number): void {
+    this.state = state >>> 0;
+  }
 }
