@@ -122,7 +122,18 @@ Placeholder art and final art satisfy the **same contract**, so upgrading charac
 3. **AI-assisted generation** — for style exploration and base frames; walk cycles need hand cleanup (Aseprite) for frame consistency. Generated assets get the same manifest treatment.
 4. **Commission** — the small brief the palette-swap scheme enables: one rig, one walk cycle, 2 facings (+2 mirrored), outfit layers.
 
-No GPL-only art (viral licensing), no assets without a stated license. **Timing:** M0–M3 run on placeholders by design (they make sim bugs more visible); the art pass is late-M4 or post-V1, once real gameplay has exercised the contract.
+No GPL-only art (viral licensing), no assets without a stated license. **Timing:** M0–M3 run on placeholders by design (they make sim bugs more visible); the art pass is late-M4 or post-V1, once real gameplay has exercised the contract. **Status:** the art pass shipped as a procedural upgrade (`e653acd`) — 4 diagonal facings, soft-shaded rooms/walls/props, still 100% runtime-generated; a real atlas is still a future drop-in behind the same `characterKey`/`propKey` contract.
+
+### 2.7 View rotation (scoped, not built — GDD §11 item 16)
+
+Owner-requested 90° camera rotation is a **rendering-architecture milestone**, deliberately out of the input-polish pass. What it touches (all currently assume ONE orientation):
+
+- **`iso.ts` projection + picking.** `toScreen`/`toTileFractional` are one hardcoded 2:1 transform and its exact inverse. Rotation needs these parameterized by orientation (0/90/180/270) — 4 forward transforms and 4 inverses that stay exact (picking is `test/iso.test.ts`'s contract).
+- **Depth sort.** `depthKey = col + row` orders draw-back-to-front for the current view only. Each orientation has a different back-to-front axis (e.g. `col − row`, `−col − row`), so `depthKey` must become orientation-aware — and everything that sets `zIndex` (props, actors, walls, bubbles) reads it.
+- **Walls.** `wallGraphic` maps each boundary edge to a fixed N/W-far / S/E-near screen quad + z-bias. Under rotation the same grid edge faces a different screen direction, so the far/near classification and quad geometry must re-derive per orientation.
+- **Character facings.** The art pass added 4 sprite facings for ONE camera angle. Rotating the camera 90° remaps which world-direction a given screen-facing shows. Options: regenerate/keep all facings and pick by `(travelDirection − cameraOrientation)`, or accept that the existing 4 facings rotate with the camera (cheaper, likely correct since facing is derived from the grid step in `facingFromStep`, which itself becomes orientation-aware).
+
+Done right it's centralized (nearly everything routes through `toScreen`/`depthKey`/`characterKey`), but it is a genuine milestone with its own pre-implementation review — not a polish tweak. The camera **input** layer (pan/zoom) is independent and already continuous.
 
 ## 3. Project layout
 

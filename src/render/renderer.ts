@@ -31,8 +31,14 @@ import {
 } from './sprites';
 import { PROP_STYLE } from '../sim/data/rooms';
 
-const ZOOM_STEPS = [0.5, 1, 2] as const;
-const DEFAULT_ZOOM_INDEX = 1;
+/** Continuous zoom bounds + default (was 3 discrete steps; pinch needs a range). */
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 2;
+const DEFAULT_ZOOM = 1;
+/** Multiplicative zoom per wheel-delta unit for pinch / ctrl+wheel (exp curve). */
+const ZOOM_WHEEL_SENSITIVITY = 0.0015;
+/** Px per wheel-delta unit when a browser reports line/page deltaMode (Firefox mouse wheel). */
+const WHEEL_LINE_PX = 16;
 const PAN_SPEED_PX_PER_SEC = 700; // dt-scaled so pan speed is refresh-rate independent
 const EDGE_SCROLL_MARGIN_PX = 24;
 const MAX_DRAW_DT_SEC = 0.1;
@@ -91,7 +97,7 @@ export class WorldRenderer {
   showWalkOverlay = false;
   /** Idle-click selection — inspection panel, debug panel, and readout use it. */
   selected: Selection | null = null;
-  private zoomIndex: number = DEFAULT_ZOOM_INDEX;
+  private zoom = DEFAULT_ZOOM;
   private heldKeys = new Set<string>();
   private panning: { startX: number; startY: number; camX: number; camY: number } | null = null;
   private lastPointer: { x: number; y: number } | null = null;
@@ -477,11 +483,21 @@ export class WorldRenderer {
 
   private centerCamera(): void {
     const center = toScreen(this.world.cols / 2, this.world.rows / 2);
-    this.camera.scale.set(ZOOM_STEPS[this.zoomIndex]);
+    this.camera.scale.set(this.zoom);
     this.camera.position.set(
       window.innerWidth / 2 - center.x * this.camera.scale.x,
       window.innerHeight / 2 - center.y * this.camera.scale.y,
     );
+  }
+
+  /** Set zoom (clamped to bounds) while keeping the given screen point fixed under it. */
+  private zoomTo(targetZoom: number, clientX: number, clientY: number): void {
+    const z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, targetZoom));
+    if (z === this.zoom) return;
+    const anchor = this.toWorldSpace(clientX, clientY);
+    this.zoom = z;
+    this.camera.scale.set(z);
+    this.camera.position.set(clientX - anchor.x * z, clientY - anchor.y * z);
   }
 
   /** Canvas pixel → world-space point (undo camera transform). */
@@ -654,13 +670,21 @@ export class WorldRenderer {
         if (WorldRenderer.onUi(e.target)) return;
         e.preventDefault();
         this.lastPointer = { x: e.clientX, y: e.clientY };
-        const next = this.zoomIndex + (e.deltaY < 0 ? 1 : -1);
-        if (next < 0 || next >= ZOOM_STEPS.length) return;
-        const anchor = this.toWorldSpace(e.clientX, e.clientY);
-        this.zoomIndex = next;
-        const scale = ZOOM_STEPS[this.zoomIndex]!;
-        this.camera.scale.set(scale);
-        this.camera.position.set(e.clientX - anchor.x * scale, e.clientY - anchor.y * scale);
+        if (this.panning) return; // a middle-drag owns the camera; wheel-pan would be overwritten anyway
+        // Normalize deltaMode: trackpads report pixels, but a Firefox mouse
+        // wheel reports lines (≈±3) / pages — scale those up or it's dead.
+        const unit = e.deltaMode === 1 ? WHEEL_LINE_PX : e.deltaMode === 2 ? window.innerHeight : 1;
+        const dx = e.deltaX * unit;
+        const dy = e.deltaY * unit;
+        // Browser/trackpad convention: a PINCH arrives as ctrl(/meta)+wheel →
+        // continuous zoom anchored at the cursor. Everything else — a trackpad
+        // two-finger scroll (dx/dy) or a mouse wheel — PANS both axes, so
+        // vertical two-finger scroll finally moves the camera up/down.
+        if (e.ctrlKey || e.metaKey) {
+          this.zoomTo(this.zoom * Math.exp(-dy * ZOOM_WHEEL_SENSITIVITY), e.clientX, e.clientY);
+        } else {
+          this.camera.position.set(this.camera.position.x - dx, this.camera.position.y - dy);
+        }
       },
       { passive: false },
     );
