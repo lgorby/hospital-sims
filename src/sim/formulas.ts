@@ -69,6 +69,17 @@ export function timeOfDayMultiplier(hourOfDay: number): number {
   return BALANCE.arrivals.timeOfDayCurve[BALANCE.arrivals.timeOfDayCurve.length - 1]!.multiplier;
 }
 
+/**
+ * Mood at a glance (GDD §10 bubbles; the M3 thought log reuses the same
+ * moments). One reader for the thresholds — render and UI never re-derive.
+ */
+export type Mood = 'content' | 'impatient' | 'critical';
+export function moodOf(health: number, patience: number): Mood {
+  if (health < BALANCE.mood.criticalHealthBelow) return 'critical';
+  if (patience < BALANCE.mood.impatientPatienceBelow) return 'impatient';
+  return 'content';
+}
+
 /** Candidate salary from role base and skill (GDD §4 hiring pool tradeoffs). */
 export function candidateSalary(baseSalary: number, skill: number): number {
   return Math.round(baseSalary * (1 + (skill - 3) * BALANCE.hiring.salaryPerSkillStep));

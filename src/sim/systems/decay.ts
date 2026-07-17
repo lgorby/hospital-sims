@@ -38,7 +38,10 @@ export function updateDecay(world: World): void {
       }
     }
 
-    if (isAmaEligible(patient)) {
+    // Patience drains only while actually waiting IN PLACE — purposeful
+    // walking is exempt (Flow rule 3). M3 lostness counts as waiting again
+    // via the lost sub-state (Flow rule 13), not via stage.
+    if (isAmaEligible(patient) && world.walkerArrived(patient)) {
       let rate = patienceDecayPerTick(patient.acuity);
       // Standing because every waiting room is full → 1.5× (Flow rule 4).
       // Applies to both triaged and untriaged waiters (M2 review #10).

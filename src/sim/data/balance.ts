@@ -107,6 +107,17 @@ export const BALANCE = {
   dispatcher: {
     /** effectivePriority = acuity − agingPerHourWaited × hoursWaited (Flow rule 6). */
     agingPerHourWaited: 0.5,
+    /**
+     * Hold before the dispatcher retries a patient whose reservation was
+     * cancelled (Flow rule 8) — without it, cancel + re-queue restores the
+     * exact state that created the doomed reservation, once per tick, forever.
+     */
+    cancelRetryGameMinutes: 5,
+  },
+  /** Mood-bubble thresholds (GDD §10); formulas.ts `moodOf` is the only reader. */
+  mood: {
+    criticalHealthBelow: 30,
+    impatientPatienceBelow: 30,
   },
   rooms: {
     /** Quality bonus per tile above minimum footprint (GDD §5). */

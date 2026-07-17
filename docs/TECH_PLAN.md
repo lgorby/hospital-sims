@@ -77,7 +77,7 @@ class World {
 - **Patient / Staff** are classes with an explicit state-machine field (discriminated union, e.g. `{ kind: 'waiting', since: Tick } | { kind: 'inTreatment', roomId, step } | …`). Illegal transitions throw in dev.
 - **Room** holds type, rect footprint, door tile, equipment tiles, quality score, and a single `occupancy` slot (V1 rooms treat one patient at a time; waiting room is the exception with chair-count capacity). Room defs carry a `kind: 'treatment' | 'open'` — **open** rooms (the atrium) have no walls/door, keep their tiles publicly walkable, and take no occupancy slot; they exist for their auras (GDD §5 atrium rules).
 - **Lostness is a movement sub-state, not a lifecycle state.** The patient's stage machine (waiting/inTreatment/…) is unchanged; the movement component carries `lost: { since: Tick } | null`. This keeps every existing release/re-queue rule working without new lifecycle transitions.
-- **Auras are a precomputed grid.** `World` holds an `auraGrid` (guidance/comfort flags per tile), recomputed on room build/sell and greeter hire/fire/assignment — same invalidation moments as pathfinding. The per-tile wrong-turn roll and patience-decay modifier are O(1) lookups; staff-proximity rescue (radius 3) is the only per-tick spatial check, and only runs for lost patients.
+- **Auras are a precomputed grid.** `World` holds an `auraGrid` (guidance/comfort flags per tile), recomputed on room build/sell, greeter hire/fire/assignment, **and a posted greeter's arrival at / departure from the help desk** (guidance requires posted + *arrived*, matching the reception-desk rule; comfort needs no greeter). The per-tile wrong-turn roll and patience-decay modifier are O(1) lookups; staff-proximity rescue (radius 3) is the only per-tick spatial check, and only runs for lost patients.
 - **Treatment paths** are data, not code: `conditions.ts` exports the roster from the GDD as a typed table. Adding a condition post-V1 should be a data edit.
 
 ### 2.4 Pathfinding
@@ -208,13 +208,15 @@ Each milestone ends **runnable and demonstrable**. Estimates assume focused sess
 - **Demo:** the game is *playable and losable* — under-hire and people die, cash can run out.
 
 ### M3 — Full V1 roster (the "real game")
-- All 6 conditions, all 8 room types, all 6 roles; multi-step paths (fracture, pneumonia) with re-queueing; dual-staff ER treatment (chest pain).
+- All 6 conditions, all 8 room types, all 6 roles; multi-step paths (fracture, pneumonia) with re-queueing; dual-staff ER treatment (chest pain); acuity-weighted spawn mix + reputation case-mix shift (GDD §3).
+- **Room props** for the new types (X-ray machine, ER trauma bed, nebulizer station, atrium help desk) plus visible waiting-room chairs — fixed auto-placement, data-driven in `rooms.ts` like the exam bed, each respecting the interior-connectivity backstop and the §2.5 multi-tile slicing rule. No rearrange UI (post-V1).
 - Wayfinding: wrong turns, lost wander + ❓ bubble, atrium (open-plan room kind) with guidance/comfort auras, volunteer greeter, staff-proximity rescue, self-recovery, 60-min reservation timeout.
 - Reputation system + arrival-rate coupling; time-of-day arrival curve; skill affecting speed/success.
 - Inspection panels for patient/staff/room; notification toasts with **click-to-jump camera** (toast carries an entity/tile ref; camera pans to it); room quality from size.
 - **Aura coverage overlay** in build mode (atrium ghost radius + all existing coverage tinted) — reuses the M2 debug-overlay tile-tint layer.
 - **Thought log** UI: sim emits `patientThought` events at mood-bubble moments; the log is a capped scrollback rendered from them (pure projection, per §3.1 rule 3).
-- **Tests:** multi-step path re-queue, dual-staff reservation (deadlock-free), **reservation release on death/AMA mid-walk** (no leaked staff), priority aging (no low-acuity starvation), reputation math, wayfinding (lost → aura rescue re-path; lost → 60-min timeout releases reservation and re-queues; aura grid invalidation on atrium sell / greeter fire).
+- **Tests:** multi-step path re-queue, dual-staff reservation (deadlock-free), **reservation release on death/AMA mid-walk** (no leaked staff), priority aging (no low-acuity starvation), reputation math, wayfinding (lost → aura rescue re-path; lost → 60-min timeout releases reservation and re-queues with the accumulated wait clock; aura grid invalidation on atrium sell / greeter fire). **Added at the M3 gate:** aura invalidation on atrium *build* and on greeter *arrival*; comfort-aura patience math (×0.75, stacking with standing ×1.5); per-step billing survives AMA/death after step 1; staff-proximity rescue (distinct from aura rescue); wrong-turn chance is 0 inside an aura and scales with the wayfinding stat; a lost patient's patience decays even in stage `reserved`; firing one of two gathered ER staff cancels per Flow rule 8; spawn mix follows the balance weights; fixed-seed determinism replay (two identical runs, identical event logs).
+- **Intra-M3 order (dependencies):** 1) roster + spawn mix + multi-step + dual-staff (data/dispatcher only) → 2) props + greeter post generalization → 3) aura grid + invalidation hooks → 4) `wayfinding.ts` (needs the grid) → 5) comfort aura in decay → 6) UI last (staff/room selection → inspection panels; event tile snapshots → click-to-jump; aura grid → overlay; `patientThought` events → thought log).
 - **Demo:** full V1 loop with meaningful build/hire strategy.
 
 ### M4 — Feel & finish (the "ship it")
@@ -233,6 +235,8 @@ Each milestone ends **runnable and demonstrable**. Estimates assume focused sess
 | Reserved staff leak when a patient dies/AMAs mid-walk | Every terminal patient event releases all reservations (GDD Flow rule 7); dedicated M3 test: death-during-walk with dual-staff reserved |
 | Low-acuity starvation under acuity-first dispatch | Priority aging (GDD Flow rule 6); M4 harness asserts acuity-5 patients get treated under sustained load |
 | Lostness stalls throughput invisibly (reserved rooms idle while their patient wanders) | 60-min reservation timeout (GDD §3) + ❓ bubbles + lost-count in daily report; M4 harness asserts a zero-atrium large hospital degrades but doesn't deadlock |
+| Wayfinding makes determinism fragile (per-tile and per-5-min rng draws mean any iteration reorder shifts every later roll) | All rolls through `world.rng` in fixed system order; fixed-seed replay test added to the M3 list |
+| A patient lost en route to a check-in queue slot stalls the desk for everyone behind them | Check-in queue walks never roll wrong turns (GDD §3 M3-gate ruling) |
 | Balance is unfun (too easy/too brutal) | Headless sim harness in M4 + all tuning in one `balance.ts` file |
 | Scope creep toward Theme Hospital's full feature set | GDD §11 is the parking lot; nothing enters V1 without cutting something else |
 | Pixi v8 API drift vs. training-data knowledge | Pin the version; consult current docs when wiring the renderer in M0 |

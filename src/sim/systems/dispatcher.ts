@@ -7,6 +7,7 @@ import type { Room } from '../entities/room';
 import type { Patient } from '../entities/patient';
 import type { Reservation, Staff } from '../entities/staff';
 import { effectivePriority, treatmentDurationTicks } from '../formulas';
+import { findPath } from '../path/astar';
 import { samePoint } from '../types';
 import type { Walker, World } from '../world';
 
@@ -65,12 +66,25 @@ function postReceptionists(world: World): void {
 
 /** Patients stuck at the entrance get routed once a reception has queue capacity. */
 function reRouteEntranceWaiters(world: World): void {
-  const hasCapacity = world
-    .roomsOfType('reception')
-    .some((r) => r.door && world.queueFor(r.id).length < BALANCE.reception.queueDepthTiles + 1);
-  if (!hasCapacity) return;
-  for (const patient of world.patients.values()) {
-    if (patient.stage.kind === 'atEntrance') world.routeToCheckIn(patient);
+  const receptions = world.roomsOfType('reception').filter((r) => r.door);
+  const hasCapacity = (roomId: number): boolean =>
+    world.queueFor(roomId).length < BALANCE.reception.queueDepthTiles + 1;
+  if (receptions.some((r) => hasCapacity(r.id))) {
+    for (const patient of world.patients.values()) {
+      if (patient.stage.kind === 'atEntrance') world.routeToCheckIn(patient);
+    }
+  }
+  // Queued at an unstaffed desk while a staffed one has room? Migrate — a dead
+  // queue never advances and silently AMAs everyone in it (M3-gate review).
+  const staffed = world.staffedReceptionIds();
+  if (staffed.size === 0) return;
+  for (const patient of [...world.patients.values()]) {
+    if (patient.stage.kind !== 'queuedCheckIn' || staffed.has(patient.stage.roomId)) continue;
+    if (!receptions.some((r) => staffed.has(r.id) && hasCapacity(r.id))) break;
+    const since = patient.waitingSince;
+    world.leaveQueue(patient);
+    world.routeToCheckIn(patient);
+    patient.waitingSince = since ?? patient.waitingSince; // migration isn't a fresh wait
   }
 }
 
@@ -142,6 +156,7 @@ function makeReservation(
     stepIndex,
     phase: 'gathering',
     ticksRemaining: 0,
+    patientWaitingSince: patient.waitingSince,
   };
   world.reservations.set(reservation.id, reservation);
   patient.stage = { kind: 'reserved', reservationId: reservation.id };
@@ -155,10 +170,29 @@ function makeReservation(
   }
 }
 
+/**
+ * Never reserve a room the patient can't path to (M3-gate review): a doomed
+ * reservation just round-trips through the rule-8 cancel. Staff reachability
+ * is left to the cancel + retry-hold safety net — patients and staff share
+ * the same connected floor in practice.
+ */
+function canReachRoom(world: World, walker: Walker, room: Room): boolean {
+  return (
+    room.door !== null && findPath(world, walker.next ?? walker.at, room.door.inside) !== null
+  );
+}
+
+/** Waiting patients eligible for dispatch (rule-8 retry hold honored). */
+function dispatchable(world: World, stageKind: 'waitingTriage' | 'waiting'): Patient[] {
+  return [...world.patients.values()].filter(
+    (p) => p.stage.kind === stageKind && world.clock.tick >= p.dispatchHoldUntil,
+  );
+}
+
 function assignTriage(world: World): void {
-  const waiting = [...world.patients.values()]
-    .filter((p) => p.stage.kind === 'waitingTriage')
-    .sort((a, b) => (a.waitingSince ?? 0) - (b.waitingSince ?? 0));
+  const waiting = dispatchable(world, 'waitingTriage').sort(
+    (a, b) => (a.waitingSince ?? 0) - (b.waitingSince ?? 0),
+  );
   if (waiting.length === 0) return;
   // Flow rule 5: tell the player WHY nothing is happening — once.
   if (world.roomsOfType('triage').length === 0) {
@@ -167,16 +201,20 @@ function assignTriage(world: World): void {
   if (![...world.staff.values()].some((s) => s.role === 'nurse')) {
     world.hintOnce('role:nurse', 'Nobody can run triage — hire a Nurse');
   }
-  const bays = world.roomsOfType('triage').filter((r) => r.door && !roomBusy(world, r.id));
-  const nurses = idleStaff(world, (s) => s.role === 'nurse');
-  while (waiting.length > 0 && bays.length > 0 && nurses.length > 0) {
-    makeReservation(world, 'triage', waiting.shift()!, bays.shift()!, [nurses.shift()!], 0);
+  for (const patient of waiting) {
+    const nurse = idleStaff(world, (s) => s.role === 'nurse')[0];
+    if (!nurse) return;
+    const bay = world
+      .roomsOfType('triage')
+      .find((r) => !roomBusy(world, r.id) && canReachRoom(world, patient, r));
+    if (!bay) continue;
+    makeReservation(world, 'triage', patient, bay, [nurse], 0);
   }
 }
 
 function assignTreatment(world: World): void {
-  const waiting = [...world.patients.values()]
-    .filter((p) => p.stage.kind === 'waiting' && p.acuity !== null)
+  const waiting = dispatchable(world, 'waiting')
+    .filter((p) => p.acuity !== null)
     .sort((a, b) => priorityOf(world, a) - priorityOf(world, b));
 
   for (const patient of waiting) {
@@ -200,7 +238,7 @@ function assignTreatment(world: World): void {
     }
     const room = world
       .roomsOfType(step.room)
-      .find((r) => r.door && !roomBusy(world, r.id));
+      .find((r) => !roomBusy(world, r.id) && canReachRoom(world, patient, r));
     if (!room) continue;
     // All-or-nothing (tech plan §5): every required role or nothing at all.
     const chosen: Staff[] = [];

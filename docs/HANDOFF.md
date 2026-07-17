@@ -1,7 +1,7 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-17 (after commit `d4567a3`)
-**State: M0, M1, M2 complete and committed. Next milestone: M3.**
+**Last updated:** 2026-07-17 (after the M3-gate review commit)
+**State: M0, M1, M2 complete; M3-gate reviews run and fixed. Next: M3 implementation.**
 
 ## What this project is
 
@@ -20,8 +20,9 @@ Both were hardened by independent adversarial reviews before any code was writte
 | `3c2f3bd` | M0 (scaffold, iso world, loop) + M1 (rooms, A*, walking) + fixes from two code reviews |
 | `f6ecf05` | M2 (playable vertical slice) + fixes from the M2 review (12 findings) |
 | `d4567a3` | Placeholder-plus characters + V1 collision model (Flow rule 14) |
+| *(M3 gate)* | Two adversarial pre-M3 reviews (code gaps + plan gaps): 11 code fixes with 12 regression tests, and 19 plan rulings written into the GDD/tech plan (look for "M3-gate ruling" / "M3 ruling" markers) |
 
-**The game is playable now:** `npm run dev` → localhost:5173. Flu patients arrive on the GDD's day-curve, queue at the pre-built reception, get triaged and treated if you build a Triage Bay + Exam Room and hire a Nurse + Doctor (Staff button). Backtick opens the debug panel (spawn, force outcomes, fast-forward, walkability overlay). 74 Vitest tests, lint and build green. Fixed seed 1337 in `main.ts` (new-game flow randomizes it in M4).
+**The game is playable now:** `npm run dev` → localhost:5173. Flu patients arrive on the GDD's day-curve, queue at the pre-built reception, get triaged and treated if you build a Triage Bay + Exam Room and hire a Nurse + Doctor (Staff button). Backtick opens the debug panel (per-condition spawn, force outcomes, fast-forward, walkability overlay). 86 Vitest tests, lint and build green. Fixed seed 1337 in `main.ts` (new-game flow randomizes it in M4).
 
 ## Architecture in five sentences
 
@@ -41,6 +42,11 @@ Both were hardened by independent adversarial reviews before any code was writte
 - **`treatmentDurationTicks` has a quality floor** (0.7×) — without it, oversized flat-cost rooms are an infinite-throughput exploit.
 - **Spawn is per-tick Bernoulli** (`rate/ticksPerHour`) — exact expected rate. An accumulator+jitter scheme was rejected for inflating slow rates ×1.8.
 - **Collision (Flow rule 14):** walkers pass through in motion; standing spots are exclusive (`isTileClaimed` in destination pickers); hard blocking is deliberately post-V1.
+- **Rule-8 cancellation is a recovery, not a spin (M3 gate):** the dispatcher never reserves a room the patient can't path to (`canReachRoom`), a cancelled patient carries a `dispatchHoldUntil` retry hold, and the layout hint is `hintOnce` per patient. Regression: `test/reviewGate.test.ts`.
+- **Flow rule 3 (M3 gate):** patience decays only when `walkerArrived` — purposeful walking is free. M3 lostness must count as waiting via the lost sub-state, NOT by weakening this gate.
+- **Flow rule 6 (M3 gate):** the wait clock (`waitingSince`) survives every re-queue — reservations stash it in `Reservation.patientWaitingSince` and every re-queue path restores it. Only new queue classes (check-in→triage→treatment) and terminal events reset it.
+- **Flow rules 4/14 (M3 gate):** overflow waiters and released staff get real standing destinations via `world.nearestFreeStandingTile` (BFS; excludes walled-room interiors, door tiles, and claimed spots). Nobody loiters on the desk slot or inside treatment rooms.
+- **Check-in routing (M3 gate):** staffed receptions beat unstaffed ones; patients queued at a dead desk migrate when a staffed desk has capacity.
 
 ## Working agreements (user-established)
 
@@ -50,6 +56,8 @@ Both were hardened by independent adversarial reviews before any code was writte
 4. User cares about game feel: they requested the wayfinding/atrium mechanic, the character upgrade, and the overlap fix. Visual polish requests are welcome mid-milestone.
 
 ## Next: M3 — full V1 roster (tech plan milestone definition is authoritative)
+
+**The plan-gap review closed 19 spec holes before implementation** — every lost-state edge case, aura geometry, fire-mid-gather, timeout semantics, spawn-mix weights, etc. now has a canonical answer in the GDD/tech plan (search "M3-gate ruling" / "M3 ruling"). Implement against those rulings; the intra-M3 dependency order is in the tech plan M3 section.
 
 Remaining scope (some M3 items landed early — noted):
 

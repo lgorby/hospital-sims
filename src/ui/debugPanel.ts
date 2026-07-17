@@ -1,8 +1,8 @@
 import type { CommandQueue } from '../commands';
 import type { WorldRenderer } from '../render/renderer';
-import { TICKS_PER_DAY } from '../sim/clock';
+import { TICKS_PER_DAY, TICKS_PER_GAME_HOUR } from '../sim/clock';
+import { CONDITION_DEFS, CONDITION_IDS } from '../sim/data/conditions';
 
-const HOURS_PER_DAY = 24;
 const SPAWN_BATCH = 5;
 
 /**
@@ -27,7 +27,11 @@ export class DebugPanel {
     title.textContent = 'Debug';
     this.panel.appendChild(title);
 
-    this.button('Spawn flu patient', () => this.commands.push({ type: 'debugSpawnPatient' }));
+    for (const condition of CONDITION_IDS) {
+      this.button(`Spawn ${CONDITION_DEFS[condition].label}`, () =>
+        this.commands.push({ type: 'debugSpawnPatient', condition }),
+      );
+    }
     this.button('Spawn 5 flu patients', () => {
       for (let i = 0; i < SPAWN_BATCH; i++) this.commands.push({ type: 'debugSpawnPatient' });
     });
@@ -35,7 +39,7 @@ export class DebugPanel {
     this.button('Force AMA (selected)', () => this.force('ama'));
     this.button('Force complication (selected)', () => this.force('complication'));
     this.button('Fast-forward 1 hour', () =>
-      this.commands.push({ type: 'debugFastForward', ticks: TICKS_PER_DAY / HOURS_PER_DAY }),
+      this.commands.push({ type: 'debugFastForward', ticks: TICKS_PER_GAME_HOUR }),
     );
     this.button('Fast-forward 1 day', () =>
       this.commands.push({ type: 'debugFastForward', ticks: TICKS_PER_DAY }),

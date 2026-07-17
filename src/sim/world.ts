@@ -1,7 +1,7 @@
 import type { CommandQueue, Command } from '../commands';
 import type { EventBus } from '../events';
 import { doorFromOutsideTile, validateRoomBuild, validateRoomSell } from './build';
-import { GameClock } from './clock';
+import { GameClock, gameMinutesToTicks } from './clock';
 import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, type ConditionId } from './data/conditions';
 import { generateAge, generateName } from './data/names';
@@ -165,12 +165,57 @@ export class World implements PathGrid {
    * Flow rule 14: walkers pass through each other in motion, but standing
    * spots are exclusive — destinations avoid claimed tiles.)
    */
-  isTileClaimed(p: GridPoint): boolean {
+  isTileClaimed(p: GridPoint, ignore?: Walker): boolean {
     for (const person of [...this.patients.values(), ...this.staff.values()]) {
+      if (person === ignore) continue;
       if (person.target && samePoint(person.target, p)) return true;
       if (this.walkerArrived(person) && samePoint(person.at, p)) return true;
     }
     return false;
+  }
+
+  /**
+   * Nearest free standing spot (Flow rules 4/14): BFS outward from `from` to
+   * the first walkable corridor or open-room tile (optionally a waiting-room
+   * interior) that is unclaimed and not a doorway tile — so loiterers never
+   * squat on desk slots, door landings, or inside treatment rooms.
+   */
+  nearestFreeStandingTile(
+    from: GridPoint,
+    ignore?: Walker,
+    opts: { includeWaitingRooms?: boolean } = {},
+  ): GridPoint | null {
+    const keyOf = (p: GridPoint): number => p.col * this.rows + p.row;
+    const doorTiles = new Set<number>();
+    for (const room of this.rooms.values()) {
+      if (room.door) {
+        doorTiles.add(keyOf(room.door.inside));
+        doorTiles.add(keyOf(room.door.outside));
+      }
+    }
+    const qualifies = (p: GridPoint): boolean => {
+      const tile = this.tileAt(p.col, p.row);
+      if (!tile?.walkable) return false;
+      const zoneOk =
+        tile.roomId === null ||
+        this.isOpenRoom(tile.roomId) ||
+        (opts.includeWaitingRooms === true && this.rooms.get(tile.roomId)?.type === 'waiting');
+      return zoneOk && !doorTiles.has(keyOf(p)) && !this.isTileClaimed(p, ignore);
+    };
+    const visited = new Set<number>([keyOf(from)]);
+    const queue: GridPoint[] = [from];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (qualifies(current)) return current;
+      for (const step of ORTHOGONAL_STEPS) {
+        const next = { col: current.col + step.col, row: current.row + step.row };
+        const k = keyOf(next);
+        if (visited.has(k) || !this.canStep(current, next)) continue;
+        visited.add(k);
+        queue.push(next);
+      }
+    }
+    return null;
   }
 
   /** A random walkable interior tile, preferring unclaimed ones (Flow rule 14). */
@@ -214,7 +259,7 @@ export class World implements PathGrid {
         this.fireStaff(command.staffId);
         return;
       case 'debugSpawnPatient':
-        this.spawnPatient('flu');
+        this.spawnPatient(command.condition ?? 'flu');
         return;
       case 'debugForce':
         this.debugForce(command.patientId, command.outcome);
@@ -445,6 +490,7 @@ export class World implements PathGrid {
       billed: 0,
       stage: { kind: 'atEntrance' },
       waitingSince: null,
+      dispatchHoldUntil: 0,
       waitingRoomId: null,
       at: { ...BALANCE.map.entrance },
       next: null,
@@ -458,17 +504,32 @@ export class World implements PathGrid {
     return patient;
   }
 
+  /** Which reception rooms have a receptionist posted (walking there counts). */
+  staffedReceptionIds(): Set<number> {
+    const staffed = new Set<number>();
+    for (const s of this.staff.values()) {
+      if (s.duty.kind === 'post') staffed.add(s.duty.roomId);
+    }
+    return staffed;
+  }
+
   /** Send a patient to the shortest check-in queue; atEntrance if none exists. */
   routeToCheckIn(patient: Patient): void {
     const receptions = this.roomsOfType('reception').filter((r) => r.door);
+    const staffed = this.staffedReceptionIds();
+    // Capacity = the desk slot + queueDepthTiles behind it (GDD Flow rule 1).
+    const capacity = BALANCE.reception.queueDepthTiles + 1;
     let best: Room | null = null;
-    let bestLength = Infinity;
+    let bestKey = Infinity;
     for (const room of receptions) {
       const length = this.queueFor(room.id).length;
-      // Capacity = the desk slot + queueDepthTiles behind it (GDD Flow rule 1).
-      if (length < BALANCE.reception.queueDepthTiles + 1 && length < bestLength) {
+      if (length >= capacity) continue;
+      // An unstaffed desk never processes its queue, so any staffed desk beats
+      // any unstaffed one; queue length breaks ties (M3-gate review).
+      const key = length + (staffed.has(room.id) ? 0 : capacity);
+      if (key < bestKey) {
         best = room;
-        bestLength = length;
+        bestKey = key;
       }
     }
     if (!best) {
@@ -543,6 +604,12 @@ export class World implements PathGrid {
       }
     }
     patient.waitingRoomId = null; // standing: 1.5× patience decay (Flow rule 4)
+    // Flow rule 4: overflow waiters stand on a free tile in/around the waiting
+    // room (or near where they are, if none exists) — never left parked on the
+    // desk slot or inside a treatment room (M3-gate review).
+    const anchor = waitingRooms[0]?.door?.outside ?? patient.next ?? patient.at;
+    const spot = this.nearestFreeStandingTile(anchor, patient, { includeWaitingRooms: true });
+    if (spot) this.setWalkerTarget(patient, spot);
   }
 
   // ------------------------------------------------------ terminal outcomes
@@ -578,11 +645,17 @@ export class World implements PathGrid {
     if (!patient) return;
     patient.stage =
       reservation.kind === 'triage' ? { kind: 'waitingTriage' } : { kind: 'waiting' };
-    patient.waitingSince = this.clock.tick;
+    // Flow rule 6 ruling: the wait clock survives the failed reservation.
+    patient.waitingSince = reservation.patientWaitingSince ?? this.clock.tick;
+    // Hot-loop guard (M3-gate review): without a hold, the dispatcher would
+    // re-reserve the same doomed room next tick — reserve/cancel forever.
+    patient.dispatchHoldUntil =
+      this.clock.tick + gameMinutesToTicks(BALANCE.dispatcher.cancelRetryGameMinutes);
     this.assignWaitingSpot(patient);
-    this.events.emit('hint', {
-      message: `${patient.name.short} couldn't reach the room — check your corridors`,
-    });
+    this.hintOnce(
+      `noPath:${patient.id}`,
+      `${patient.name.short} couldn't reach the room — check your corridors`,
+    );
   }
 
   /** Flow rule 7: release EVERYTHING a patient holds, from any stage. */
@@ -602,7 +675,21 @@ export class World implements PathGrid {
       const member = this.staff.get(staffId);
       if (!member) continue;
       member.duty = { kind: 'idle' };
-      if (member.firing) this.removeStaff(member);
+      if (member.firing) {
+        this.removeStaff(member);
+        continue;
+      }
+      // Released staff stop heading to the released room (stale-target leak)
+      // and step out of walled rooms, so "Someone is inside" can't pin a sale
+      // on an idle loiterer (Flow rules 9/11 — idle wandering proper is M3).
+      member.path = [];
+      member.target = null;
+      const standing = member.next ?? member.at;
+      const room = this.roomAt(standing);
+      if (room && ROOM_DEFS[room.type].kind !== 'open') {
+        const spot = this.nearestFreeStandingTile(standing, member);
+        if (spot) this.setWalkerTarget(member, spot);
+      }
     }
   }
 

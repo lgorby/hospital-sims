@@ -1,3 +1,4 @@
+import type { ConditionId } from './sim/data/conditions';
 import type { RoomType } from './sim/data/rooms';
 import type { GridPoint, Rect } from './sim/types';
 
@@ -11,7 +12,7 @@ export type Command =
   | { type: 'sellRoom'; roomId: number }
   | { type: 'hireStaff'; candidateId: number }
   | { type: 'fireStaff'; staffId: number }
-  | { type: 'debugSpawnPatient' }
+  | { type: 'debugSpawnPatient'; condition?: ConditionId }
   | { type: 'debugForce'; patientId: number; outcome: 'death' | 'ama' | 'complication' }
   | { type: 'debugFastForward'; ticks: number }
   | { type: 'debugWalkTo'; col: number; row: number }
