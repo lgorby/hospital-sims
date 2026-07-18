@@ -1,7 +1,27 @@
 # Finances & departmental P&L — design + implementation plan (v3, FROZEN)
 
-**Status: v3 — TWO pre-implementation review rounds folded; READY TO FREEZE
-and build.** Owner
+**Status: IMPLEMENTED 2026-07-18** (SAVE_VERSION 7, 568 tests, all gates
+green — see the `*(finances)*` row in `docs/HANDOFF.md`). Built from v3 below
+essentially as written. **Shipped deltas, for the record:** (1) §12's
+"sell a room → hospital value drops by the sell-back" was MATHEMATICALLY
+FALSE and is corrected in place — value is conserved, capital invested is
+what drops; (2) the Departments block gained an **Amenities** row, because
+excluding roomless props left it short of `Patient fees` by the vending take
+with no line to explain the gap (live-drive MINOR); (3) the payroll closer
+reads `Payroll (not allocated, lifetime)` and renders as a grid row — the
+unlabelled version read as ONE DAY's wages under an "Income today" column;
+(4) the finances card scrolls its body with Continue pinned outside it, and
+the graph's scale labels anchor to the VERTICAL extremes (both live-drive
+MAJORs — the modal had never been on screen when it was written);
+(5) the directory gates its earned column on `roomEarns`, matching the
+inspect card, rather than printing `$0` on rooms that cannot bill;
+(6) an `Amenity` interface was extracted to `data/amenities.ts` (the shape
+was inline in five places and drifted the moment `revenueTotal` was added);
+(7) the daily report's zero-suppression predicate is `=== 0`, not `<= 0`, so
+a future negative category cannot silently hide a real loss.
+
+**Original status: v3 — TWO pre-implementation review rounds folded; READY TO
+FREEZE and build.** Owner
 ask (2026-07-18): *"Do games like this show the profit and loss somewhere for
 each department and totals… Let's mimic RollerCoaster Tycoon."* Companion to
 `GAME_DESIGN.md` / `TECH_PLAN.md` (§3.1 SSOT); CLAUDE.md hard rules govern.
@@ -617,9 +637,19 @@ machine; open Finances: cash / hospital value / average bill sane, Today's
 column matches the daily report at midnight, the Net row equals the report's
 Net; close, run a day, reopen (columns shift, the graph appears at day 2);
 click an X-Ray → Income today/total/Patients seen, cross-checked against the
-department total; a never-used room reads $0 (the RCT "this ride earns
-nothing" read); sell a room → hospital value drops by the sell-back and the
-department's capital drops; departments show `Payroll (not allocated)`;
+department total (NOTE: the Departments block sums LIVE ROOMS only, so it is
+short of `Patient fees` by any vending take and by revenue earned in rooms
+since sold — both numbers are right; the Amenities row carries the vending
+side); a never-used room reads $0 (the RCT "this ride earns nothing" read);
+sell a room → **hospital value is CONSERVED, not reduced** (both reviews
+confirmed the v2 wording was mathematically false: `hospitalValue` = cash +
+Σ sellbacks, and `sellRoom` pays exactly `sellbackAmount` into cash, so the
+two deltas cancel — there is not even a rounding residue, since `Math.floor`
+is applied once inside the shared derivation). What DOES move: the
+department's capital invested drops by `priceOf`, and `Sell-back income`
+appears. Value visibly falls on a BUILD instead — you pay `priceOf` and gain
+only `sellbackAmount`, so the spread is the real loss; departments show
+`Payroll (not allocated, lifetime)`;
 a v6 production save imports and plays (counters 0, history builds from the
 next midnight, the §7 Q7 notice shows, and the average-bill row stays blank
 until a POST-import discharge); the modal pauses on open and restores speed

@@ -13,6 +13,15 @@ export abstract class PausingOverlay {
   protected overlay!: HTMLElement;
   protected card!: HTMLElement;
   private resumeSpeed: Speed = RESUME_FALLBACK;
+  /**
+   * Whether "the game was already paused" is a speed worth restoring
+   * (FINANCE_PLAN §3). The midnight overlays open only at a day boundary, so
+   * a captured 0 there means "the sim happened to be stopped" and resuming at
+   * the fallback is right. An overlay the PLAYER opens at will is the opposite
+   * case: pause → open → Continue must leave the game paused. Default false
+   * preserves every pre-finances overlay byte-for-byte.
+   */
+  protected allowResumeToPaused = false;
 
   constructor(protected readonly loop: GameLoop) {}
 
@@ -32,7 +41,8 @@ export abstract class PausingOverlay {
    *  remembered speed, so several back-to-back day closes don't lose it). */
   protected show(): void {
     if (this.overlay.classList.contains('hidden')) {
-      this.resumeSpeed = this.loop.speed === 0 ? RESUME_FALLBACK : this.loop.speed;
+      this.resumeSpeed =
+        this.loop.speed === 0 && !this.allowResumeToPaused ? RESUME_FALLBACK : this.loop.speed;
       this.loop.setSpeed(0);
       this.overlay.classList.remove('hidden');
     }

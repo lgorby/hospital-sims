@@ -5,10 +5,12 @@ import { BALANCE } from '../sim/data/balance';
 import { ROLE_DEFS, ROLE_IDS } from '../sim/data/roles';
 import { PROP_STYLE, ROOM_DEFS, type RoomCategory } from '../sim/data/rooms';
 import type { Room } from '../sim/entities/room';
+import { roomEarns } from '../sim/formulas';
 import type { World } from '../sim/world';
 import type { BottomBarDropdowns, DropdownHandle } from './bottomBar';
 import { CATEGORY_LABELS } from './buildMenu';
 import { cssHexColor } from './dom';
+import { money } from './format';
 
 /**
  * The hospital directory (owner ask 2026-07-18: "a pullout … to see which
@@ -114,11 +116,15 @@ export class DirectoryPanel {
     return '';
   }
 
-  /** One clickable row: swatch + name, dim status right-aligned. */
+  /** One clickable row: swatch + name, dim status and earned-today value
+   *  right-aligned. `earned` is the pre-RENDERED money string (never a raw
+   *  float) — the same string the renderKey is built from, so what the key
+   *  compares is exactly what the row shows. Empty for amenity rows. */
   private row(
     swatchColor: number,
     label: string,
     status: string,
+    earned: string,
     onClick: () => void,
   ): HTMLElement {
     const row = document.createElement('div');
@@ -135,14 +141,31 @@ export class DirectoryPanel {
     state.className = 'dir-status';
     state.textContent = status;
     row.append(swatch, name, state);
+    if (earned !== '') {
+      const value = document.createElement('span');
+      value.className = 'dir-earned';
+      value.textContent = earned;
+      row.appendChild(value);
+    }
     row.addEventListener('click', onClick);
     return row;
   }
 
-  private section(label: string): HTMLElement {
+  /** A category header, optionally carrying the department's earned-today
+   *  subtotal (FINANCE_PLAN §5.2 — the inventory list doubles as the P&L
+   *  browser). Pre-rendered like the row values, for the same reason. */
+  private section(label: string, subtotal = ''): HTMLElement {
     const h = document.createElement('h4');
     h.className = 'dir-section';
-    h.textContent = label;
+    const name = document.createElement('span');
+    name.textContent = label;
+    h.appendChild(name);
+    if (subtotal !== '') {
+      const value = document.createElement('span');
+      value.className = 'dir-subtotal';
+      value.textContent = subtotal;
+      h.appendChild(value);
+    }
     return h;
   }
 
@@ -158,11 +181,41 @@ export class DirectoryPanel {
       (role) => [...this.world.staff.values()].filter((s) => s.role === role).length,
     );
 
+    // §5.2 money columns, computed ONCE as their RENDERED money() strings: the
+    // rows show them and the renderKey compares them. Keying on the raw float
+    // instead would rebuild the whole list on every billed fee — and on
+    // payroll's sub-cent dust, forever — churning DOM and hover state while
+    // the panel is open (plan review MINOR 16). money() rounds, so a subtotal
+    // can tick over while no single room's string does; both go in the key.
+    // Only rooms that CAN bill carry a value (both reviews): a waiting room's
+    // "$0" is not the RCT "this ride earns nothing" signal, it is a category
+    // error repeated down the panel, and it contradicted the inspect card,
+    // which gates the same information on `roomEarns`. Subtotals still sum
+    // every room in the category — non-earners contribute 0, so no number
+    // changes.
+    const earnedByRoom = new Map<number, string>(
+      rooms.filter((r) => roomEarns(r.type)).map((r) => [r.id, money(r.revenueToday)]),
+    );
+    const subtotals = new Map<RoomCategory, string>(
+      CATEGORIES.map((category) => [
+        category,
+        money(
+          rooms
+            .filter((r) => ROOM_DEFS[r.type].category === category)
+            .reduce((sum, r) => sum + r.revenueToday, 0),
+        ),
+      ]),
+    );
+
     // Rebuild only on real change — not 10×/s forever (the blockedPanel rule).
     const renderKey = [
       rooms
-        .map((r) => `${r.id}:${r.type}:${r.rect.cols}x${r.rect.rows}:${this.roomStatus(r)}`)
+        .map(
+          (r) =>
+            `${r.id}:${r.type}:${r.rect.cols}x${r.rect.rows}:${this.roomStatus(r)}:${earnedByRoom.get(r.id)}`,
+        )
         .join('|'),
+      [...subtotals.values()].join(','),
       amenities.map((a) => `${a.kind}@${a.tile.col},${a.tile.row}:${this.amenityStatus(a)}`).join('|'),
       staffCounts.join(','),
     ].join('||');
@@ -181,7 +234,7 @@ export class DirectoryPanel {
     for (const category of CATEGORIES) {
       const inCategory = rooms.filter((r) => ROOM_DEFS[r.type].category === category);
       if (inCategory.length === 0) continue;
-      this.list.appendChild(this.section(CATEGORY_LABELS[category]));
+      this.list.appendChild(this.section(CATEGORY_LABELS[category], subtotals.get(category)));
       for (const room of inCategory) {
         const def = ROOM_DEFS[room.type];
         this.list.appendChild(
@@ -189,6 +242,7 @@ export class DirectoryPanel {
             def.floorColor,
             `${def.label} ${room.rect.cols}×${room.rect.rows}`,
             this.roomStatus(room),
+            earnedByRoom.get(room.id) ?? '',
             () => {
               this.onJump(
                 room.rect.col + Math.floor(room.rect.cols / 2),
@@ -212,6 +266,7 @@ export class DirectoryPanel {
             PROP_STYLE[amenity.kind].color,
             AMENITY_DEFS[amenity.kind].label,
             this.amenityStatus(amenity),
+            '', // amenity income lives on its inspect card (§4.2), not here
             () => {
               this.onJump(amenity.tile.col, amenity.tile.row);
               this.renderer.selected = {

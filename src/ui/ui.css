@@ -954,3 +954,167 @@ body {
 .saveload-quit {
   margin-top: 12px;
 }
+
+/* --- finance modal (U1) --- */
+
+/* The shared card is 340px — a 9-column grid needs room. Only this card. */
+.finance-card {
+  width: 680px;
+  max-width: 92vw;
+  /* The body scrolls, the title and Continue do not (live-drive MAJOR 2):
+     with a graph and four departments this card exceeds the shared 80vh, and
+     on a short window Continue fell below the fold with no scrollbar and no
+     Esc — a paused game with no visible way out. */
+  display: flex;
+  flex-direction: column;
+}
+
+.finance-body {
+  overflow-y: auto;
+  /* Without min-height a flex child refuses to shrink below its content, so
+     the scroller would never engage and the overflow would escape the card. */
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+/* Multi-column row: the grid template (label + N columns) is set inline,
+   because the column count is the history length + Today + Total. */
+.modal-row.finance-row {
+  display: grid;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.finance-label {
+  color: #cfd6df;
+}
+
+.finance-cell {
+  text-align: right;
+}
+
+/* Column headers: the same treatment as an h3, at row scale. */
+.finance-row.finance-head .finance-cell {
+  color: #9fb0c5;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.finance-row.finance-head {
+  border-bottom-color: rgba(255, 255, 255, 0.18);
+}
+
+/* Vending is a BREAKDOWN of Patient fees — indented so it reads as a
+   sub-line and never as a net line of its own. */
+.finance-breakdown .finance-label {
+  padding-left: 14px;
+  color: #9fb0c5;
+}
+
+.finance-row.finance-net {
+  border-top: 1px solid rgba(255, 255, 255, 0.25);
+  border-bottom: none;
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.finance-net .finance-label {
+  color: #e8e6e0;
+}
+
+/* Pre-v7 saves: "Total is since this save was upgraded" (§7 Q7). */
+.finance-note {
+  font-size: 11px;
+  color: #9fb0c5;
+}
+
+/* Fixed viewBox + preserveAspectRatio="none": the height is CSS, not SVG. */
+.finance-graph {
+  display: block;
+  width: 100%;
+  height: 90px;
+}
+
+.finance-graph-line {
+  fill: none;
+  stroke: #8fd694;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.finance-graph-zero {
+  stroke: rgba(255, 255, 255, 0.25);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The scale labels describe the VERTICAL axis, so they sit at the vertical
+   extremes (live-drive MAJOR 1). Laid out as a horizontal row under the graph
+   they read as "start … end" and invert the story on every rising week. */
+.finance-graph-frame {
+  position: relative;
+}
+
+.finance-graph-scale {
+  position: absolute;
+  left: 0;
+  font-size: 11px;
+  color: #9fb0c5;
+  background: rgba(20, 26, 34, 0.7);
+  padding: 0 3px;
+  pointer-events: none;
+}
+
+.finance-graph-max {
+  top: 0;
+}
+
+.finance-graph-min {
+  bottom: 0;
+}
+
+
+/* --- per-unit (U2) --- */
+
+/* Inspect Income block (FINANCE_PLAN §4). "Patients seen" does not fit the
+   shared 72px label column, and widening THAT would reflow every other card,
+   so the income rows carry their own wider label column. Tabular figures keep
+   the three values in a column as they grow. */
+.inspect-row.income span:first-child {
+  width: 92px;
+}
+
+.inspect-row.income span:last-child {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Directory earned-today column (FINANCE_PLAN §5.2): dimmer than the room
+   name and quieter than the status, so the inventory list reads as an
+   inventory first and a P&L second. Tabular figures keep the column aligned
+   as values grow. */
+.dir-earned {
+  color: #7f8a99;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  min-width: 56px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* The department subtotal rides the category header, right-aligned against
+   the room rows' column. */
+.dir-section {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dir-subtotal {
+  color: #9fb0c5;
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: normal;
+}

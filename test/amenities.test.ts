@@ -150,7 +150,12 @@ describe('placeAmenity / sellAmenity handlers (§1.7)', () => {
       const t = world.tileAt(tile.col, tile.row)!;
       expect(t.object).toBe(kind);
       expect(t.walkable, `${kind} must be non-walkable (NIT 22 rule)`).toBe(false);
-      expect(world.amenityAt(tile.col, tile.row)).toEqual({ kind, tile, fill: 0 });
+      expect(world.amenityAt(tile.col, tile.row)).toEqual({
+        kind,
+        tile,
+        fill: 0,
+        revenueTotal: 0,
+      });
       // The rule's PAYOFF: a room over the amenity tile is rejected by the
       // existing object check — a walkable amenity would silently lose this.
       expect(

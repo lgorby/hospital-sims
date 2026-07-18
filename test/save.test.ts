@@ -4,7 +4,9 @@ import { EventBus, type EventName } from '../src/events';
 import { TICKS_PER_DAY } from '../src/sim/clock';
 import { BALANCE } from '../src/sim/data/balance';
 import { ROLE_IDS } from '../src/sim/data/roles';
-import { treatmentDurationTicks } from '../src/sim/formulas';
+import { emptyCashTotals } from '../src/sim/data/finance';
+import { emptyDayTally } from '../src/sim/dailyStats';
+import { averageBillPerPatient, treatmentDurationTicks } from '../src/sim/formulas';
 import { setupNewGame } from '../src/sim/newGame';
 import {
   SAVE_VERSION,
@@ -123,7 +125,16 @@ function pipelineRich(world: World): boolean {
     // save tick (the xray/resp re-break rotation + 1 tech keeps one live);
     // the queued repair + water messes are minted AT the save tick by
     // breaking the restroom (commands apply synchronously).
-    jobs.some((j) => j.kind === 'repair' && j.phase === 'working')
+    jobs.some((j) => j.kind === 'repair' && j.phase === 'working') &&
+    // v7 (finances, §9.7 pins): the schema corners the finances epic added —
+    // a room earning BOTH today and on an earlier day (revenueTotal >
+    // revenueToday > 0), a vending machine with lifetime takings, at least two
+    // CLOSED days in history, and a nonzero lifetime tally — all at the SAME
+    // save tick.
+    [...world.rooms.values()].some((r) => r.revenueToday > 0 && r.revenueTotal > r.revenueToday) &&
+    [...world.amenities.values()].some((a) => a.kind === 'vending' && a.revenueTotal > 0) &&
+    world.history.length >= 2 &&
+    world.lifetime.revenue > 0
   );
 }
 
@@ -223,6 +234,30 @@ function assertRichPremises(world: World): void {
     ),
     'a water mess with its clean job (the piping burst)',
   ).toBe(true);
+  // v7 premises (finances, §9.7 — asserted, never assumed):
+  expect(
+    rooms.some((r) => r.revenueToday > 0 && r.revenueTotal > r.revenueToday),
+    'a room earning today AND carrying earlier days (revenueTotal > revenueToday > 0)',
+  ).toBe(true);
+  expect(
+    rooms.some((r) => r.visitsTotal > 0),
+    'a room with completed treatment steps',
+  ).toBe(true);
+  expect(
+    [...world.amenities.values()].some((a) => a.kind === 'vending' && a.revenueTotal > 0),
+    'a vending machine with lifetime takings',
+  ).toBe(true);
+  expect(world.history.length, 'at least two closed days in history').toBeGreaterThanOrEqual(2);
+  // The byte-identity fixture must never be OVER cap: an over-cap save is
+  // trimmed on load and therefore NOT byte-identical on re-save (§9.7).
+  expect(world.history.length, 'the fixture stays under historyCapDays').toBeLessThanOrEqual(
+    BALANCE.finance.historyCapDays,
+  );
+  expect(world.lifetime.revenue, 'a nonzero lifetime tally').toBeGreaterThan(0);
+  expect(
+    world.lifetimeTreatedBase,
+    'a fresh (non-migrated) world carries a zero watermark',
+  ).toBe(0);
 }
 
 /**
@@ -720,10 +755,29 @@ describe('load border referential integrity (review MAJOR 1)', () => {
 
 // ------------------------------------------------- v4 (amenities Stage 1)
 
-/** A REAL v5 payload: the current shape minus everything v6 added (room
+/** A REAL v6 payload: the current shape minus everything v7 added (the room
+ *  income counters, the amenity's revenueTotal, and the world's lifetime /
+ *  lifetimeTreatedBase / history). v7 added NO role, so the candidate pool is
+ *  untouched — this is the first bump whose migration tops up nothing. */
+function v6Fixture(): Record<string, unknown> {
+  const save = JSON.parse(smallSave()) as Record<string, unknown>;
+  save.saveVersion = 6;
+  for (const r of save.rooms as Record<string, unknown>[]) {
+    delete r.revenueToday;
+    delete r.revenueTotal;
+    delete r.visitsTotal;
+  }
+  for (const a of save.amenities as Record<string, unknown>[]) delete a.revenueTotal;
+  delete save.lifetime;
+  delete save.lifetimeTreatedBase;
+  delete save.history;
+  return save;
+}
+
+/** A REAL v5 payload: the v6 fixture minus everything v6 added (room
  *  wear/brokenSince, job roomId, and the maintenance candidate pool). */
 function v5Fixture(): Record<string, unknown> {
-  const save = JSON.parse(smallSave()) as Record<string, unknown>;
+  const save = v6Fixture();
   save.saveVersion = 5;
   for (const r of save.rooms as Record<string, unknown>[]) {
     delete r.wear;
@@ -1254,6 +1308,229 @@ describe('load border: failures & repair (v6, §S3.5)', () => {
     if (!result.ok) return;
     expect(result.world.reservations.size).toBe(1);
     expect(result.world.roomsOfType('dialysis')[0]!.brokenSince).not.toBeNull();
+  });
+});
+
+// ------------------------------------------------- v7 (finances, §9.7)
+
+/** A save carrying live v7 surface: a room with income + visits, a vending
+ *  machine with takings, two closed days of history and a nonzero lifetime.
+ *  Built by poking the counters (they are plain running sums), which keeps the
+ *  fixture cheap and its border shape exact. */
+let cachedFinanceSave: string | null = null;
+function financeSave(): string {
+  if (cachedFinanceSave === null) {
+    const world = new World(new EventBus(), 37);
+    setupNewGame(world);
+    world.buildRoom('exam', { col: 14, row: 27, cols: 3, rows: 3 }, { col: 17, row: 28 }, true);
+    world.placeAmenity('vending', { col: 25, row: 36 });
+    // Two closed days through the REAL closeDay path (history, trim, resets).
+    for (let d = 0; d < 2; d++) {
+      for (let i = TICKS_PER_DAY - (world.clock.tick % TICKS_PER_DAY); i > 0; i--) world.tick();
+      world.patients.clear();
+    }
+    const exam = world.roomsOfType('exam')[0]!;
+    exam.revenueToday = 150;
+    exam.revenueTotal = 900;
+    exam.visitsTotal = 5;
+    world.amenityAt(25, 36)!.revenueTotal = 15;
+    world.tallyCash('revenue', 915);
+    cachedFinanceSave = saveToString(world);
+  }
+  return cachedFinanceSave;
+}
+
+function parsedFinanceSave(): SaveData {
+  return JSON.parse(financeSave()) as SaveData;
+}
+
+describe('v6 → v7 migration (finances, FINANCE_PLAN §9.7)', () => {
+  it('a genuine v6 fixture LOADS: counters 0, lifetime zeros, history empty, watermark set', () => {
+    const fixture = v6Fixture();
+    // Premise: the fixture genuinely lacks the v7 surface…
+    expect(fixture.lifetime).toBeUndefined();
+    expect(fixture.history).toBeUndefined();
+    // …and carries pre-upgrade discharges, so the watermark is not vacuously 0
+    // (re-review MAJOR N2 — the whole point of the field).
+    const imported = 400;
+    fixture.lifetimeTreated = imported;
+    // v7 added NO role, so the pool is complete and topUpCandidates is a
+    // strict no-op — the first bump with no candidate churn.
+    expect((fixture.candidates as unknown[]).length).toBe(
+      ROLE_IDS.length * BALANCE.hiring.candidatesPerRole,
+    );
+
+    const result = loadOf(fixture);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const w = result.world;
+    expect(w.rooms.size).toBeGreaterThan(0); // premise
+    for (const room of w.rooms.values()) {
+      expect(room.revenueToday).toBe(0);
+      expect(room.revenueTotal).toBe(0);
+      expect(room.visitsTotal).toBe(0);
+    }
+    for (const a of w.amenities.values()) expect(a.revenueTotal).toBe(0);
+    expect(w.lifetime).toEqual(emptyCashTotals());
+    expect(w.history).toEqual([]);
+    // THE N2 assertion: the watermark IS the restored discharge count, so the
+    // average-bill row counts post-upgrade discharges only.
+    expect(w.lifetimeTreatedBase).toBe(imported);
+    expect(w.lifetimeTreated).toBe(imported);
+    expect(averageBillPerPatient(w.lifetime, w.lifetimeTreated, w.lifetimeTreatedBase)).toBeNull();
+
+    // A re-save stamps v7 with the new surface present.
+    const resaved = JSON.parse(saveToString(w)) as SaveData;
+    expect(resaved.saveVersion).toBe(SAVE_VERSION);
+    expect(resaved.lifetime).toEqual(emptyCashTotals());
+    expect(resaved.lifetimeTreatedBase).toBe(imported);
+    expect(resaved.history).toEqual([]);
+    expect(resaved.rooms.every((r) => r.revenueTotal === 0 && r.visitsTotal === 0)).toBe(true);
+  });
+
+  it('a genuine v3 fixture still loads through the v7 reader (transitive migration)', () => {
+    const result = loadOf(v3Fixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.world.lifetime).toEqual(emptyCashTotals());
+    expect(result.world.history).toEqual([]);
+    for (const room of result.world.rooms.values()) expect(room.revenueTotal).toBe(0);
+  });
+
+  it('a v7 save with live income, history and lifetime round-trips byte-identically', () => {
+    const save = parsedFinanceSave();
+    // Premises: every §9.7 round-trip pin is genuinely present.
+    const exam = save.rooms.find((r) => r.type === 'exam')!;
+    expect(exam.revenueToday).toBeGreaterThan(0);
+    expect(exam.revenueTotal).toBeGreaterThan(exam.revenueToday);
+    expect(exam.visitsTotal).toBeGreaterThan(0);
+    expect(save.amenities[0]!.revenueTotal).toBeGreaterThan(0);
+    expect(save.history.length).toBeGreaterThanOrEqual(2);
+    expect(save.history.length).toBeLessThanOrEqual(BALANCE.finance.historyCapDays);
+    expect(save.lifetime.revenue).toBeGreaterThan(0);
+
+    const loaded = loadWorld(new EventBus(), financeSave());
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    expect(loaded.world.history).toHaveLength(save.history.length);
+    expect(loaded.world.lifetime.revenue).toBe(save.lifetime.revenue);
+    expect(loaded.world.roomsOfType('exam')[0]!.visitsTotal).toBe(exam.visitsTotal);
+    expect(saveToString(loaded.world)).toBe(financeSave());
+  });
+
+  it('writeDayReport delegates to writeTally: every tally key rides along', () => {
+    const save = parsedFinanceSave();
+    const entry = save.history[0]! as unknown as Record<string, unknown>;
+    for (const key of Object.keys(emptyDayTally())) {
+      expect(entry[key], `history entry carries ${key}`).toBeTypeOf('number');
+    }
+    for (const key of ['day', 'cash', 'reputation', 'waitBonusAwarded']) {
+      expect(entry, `history entry carries ${key}`).toHaveProperty(key);
+    }
+  });
+});
+
+describe('load border: finances (v7, §9.7)', () => {
+  it('accepts the control fixture', () => {
+    expect(loadOf(parsedFinanceSave()).ok).toBe(true);
+  });
+
+  it('rejects negative room income counters and a negative visit count', () => {
+    for (const key of ['revenueToday', 'revenueTotal', 'visitsTotal'] as const) {
+      const save = parsedFinanceSave();
+      save.rooms.find((r) => r.type === 'exam')![key] = -1;
+      const result = loadOf(save);
+      expect(result.ok, key).toBe(false);
+      if (!result.ok) expect(result.reason).toContain(key);
+    }
+  });
+
+  // Review MINOR: the pair is checkable, so the border checks it — the same
+  // philosophy as `lifetimeTreatedBase ≤ lifetimeTreated` two functions away.
+  // No legitimate world can produce this (billFee moves both by the same
+  // amount; closeDay only lowers revenueToday), but a payload carrying it
+  // renders "Income today $1,000,000 / Income total $0" and a department
+  // subtotal that outruns its own lifetime column.
+  it('rejects a room whose income today exceeds its lifetime income', () => {
+    const save = parsedFinanceSave();
+    const exam = save.rooms.find((r) => r.type === 'exam')!;
+    exam.revenueToday = 1_000_000;
+    exam.revenueTotal = 0;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('revenueToday');
+  });
+
+  it('rejects a negative amenity revenueTotal and a negative lifetime category', () => {
+    const amenity = parsedFinanceSave();
+    amenity.amenities[0]!.revenueTotal = -5;
+    expect(loadOf(amenity).ok).toBe(false);
+    const lifetime = parsedFinanceSave();
+    lifetime.lifetime.revenue = -1;
+    const result = loadOf(lifetime);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('lifetime.revenue');
+  });
+
+  it('rejects a watermark above lifetimeTreated, and a negative one', () => {
+    const above = parsedFinanceSave();
+    above.lifetimeTreatedBase = above.lifetimeTreated + 1;
+    const result = loadOf(above);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('lifetimeTreatedBase');
+    const negative = parsedFinanceSave();
+    negative.lifetimeTreatedBase = -1;
+    expect(loadOf(negative).ok).toBe(false);
+  });
+
+  it('rejects non-monotonic / duplicated / future-dated history days', () => {
+    const reversed = parsedFinanceSave();
+    reversed.history.reverse();
+    const r1 = loadOf(reversed);
+    expect(r1.ok).toBe(false);
+    if (!r1.ok) expect(r1.reason).toContain('history');
+    const duplicated = parsedFinanceSave();
+    duplicated.history[1]!.day = duplicated.history[0]!.day;
+    expect(loadOf(duplicated).ok).toBe(false);
+    const future = parsedFinanceSave();
+    future.history[future.history.length - 1]!.day = 9999;
+    const r2 = loadOf(future);
+    expect(r2.ok).toBe(false);
+    if (!r2.ok) expect(r2.reason).toContain('played timeline');
+  });
+
+  it('TRIMS an over-cap history to the NEWEST cap entries — never rejects it', () => {
+    // Review MAJOR 7: `historyCapDays` is a BALANCE tunable. A load-time reject
+    // would brick every existing save — production autosaves included — the day
+    // the cap is lowered. The trim keeps the same end closeDay keeps.
+    const save = parsedFinanceSave();
+    const template = save.history[0]!;
+    const over = BALANCE.finance.historyCapDays + 5;
+    save.history = Array.from({ length: over }, (_, i) => ({ ...template, day: i + 1 }));
+    save.tick = over * TICKS_PER_DAY; // the days must be inside the timeline
+    const result = loadOf(save);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.world.history).toHaveLength(BALANCE.finance.historyCapDays);
+    expect(result.world.history[0]!.day).toBe(over - BALANCE.finance.historyCapDays + 1);
+    expect(result.world.history[result.world.history.length - 1]!.day).toBe(over);
+  });
+
+  it('rejects a structurally absurd history (the hostile-input bound only)', () => {
+    const save = parsedFinanceSave();
+    const template = save.history[0]!;
+    save.history = Array.from({ length: 1001 }, (_, i) => ({ ...template, day: i + 1 }));
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('history');
+  });
+
+  it('rejects a history entry missing a tally key (readTally is version-aware, not lenient)', () => {
+    const save = parsedFinanceSave() as unknown as Record<string, unknown>;
+    delete (save.history as Record<string, unknown>[])[0]!.revenue;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('revenue');
   });
 });
 

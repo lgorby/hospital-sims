@@ -62,7 +62,10 @@ export function resolveTreatmentOutcome(
 
   if (success) {
     patient.billed += step.fee;
-    world.billFee(step.fee, `${def.label} — ${step.label}`);
+    // The ONE per-room attribution site (FINANCE_PLAN §4.1): the reservation
+    // names the room that just earned the fee, in the same call that moves the
+    // cash. `dischargePatient` does NOT re-bill — it forwards `patient.billed`.
+    world.billFee(step.fee, `${def.label} — ${step.label}`, { roomId: reservation.roomId });
     patient.stepIndex += 1;
     if (patient.stepIndex >= def.steps.length) {
       world.dischargePatient(patient, patient.billed); // releases the reservation too

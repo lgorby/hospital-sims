@@ -2,6 +2,7 @@ import type { EventBus } from '../events';
 import type { GameLoop } from '../loop';
 import { GAME_MINUTES_PER_HOUR, ticksToGameMinutes } from '../sim/clock';
 import { BALANCE } from '../sim/data/balance';
+import { FINANCE_CATEGORIES } from '../sim/data/finance';
 import { dayNet, type DayReport } from '../sim/dailyStats';
 import { cleanlinessRepDelta } from '../sim/formulas';
 import { money, signedDelta } from './format';
@@ -22,26 +23,36 @@ export function appendDailyReportSections(card: HTMLElement, report: DayReport):
   modalRow(patients, 'Got lost', `${report.lostEpisodes}×`);
 
   const moneySection = modalSection(card, 'Money');
-  // "Patient fees", not "Treatment fees": revenue includes vending (below) —
-  // an all-vending day would otherwise read "Treatment fees $15, Treated 0"
-  // (live-drive review NIT 4).
-  modalRow(moneySection, 'Patient fees', money(report.revenue), 'good');
-  // Vending is a BREAKDOWN of revenue (both tallied at the same billFee choke
-  // point, amenities Stage 1) — informational, deliberately NOT a new net
-  // line: dayNet reads `revenue` alone, which already contains it. Rendered
-  // only when it exists, like the hiring/construction conditionals below.
-  if (report.vendingRevenue > 0) {
-    modalRow(moneySection, 'Vending', money(report.vendingRevenue), 'good');
+  // The Money rows fold the §9.1 category SSOT (FINANCE_PLAN §9.8) rather than
+  // hand-listing themselves, so a new money field cannot be tallied yet
+  // invisible here. `reportOrder` carries this report's SHIPPED row order,
+  // which deliberately differs from the table's array order (that one is the
+  // finances GRID's); `showWhenZero` is the zero-suppression the report has
+  // always done ("Patient fees"/"Payroll" always render, the rest only when
+  // they happened); `kind` drives BOTH the negation and the tone.
+  //
+  // Two labels worth keeping in mind while reading the table: "Patient fees",
+  // not "Treatment fees", because revenue includes vending — an all-vending
+  // day would otherwise read "Treatment fees $15, Treated 0" (live-drive NIT
+  // 4). And Vending is a BREAKDOWN of revenue (both tallied at the same
+  // billFee choke point): informational, never a net line — dayNet reads
+  // `revenue` alone, which already contains it.
+  const reportRows = [...FINANCE_CATEGORIES].sort((a, b) => a.reportOrder - b.reportOrder);
+  for (const category of reportRows) {
+    const amount = report[category.field];
+    // `!== 0`, not the shipped `<= 0` (review NIT): byte-identical today,
+    // because every cash category is a one-directional running sum — tallyCash
+    // is only ever called with a positive magnitude and the save border
+    // rejects negatives. But if a category ever CAN go negative (a refund, a
+    // fine, a clawback), `<= 0` would silently hide a real loss, which is the
+    // exact failure the category SSOT exists to prevent.
+    if (!category.showWhenZero && amount === 0) continue;
+    const expense = category.kind === 'expense';
+    modalRow(moneySection, category.label, money(expense ? -amount : amount), expense ? 'bad' : 'good');
   }
-  modalRow(moneySection, 'Payroll', money(-report.payroll), 'bad');
-  if (report.hireFees > 0) modalRow(moneySection, 'Hiring', money(-report.hireFees), 'bad');
-  if (report.construction > 0) {
-    modalRow(moneySection, 'Construction', money(-report.construction), 'bad');
-  }
-  // Amenity sellbacks land in the same bucket (live-drive NIT 4).
-  if (report.sellIncome > 0) {
-    modalRow(moneySection, 'Sell-back income', money(report.sellIncome), 'good');
-  }
+  // Net and Cash on hand stay HAND-RENDERED: they are not categories. Net is
+  // the fold ITSELF (netFromCategories, via dayNet) with a sign-driven tone,
+  // and Cash on hand is toneless with no grid-row analog.
   const net = dayNet(report);
   modalRow(moneySection, 'Net', money(net), net >= 0 ? 'good' : 'bad');
   modalRow(moneySection, 'Cash on hand', money(report.cash));

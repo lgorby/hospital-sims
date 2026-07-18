@@ -124,8 +124,12 @@ function advanceBreak(
     if (usedRoom) world.applyRoomUse(usedRoom);
   } else {
     patient.thirst = BALANCE.stats.vitalsMax;
-    world.billFee(BALANCE.needs.vendingPrice, 'Vending', 'vending');
-    world.today.vendingRevenue += BALANCE.needs.vendingPrice;
+    world.billFee(BALANCE.needs.vendingPrice, 'Vending', { source: 'vending' });
+    world.tallyCash('vendingRevenue', BALANCE.needs.vendingPrice);
+    // Per-machine lifetime revenue (FINANCE_PLAN §4.2) — the RCT shop-window
+    // read, so a badly-placed machine is visibly dead.
+    const machine = nb.tile === undefined ? null : world.amenityAt(nb.tile.col, nb.tile.row);
+    if (machine?.kind === 'vending') machine.revenueTotal += BALANCE.needs.vendingPrice;
     dropLitter(world, patient);
   }
   // clearNeedBreak re-runs assignWaitingSpot: the seat may be gone → the

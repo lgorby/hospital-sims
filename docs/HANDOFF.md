@@ -1,7 +1,7 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-18 (amenities Stage 3 SHIPPED — the AMENITIES EPIC
-IS COMPLETE; SAVE_VERSION 6, 497 tests, all gates green)
+**Last updated:** 2026-07-18 (the FINANCES EPIC SHIPPED — RCT-style finances
+window + departmental P&L; SAVE_VERSION 7, 568 tests, all gates green)
 **OWNER DECISIONS PENDING (adopt-unless-vetoed, all review-recommended):**
 (1) the clean-day +2 cleanliness rep bonus requires ≥1 arrival that day (the
 wait-bonus "an empty hospital isn't fast" principle — ratified §4.2 didn't
@@ -36,6 +36,7 @@ Both were hardened by independent adversarial reviews before any code was writte
 
 | Commit | Contents |
 |---|---|
+| *(finances)* | **The FINANCES epic — RCT-style finances window + departmental P&L (SAVE_VERSION 7)**: built straight from the twice-pre-reviewed `docs/FINANCE_PLAN.md` v3. `data/finance.ts` = the category SSOT (`FINANCE_CATEGORIES`, `CashTallyKey`, `CashTotals`, `NON_CASH_TALLY_KEYS` + its partition-guard test) driving the grid, the daily report's Money section AND `netFromCategories` (`dayNet` delegates — the fold is the net derivation); 5 new pure derivations (`roomEarns` DERIVED from CONDITION_DEFS not a flag, `hospitalValue`, `departmentCapital`, `netFromCategories`, `averageBillPerPatient` with the `lifetimeTreatedBase` watermark); `tallyCash` = THE increment (today AND lifetime, one call — every `today.<cashKey> +=` migrated); `billFee(amount, label, {source, roomId})` attributes per-room income at the ONE billing choke point (`revenueToday`/`revenueTotal`/`visitsTotal` = treatment STEPS, hence "Patients seen"); per-machine vending revenue; the extended FROZEN 6-step `closeDay` (history push as a COPY + trim, `revenueToday` resets, ALL before the emit so the autosave never persists phantom earnings); SAVE_VERSION 7 (room/amenity counters, `world.lifetime`/`lifetimeTreatedBase`/`history`; `writeDayReport`→`writeTally`, `readDayReport`→the VERSION-AWARE `readTally`; history TRIMMED on load never rejected — a tunable must not brick saves; v6 fixture-load pins the watermark). UI: the pausing **Finances modal** (`ui/finance.ts` — grid × 7 shown/30 stored days + Today + Total, summary with hospital value + average bill, inline-SVG cash graph, departmental ledger closed by `Payroll (not allocated, lifetime)`) with `allowResumeToPaused` so a deliberately paused game STAYS paused; per-room Income on the inspect card + per-machine vending; directory earned column + subtotals (keyed on RENDERED money strings). **First save bump with NO new role ⇒ NO fixed-seed re-pin — harness seed 1338 green and asserted non-vacuously.** Reviews: code/contract (**0 MAJOR** — save layer, closeDay, attribution, determinism and the `formulas`↔`dailyStats` cycle all verified clean; 4 MINOR + NITs fixed) + live-drive (**DO NOT COMMIT → 2 MAJOR, both visual and both in the modal nobody had yet seen: the graph's scale labels laid out horizontally so a RISING week read as falling; and the card overflowing 80vh with Continue below the fold, no scrollbar and no Esc = a paused game with no visible exit** — fixed via vertically-anchored labels and a scrolling body with Continue pinned outside it; plus the departments block silently excluding amenities). 65 net-new tests (568 total) |
 | *(amenities 3)* | **Amenities epic Stage 3 — failures & maintenance (SAVE_VERSION 6, EPIC COMPLETE)**: `RoomDef.failure` (mechanical: xray/ct/mri/nucMed/surgery/resp; piping: restroom/dialysis; ultrasound excluded — a cart) + `Room.wear`/`brokenSince` (the tick doubles as the instance-keyed hint — design MINOR 8); `applyRoomUse` = THE wear choke point (updateTreatment after BOTH branches incl. the missing-patient early-return; restroom completions in patientNeeds; no-op while broken ⇒ border pins broken ⇒ wear 0), rolling `formulas.breakdownChance` (wearFactor × wear, clamped); `breakRoom` = THE breakdown path (flag → rule-8 cancel of gatherings hint-free, actives finish → guaranteed repair mint on a STRUCTURALLY WORKABLE anchor (pre-impl MAJOR 1: the 2×3 west-door restroom's stalls are all door/stall/through-wall-neighbored) → piping burst (2–4 water messes, in-room + adjacent corridor only, pre-messed/job-held tiles excluded) → roomBroken + roomChanged); `capacityOf` = 0 while broken (one line gates ALL dispatch + stall claims; the reservation-slot border stays grid-derived so actives round-trip); repair jobs ride the FROZEN Stage-2 loop via a per-role kind map (evs: clean/empty; maintenance: repair); `addMess` re-anchors a repair job off a mess tile (post-impl MAJOR: walkable anchors + patients-drop-messes-at-their-feet = a suppressed clean mint = a save that refuses to load); sellRoom's orphan sweep extends to roomId-targeted jobs; expand rejected while broken; `debugBreakRoom` (real-path debug, challenge-dropped); SAVE_VERSION 6 (readRoom/readJob version params; repair legal from v6 with roomId⇔broken⇔exactly-one both-ways border; kind-aware ticks bound; v5 fixture-LOAD conversion) + the round-trip gate pins wear>0 + queued/working repairs + burst water at ONE tick; hints `broken:<id>:<since>` + `role:maintenance`; inspect OUT OF SERVICE pending/underway + phase-aware duty labels ("Heading to a repair"); greyed floors + hazard decals (in roomVisuals — leak-free); ROLE_DEFS.maintenance (orange, re-pin audit run — seed 1338 SURVIVED via the balance pass). PLUS the restroom-watchdog balance fix (OWNER DECISIONS 3). Reviews: code/contract 1 MAJOR/2 MINOR/2 NIT (all fixed); live-drive COMMIT 0 MAJOR 9/9 PASS. 58 net-new tests (497 total) |
 | *(amenities 2)* | **Amenities epic Stage 2 — EVS, messes & cleanliness (SAVE_VERSION 5)**: `world.messes` (vomit: per-tick Bernoulli over the frozen stage set at sub-critical health; litter: vending-use drops unless a non-full trashcan within Chebyshev radius absorbs — overflow at fill 8 mints the `empty` job FIRST then the overflow mess, no clean-job double-mint; accidents drop messes too) + `world.jobs` (the facility job queue — `Job` + the new `{kind:'job'}` StaffDuty; the FROZEN assignJobs loop: oldest = lowest id, held jobs skipped never blocking, per-job retry holds; work-tile derivation guarded by **`world.canApproach`** — the code-review MAJOR: Manhattan adjacency holds THROUGH edge-walls, so an in-room mess with a claimed tile was previously "worked" from the corridor; completion orders frozen non-reentrantly; fire/stall/orphan analogues of rules 7/8; workers step out of walled rooms unconditionally) + `ROLE_DEFS.evs` (landed WITH the fixed-seed re-pins — a new role's constructor candidates shift every seeded stream) + cleanliness (proximity ×1.25 once via revision-cached `hasMessNear`; `cleanlinessRepDelta(messTicks, arrivals)` at closeDay beside the wait bonus — clean-day +2 gated on arrivals>0, flagged design delta) + geometry sweeps (build/expand/sell/placeAmenity delete messes+jobs; sellAmenity takes the overflow mess WITH the can) + SAVE_VERSION 5 (messes/jobs after amenities — frozen positions; border: job↔target both ways, every-mess-has-a-job, working-worker adjacency, fill ≤ capacity, repair rejected/water accepted) + decals in a new `decalLayer` (per-change, tile-hashed variety; prop-tile decals spill toward the front edge — live-drive MINOR) + `role:evs` hint row + report Cleanliness row + duty labels. Reviews: code/contract 1 MAJOR/1 MINOR/2 NIT (all fixed, `canApproach` + border bounds + SSOT move); live-drive **COMMIT, 0 MAJOR, 12/12 PASS** (v4-compat proven on a real production save; 3 visual MINORs fixed). 62 net-new tests (439 total) |
 | *(amenities 1)* | **Amenities epic Stage 1 — needs, restroom, freestanding amenities (SAVE_VERSION 4)**: bladder+thirst meters (decay.ts, spawn rng-rolled 60–100) with the ×1.25-per-unmet patience multiplier; `needBreak` side-trips (`systems/patientNeeds.ts` — the `lost`-precedent sub-state: trigger gates incl. findPath reachability + failed-claim retry hold, frozen walking→using flip with stalled-arrival abandon, watchdog, accident-mid-break clear; dispatcher skips on-break patients); restroom room (2×3, stalls = Stage-A capacity, occupancy DERIVED from claims — never reservations); freestanding `AMENITY_DEFS` props via `placeAmenity`/`sellAmenity` (blocked-tile BFS + entrance rejection + at/next actor checks + `recomputePaths`; amenities are ALWAYS non-walkable — the room-build 'Blocked by an object' rejection depends on it); vending $5/use through `billFee` with `source: 'vending'` (checklist ignores it — live-drive MAJOR); plant Chebyshev comfort aura (deliberately ≠ Euclidean room auras); SAVE_VERSION 4 (readPatient version param, version-aware readTally, amenities after rooms, border: claim exclusivity + both-ways amenity↔grid + bounded use timers); restroom expand/sell gate 'Occupied' on live claims (walking counts). Reviews: code/contract (1 MAJOR: vending stand tile inside walled rooms — stand pick + flip now require the standing-zone rule; 2 MINOR: same-tick vending fallback when the restroom is full, Chebyshev comment) + live-drive (2 MAJOR: vending completing "Treat your first patient", blocked-panel unbounded growth click-blocking the inspect card — row cap 8 + "+N more" + CSS max-height; PASS on all 13 checklist items, zero console errors). 70 new tests (377 total) |
@@ -89,7 +90,17 @@ Both were hardened by independent adversarial reviews before any code was writte
 - **Aura grid is signature-cached per tick** (`auraCheckedTick`, invalidated end-of-tick and per command) — has* getters are cheap enough for the per-frame overlay; don't add per-query signature scans back.
 - **Prop strip length lives ONLY in `PROP_STYLE[id].tiles`** — placement and render slicing both read it (§3.1 rule 5).
 - **Day tallies increment at the same choke points that emit events** (M4): `killPatient`/`dischargePatient`/`patientLeavesAma`/`billFee`/`applyReputation` in world.ts, payroll in economy.ts, lost episodes in wayfinding.ts, first-treatment wait in the dispatcher's promotion (kind `treatment` only, `firstTreatedAtTick` once-guard — regression: `test/m4.test.ts` pipeline test). `repDelta` records the APPLIED (clamp-aware) delta.
-- **`closeDay` order is load-bearing** (M4): wait bonus applied → report snapshotted → tally reset → `dayEnded` emitted. `dayEnded`'s payload is a `DayReport` (superset of the old `{day}`).
+- **`closeDay` order is load-bearing** (M4, extended by the finances epic —
+  SIX steps now, and the old four-step summary understated it): wait bonus →
+  cleanliness rep → report snapshotted → **`history.push({...report})` (a
+  COPY — the emitted payload must never alias stored history) + trim to
+  `historyCapDays`** → **every `room.revenueToday` reset** → `today` reset →
+  `dayEnded` emitted. `dayEnded`'s payload is a `DayReport` (superset of the
+  old `{day}`). **The resets PRECEDE the emit** so the midnight autosave
+  persists a consistent new-day state (`today` zeroed ⇔ every `revenueToday`
+  zeroed) — a reload must never show phantom earnings, and **no `dayEnded`
+  consumer may read `room.revenueToday`** (pinned by test). The history push
+  precedes the emit for the same reason: the autosave must capture the entry.
 - **Bankruptcy** (M4): strictly below the threshold, sampled once per tick after all systems (intra-tick dips can't false-trigger); recovery resets the countdown; `gameOver` emits once and `tick()` becomes a no-op — commands still drain, so debug commands after game over are inert by construction.
 - **A visible `.modal-overlay` owns the clock** (M4 review): keyboard speed shortcuts check for one before touching the loop; the game-over screen hides an open daily report.
 - **Harness validity is mutation-checked, not assumed** (M4 review): the zero-atrium test probes reservation ages EVERY tick (a stuck reservation fails the bound even if it resolves by day end) and asserts a lost holder was actually observed; the acuity-5 test pins reputation at max for genuine overload (AMA assertion proves it). Room partitioning (one ER, X-ray throttle) means the aging *mechanism* is guarded by unit tests, not the harness — see the comment in `test/harness.test.ts` before "improving" either.
@@ -200,6 +211,73 @@ Both were hardened by independent adversarial reviews before any code was writte
   tech inside blocks 'Someone is inside' — fire-then-sell is the remedy;
   validateRoomSell was NOT weakened); sellRoom deletes roomId-targeted
   jobs and releases their workers.
+- **`FINANCE_CATEGORIES` is THE money-row SSOT** (finances epic,
+  `src/sim/data/finance.ts`): ONE table drives the finances grid, the daily
+  report's Money section AND `netFromCategories` — which `dayNet` now
+  delegates to, so a new cash category joins the net automatically instead of
+  being silently omitted. `kind` drives the display negation, the net fold and
+  the row tone from one flag; `reportOrder` carries the daily report's shipped
+  row order independently of ARRAY order (the grid's); `showWhenZero` governs
+  the DAILY REPORT ONLY — the grid always renders every non-breakdown row,
+  because a grid needs a stable row set across columns. `breakdown` rows
+  (vending) are display-only and NEVER summed. **The partition guard test**
+  (`NON_CASH_TALLY_KEYS` ∪ category fields === `Object.keys(emptyDayTally())`)
+  makes a new tally key fail loudly until it is classified as cash or not.
+- **`tallyCash` is THE cash-tally increment** (finances epic): today AND
+  lifetime in one call, so the grid's Today and Total columns cannot disagree.
+  It deliberately does NOT move `world.cash` — every call site still adjusts
+  cash itself, which is why it is not named `addCash`. No `this.today.<cashKey>
+  +=` may survive anywhere.
+- **Per-room income is attributed at the ONE billing choke point**: `billFee`
+  takes `{ source?, roomId? }` and credits `revenueToday`/`revenueTotal`/
+  `visitsTotal` in the same call that moves the cash. `visitsTotal` counts
+  treatment STEPS, not discharges — hence "Patients seen" in the UI, never the
+  `treated`/`lifetimeTreated` vocabulary (a 2-step patient credits two rooms
+  once each). A complication credits nothing; selling a room mid-treatment
+  degrades to no attribution rather than a crash.
+- **Lifetime totals are REAL STATE, not a sum** (finances epic): `world.lifetime`
+  is saved, because Σ over live rooms silently drops a SOLD room's earnings and
+  the stored history is only 30 days. `lifetimeTreatedBase` is the v6→v7
+  watermark for the average-bill denominator — without it a migrated save
+  divides fresh revenue by pre-upgrade discharges and reads permanently,
+  invisibly low. Pre-v7 saves start Total at 0 and the modal says so once.
+- **History is TRIMMED on load, never REJECTED** (finances epic): the cap is a
+  BALANCE tunable, so a load-time reject against it would brick every existing
+  save — production autosaves included — the day the cap is lowered. Keep the
+  newest `historyCapDays`; a hard structural bound (1000) guards malformed
+  input only. Consequence: an over-cap save is not byte-identical on re-save,
+  so **the byte-identity fixture must never be over-cap**.
+- **`allowResumeToPaused` distinguishes player-opened overlays from midnight
+  ones** (finances epic): `PausingOverlay`'s speed-1 fallback is right for the
+  daily report and challenge card (which only open at a day boundary), but
+  WRONG for the first overlay a player opens at will — pause, open Finances,
+  Continue, and the game would silently resume. Default `false` preserves every
+  pre-finances overlay byte-for-byte; only `FinanceModal` sets it true.
+- **The single-overlay rule needs BOTH halves** (finances verification MINOR):
+  `FinanceModal.open()` refuses to open over a live overlay, AND it hides on
+  `dayEnded`. The second half is structural — the daily report has no
+  reciprocal guard, so without it a forced tick at midnight stacked both
+  overlays, and dismissing finances left the report up with the clock RUNNING
+  behind a modal that claims to pause. Never re-justify the guard with
+  "midnight cannot fire while we're open": pausing makes that true only while
+  nothing forces a tick through the queue, which is not an interlock.
+- **`hospitalValue` is MODAL-OPEN ONLY** — it walks every room and amenity, and
+  must never ride the frame poll. **Selling is value-NEUTRAL** (the sale pays
+  exactly `sellbackAmount` into cash, so the two deltas cancel — the plan's own
+  §12 claimed otherwise and was wrong, confirmed by both reviews); what drops is
+  the department's capital invested. Value falls on a BUILD, by the
+  price-vs-sellback spread.
+- **Non-earning rooms show NO money anywhere** (finances epic, both reviews):
+  the inspect card gates its Income block on `roomEarns`, and the directory
+  gates its earned column the same way. A waiting room reading "$0" is not the
+  RCT "this ride earns nothing" signal — that read only carries information for
+  a unit that COULD have earned. Directory money values join the `renderKey` as
+  their RENDERED `money()` strings, never raw floats, or payroll's sub-cent
+  dust rebuilds the list forever.
+- **`formulas.ts` ↔ `dailyStats.ts` is a deliberate, verified-safe import
+  cycle**: neither module calls across it at evaluation time and both export
+  hoisted `function` declarations. Evaluating an exported binding at module
+  scope on either side (e.g. `const X = netFromCategories(...)`) would break it.
 - **Job duty labels are phase-aware** (live-drive MINOR 2): en-route reads
   "Heading to a mess/trashcan/repair", the kind label ("Cleaning" /
   "Repairing") only while `working` — the room card's pending/underway
@@ -259,11 +337,28 @@ Both were hardened by independent adversarial reviews before any code was writte
   live-drive: COMMIT, 0 MAJOR/MINOR, 2 NIT — throb floor fixed, the
   deliberate amber-palette share noted). This CLOSES the banked "patient
   click-highlight" backlog item (thought-log jumps now pan AND pulse).
-- **NEXT SESSION STARTS HERE → the FINANCES epic (owner ask 2026-07-18:
-  "show the profit and loss for each department and totals… mimic
-  RollerCoaster Tycoon"). The plan is FROZEN and twice-reviewed: build it.**
-  Read `docs/FINANCE_PLAN.md` v3 — it is BOTH the design and the
-  implementation plan, self-contained for a cold start. Two adversarial
+- **FINANCES epic: COMPLETE (2026-07-18)** — see the `*(finances)*` commit-table
+  row and the invariants above. The owner's ask ("show the profit and loss for
+  each department and totals… mimic RollerCoaster Tycoon") is playable: a
+  `💷 Finances` HUD button opens the pausing window (category grid × last 7
+  days + Today + Total, hospital value, average bill, cash graph, departments),
+  rooms and vending machines carry their own income on the inspect card, and
+  the directory doubles as the P&L browser. `docs/FINANCE_PLAN.md` v3 remains
+  the contract; its §12 sell-back line was CORRECTED post-implementation (both
+  reviews proved hospital value is conserved on a sale, not reduced). **Owner
+  decisions still open from §7, deliberately deferred, not forgotten:** payroll
+  allocation (v1 = hospital overhead, shown as an explicit unallocated line —
+  the alternative is time-weighted attribution, needs its own save fields);
+  **per-room running costs (§7 Q2) — the thing that would make per-room PROFIT
+  and true departmental P&L meaningful; deferred because every room becoming a
+  drain re-tunes the M4 economy and the harness envelope**; loans (out of
+  scope). Watch item: the departments block sums LIVE ROOMS only, so it is
+  short of `Patient fees` by any vending take and by revenue earned in rooms
+  since sold — the Amenities row carries the vending side, but a sold room's
+  earnings have no departmental home by construction.
+- **The superseded finances entry** (kept for provenance — the plan below is
+  what was built): read `docs/FINANCE_PLAN.md` v3 — it is BOTH the design and
+  the implementation plan, self-contained for a cold start. Two adversarial
   pre-impl review rounds are already folded (round 1: 8 MAJOR / 8 MINOR / 6
   NIT; round 2 verified all eight closed against real code and found 2 new
   MAJOR / 7 MINOR / 7 NIT — also folded), so the contract in §9 is
@@ -294,6 +389,24 @@ Both were hardened by independent adversarial reviews before any code was writte
     seed 1338 must stay green (assert it; don't weaken it).
   - **Owner decisions still open** (§7): payroll allocation (v1 = overhead),
     per-room running costs (deferred), loans (out), 7-shown/30-stored history.
+- **Anesthesiologist role: SCOPED, not built (owner ask 2026-07-18).** The
+  OR today needs `surgeon` + `nurse`, and `nurse` is the most contended role
+  in the game (triage, dialysis, laceration sutures, the ER) — a nurse
+  dispatched elsewhere blocks the all-or-nothing surgery reservation and the
+  surgeon never moves; hiring a second nurse is the current fix. The owner
+  wants anesthesiology MODELLED rather than papered over: a new `RoleId` +
+  `ROLE_DEFS` entry (colour must clear the existing green cluster — see the
+  art-polish note above) and a THIRD role on the surgery step, which makes
+  every surgery a 3-way gather. **This is a milestone, not a one-liner:**
+  a new RoleId shifts every seeded stream from tick 0 (the World constructor
+  mints candidates per role), so it ships WITH its fixed-seed re-pins — the
+  Stage-2 EVS invariant above ("a new ROLE ships WITH its re-pins; re-pin,
+  never weaken"). Also needs: the hints pipeline naming the new role in the
+  surgery chain, a balance look at OR throughput (a third required role
+  lengthens gathers), and no SAVE_VERSION bump (roles aren't saved state,
+  but the candidate pool is — check `topUpCandidates` covers the new role on
+  load, the v1→v2 migration precedent). NOT started — awaiting the owner's
+  priority call against the other backlog items.
 - **Then, quick passes:** (1) capacity/contention hints
   ("expand your ER or build another" — the panel's `roomChanged`
   invalidation is pre-wired). Banked NITs (fix opportunistically): the

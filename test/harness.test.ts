@@ -262,6 +262,23 @@ describe('headless balance harness (M4)', () => {
     for (const id of expansionConditions) {
       expect(s.treatedByCondition.get(id) ?? 0, `${id} discharged`).toBeGreaterThan(0);
     }
+    // Finances (FINANCE_PLAN §11.9): the FIRST save bump that adds NO role, so
+    // topUpCandidates stays a no-op and nothing draws world.rng differently —
+    // seed 1338 is deliberately NOT re-pinned. This assertion is the guard: if
+    // it goes red, an rng-order change was introduced and must be FOUND, not
+    // papered over with a new seed. The finance state is asserted live rather
+    // than assumed, so the un-re-pinned seed isn't a vacuous claim.
+    expect(w.history).toHaveLength(5); // one entry per closed day, under cap
+    expect(w.history.length).toBeLessThanOrEqual(BALANCE.finance.historyCapDays);
+    expect(w.lifetime.revenue).toBeGreaterThan(0);
+    expect(w.lifetime.payroll).toBeGreaterThan(0);
+    expect(w.lifetimeTreatedBase, 'a fresh game carries a zero watermark').toBe(0);
+    // The tallyCash invariant, end to end: lifetime = Σ closed days + today.
+    const historicRevenue = w.history.reduce((sum, r) => sum + r.revenue, 0);
+    expect(historicRevenue + w.today.revenue).toBe(w.lifetime.revenue);
+    // Per-unit attribution is live too: rooms and the machine earned.
+    expect([...w.rooms.values()].some((r) => r.visitsTotal > 0 && r.revenueTotal > 0)).toBe(true);
+    expect([...w.amenities.values()].some((a) => a.revenueTotal > 0)).toBe(true);
   });
 
   it('a neglected hospital (no treatment rooms) does NOT survive the same numbers', () => {

@@ -7,7 +7,14 @@ import {
   type ChallengeGoal,
 } from './data/challenges';
 import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditions';
-import { ROOM_DEFS, type PropDensity, type RoomFailure, type RoomType } from './data/rooms';
+import { FINANCE_CATEGORIES, type CashTotals } from './data/finance';
+import {
+  ROOM_DEFS,
+  type PropDensity,
+  type RoomCategory,
+  type RoomFailure,
+  type RoomType,
+} from './data/rooms';
 import { dayNet } from './dailyStats';
 import { rectTiles, type GridPoint, type Rect } from './types';
 
@@ -272,6 +279,93 @@ export function auraCoversTile(footprint: Rect, p: GridPoint, radius: number): b
  */
 export function plantCoversTile(plant: GridPoint, p: GridPoint, radius: number): boolean {
   return Math.abs(p.col - plant.col) <= radius && Math.abs(p.row - plant.row) <= radius;
+}
+
+// ------------------------------------------------- finances (FINANCE_PLAN §9.2)
+
+/**
+ * Rooms that can bill (FINANCE_PLAN §4.1): DERIVED from CONDITION_DEFS, never
+ * a hand-kept flag (§3.1 rule 1 — a table plus a "test both ways" only polices
+ * a duplicate). Memoized: the inspect card polls it per frame.
+ */
+let earningRooms: Set<RoomType> | null = null;
+export function roomEarns(type: RoomType): boolean {
+  if (earningRooms === null) {
+    earningRooms = new Set<RoomType>();
+    for (const id of CONDITION_IDS) {
+      for (const step of CONDITION_DEFS[id].steps) {
+        if (step.fee > 0) earningRooms.add(step.room);
+      }
+    }
+  }
+  return earningRooms.has(type);
+}
+
+/** The world shape `hospitalValue`/`departmentCapital` read — declared
+ *  structurally so formulas.ts stays free of a `world.ts` import cycle. */
+interface ValuedWorld {
+  readonly cash: number;
+  readonly rooms: ReadonlyMap<number, { type: RoomType; rect: Rect }>;
+  readonly amenities: ReadonlyMap<string, { kind: AmenityId }>;
+}
+
+/**
+ * RCT "company value" (§3.2): cash + every room's and amenity's sell-back.
+ * MODAL-OPEN ONLY — it iterates all rooms + amenities; never call per-frame.
+ */
+export function hospitalValue(world: ValuedWorld): number {
+  let value = world.cash;
+  for (const room of world.rooms.values()) value += sellbackAmount(room.type, room.rect);
+  for (const amenity of world.amenities.values()) value += amenitySellback(amenity.kind);
+  return value;
+}
+
+/**
+ * §5: what this category's footprints cost to build TODAY (rect-aware, the
+ * `sellbackAmount` convention — no amount-paid bookkeeping). Because
+ * `expandPrice = priceOf(new) − priceOf(old)`, this is EXACTLY the cash spent
+ * across a build→expand chain, not merely a replacement-cost proxy. It DOES
+ * also bill the new-game starting rooms, which were built free — deliberate:
+ * it is a read of what the department is worth ("Capital invested"), never a
+ * receipt ("Spent").
+ */
+export function departmentCapital(world: ValuedWorld, category: RoomCategory): number {
+  let total = 0;
+  for (const room of world.rooms.values()) {
+    if (ROOM_DEFS[room.type].category === category) total += priceOf(room.type, room.rect);
+  }
+  return total;
+}
+
+/**
+ * §3.1 Net — the table fold IS the net derivation (`dayNet` delegates here).
+ * A `DayTally` satisfies `CashTotals` structurally, so one param type serves
+ * today, a closed day, and lifetime alike. `breakdown` rows are display-only
+ * and are never summed (vending already lives inside `revenue`).
+ */
+export function netFromCategories(totals: CashTotals): number {
+  let net = 0;
+  for (const category of FINANCE_CATEGORIES) {
+    if (category.kind === 'income') net += totals[category.field];
+    else if (category.kind === 'expense') net -= totals[category.field];
+  }
+  return net;
+}
+
+/**
+ * §3.2: treatment fees only (vending excluded), over discharges counted in the
+ * SAME window. `lifetimeTreatedBase` is the v6→v7 watermark — without it a
+ * migrated save divides fresh revenue by pre-upgrade discharges and reads
+ * permanently, invisibly low. `null` when the denominator is 0.
+ */
+export function averageBillPerPatient(
+  lifetime: CashTotals,
+  lifetimeTreated: number,
+  lifetimeTreatedBase: number,
+): number | null {
+  const discharges = lifetimeTreated - lifetimeTreatedBase;
+  if (discharges <= 0) return null;
+  return (lifetime.revenue - lifetime.vendingRevenue) / discharges;
 }
 
 /**

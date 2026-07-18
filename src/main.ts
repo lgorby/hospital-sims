@@ -13,6 +13,7 @@ import { DebugPanel } from './ui/debugPanel';
 import { DirectoryPanel } from './ui/directory';
 import { GameOverScreen } from './ui/gameOver';
 import { HirePanel } from './ui/hirePanel';
+import { FinanceModal } from './ui/finance';
 import { Hud } from './ui/hud';
 import { InspectPanel } from './ui/inspect';
 import { MidnightModalCoordinator } from './ui/midnightModal';
@@ -169,6 +170,11 @@ async function bootstrap(boot: Boot): Promise<void> {
   saveLoad.mount(uiRoot);
   saveLoad.mountButton(document.getElementById('hud')!);
   installAutosave(events, world);
+
+  // The finances window (FINANCE_PLAN §3) — a pausing modal beside Save/Load.
+  const finance = new FinanceModal(loop, world, events);
+  finance.mount(uiRoot);
+  finance.mountButton(document.getElementById('hud')!);
 
   loop.start();
 }

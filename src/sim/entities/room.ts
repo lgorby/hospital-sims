@@ -35,6 +35,20 @@ export interface Room {
    * from §5.1's `broken: boolean`, recorded in the impl plan.
    */
   brokenSince: number | null;
+  /**
+   * Per-unit income (FINANCE_PLAN §4.1, the RCT ride-window analog) — credited
+   * at the ONE treatment billing choke point (`billFee` with a `roomId`).
+   * `revenueToday` resets in `closeDay` BEFORE `dayEnded` is emitted, so the
+   * autosave never persists phantom earnings (§9.5 frozen order).
+   */
+  revenueToday: number;
+  revenueTotal: number;
+  /**
+   * Completed treatment STEPS in this room — NOT discharges. A 2-step patient
+   * credits two rooms once each, which is why this is "Patients seen" in the
+   * UI and never reuses the `treated`/`lifetimeTreated` vocabulary.
+   */
+  visitsTotal: number;
 }
 
 export interface WallEdge {

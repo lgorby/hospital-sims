@@ -199,6 +199,13 @@ export const BALANCE = {
     /** Quality bonus per tile above minimum footprint (GDD §5). */
     qualityPerExtraTile: 1,
   },
+  /** Finances window (FINANCE_PLAN §9.3, owner ruling §7 Q4: show 7, store
+   *  30). `historyCapDays` is TRIMMED on load, never a load-time reject —
+   *  lowering it must not brick existing saves (plan review MAJOR 7). */
+  finance: {
+    historyShownDays: 7,
+    historyCapDays: 30,
+  },
   /** Room failures & repair (amenities Stage 3, AMENITIES_PLAN §5). */
   maintenance: {
     /** Per-use breakdown-probability slope: p = wearFactor × wear, rolled

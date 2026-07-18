@@ -1,9 +1,10 @@
 import type { EventBus } from '../events';
-import { gameMinutesToTicks } from './clock';
-import { emptyDayTally, type DayTally } from './dailyStats';
-import { AMENITY_IDS, type AmenityId } from './data/amenities';
+import { dayOfTick, gameMinutesToTicks } from './clock';
+import { emptyDayTally, type DayReport, type DayTally } from './dailyStats';
+import { AMENITY_IDS, type Amenity, type AmenityId } from './data/amenities';
 import { BALANCE } from './data/balance';
 import { CONDITION_IDS, type ConditionId } from './data/conditions';
+import { emptyCashTotals, type CashTallyKey, type CashTotals } from './data/finance';
 import type { PersonName } from './data/names';
 import { ROLE_IDS, type RoleId } from './data/roles';
 import {
@@ -27,7 +28,7 @@ import { World, type Mess, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 
 /**
  * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
@@ -72,6 +73,20 @@ export const SAVE_VERSION = 6;
  * read-time defaults: pre-v6 rooms restore wear 0 / in service, pre-v6 jobs
  * roomId null. v6 also added the `maintenance` ROLE — `topUpCandidates`
  * mints its candidates on every v≤5 load (the evs precedent).
+ *
+ * v6 → v7 (finances epic, FINANCE_PLAN §9.7): rooms gain
+ * `revenueToday`/`revenueTotal`/`visitsTotal`, amenities gain `revenueTotal`,
+ * and the world gains `lifetime` (cash totals), `lifetimeTreatedBase` and
+ * `history` (closed-day reports). Migration is read-time defaults: pre-v7
+ * counters restore 0, `lifetime` restores zeros, `history` restores empty —
+ * lifetime cash CANNOT be reconstructed from a v6 save, so the Total column
+ * reads "since this save was upgraded" (owner ruling §7 Q7). The one
+ * non-trivial part is `lifetimeTreatedBase`: it takes the restored
+ * `lifetimeTreated` as a watermark, so the average-bill row divides fresh
+ * revenue by POST-upgrade discharges only instead of reading permanently,
+ * invisibly low (§3.2). NOTE this is the first bump that adds NO role —
+ * `topUpCandidates` stays a no-op, nothing draws `world.rng` differently, and
+ * the fixed harness seed is deliberately NOT re-pinned.
  * Anything below 1 or above SAVE_VERSION is refused.
  */
 export function isLoadableVersion(version: number): boolean {
@@ -198,6 +213,11 @@ export interface SavedRoom {
   wear: number;
   /** v6: breakdown tick, null = in service. Pre-v6 saves restore null. */
   brokenSince: number | null;
+  /** v7 (finances, §9.7): per-unit income + completed treatment steps. Pre-v7
+   *  saves restore 0. FROZEN positions — after brokenSince (byte-identity). */
+  revenueToday: number;
+  revenueTotal: number;
+  visitsTotal: number;
 }
 
 export interface SavedReservation {
@@ -221,6 +241,24 @@ export interface SavedAmenity {
   kind: AmenityId;
   tile: SavedPoint;
   fill: number;
+  /** v7 (finances, §4.2): per-machine lifetime revenue (vending only earns).
+   *  Pre-v7 saves restore 0. FROZEN position — after fill. */
+  revenueTotal: number;
+}
+
+/**
+ * v7 (finances, §9.7): a closed-day report. Mirrors `DayReport` — a DayTally
+ * plus the day-close fields — but is written through `writeTally`/`readTally`
+ * so a FUTURE tally key is carried automatically in `TALLY_KEYS` order.
+ * History entries carry no per-entry version, which is exactly why the reader
+ * must delegate to the version-aware `readTally` rather than walk keys itself.
+ */
+export interface SavedDayReport extends DayTally {
+  day: number;
+  cash: number;
+  reputation: number;
+  avgWaitGameMinutes: number | null;
+  waitBonusAwarded: boolean;
 }
 
 /** v5 (amenities Stage 2, §4.5): a floor mess — a walkable decal, keyed by
@@ -288,6 +326,12 @@ export interface SaveData {
    *  (impl plan §S2.4; same byte-identity pinning). */
   messes: SavedMess[];
   jobs: SavedJob[];
+  /** v7: FROZEN positions — lifetime, lifetimeTreatedBase, then history,
+   *  immediately after jobs (§9.7; the byte-identity fixtures pin serializer
+   *  insertion order forever). */
+  lifetime: CashTotals;
+  lifetimeTreatedBase: number;
+  history: SavedDayReport[];
   patients: SavedPatient[];
   staff: SavedStaff[];
   candidates: SavedCandidate[];
@@ -435,6 +479,87 @@ function readTally(value: unknown, label: string, saveVersion: number): DayTally
     copy[key] = asNumber(o[key], `${label}.${key}`);
   }
   return copy;
+}
+
+// ------------------------------------------- lifetime totals & history (v7)
+
+/** Key list from the SSOT factory (the TALLY_KEYS pattern) — insertion order
+ *  here IS the serialized key order for `lifetime`. */
+const CASH_KEYS = Object.keys(emptyCashTotals()) as CashTallyKey[];
+
+/** The version a `lifetime` key first appears under: `lifetime` itself is v7,
+ *  and a FUTURE cash key inherits the tally map's version (a cash key is a
+ *  DayTally key by construction), so a v8 addition auto-defaults on v7 saves
+ *  exactly as `readTally` does — no second version table. */
+const V7 = 7;
+function cashKeyVersion(key: CashTallyKey): number {
+  return Math.max(V7, TALLY_KEY_VERSIONS[key] ?? 1);
+}
+
+function writeCashTotals(totals: CashTotals): CashTotals {
+  const copy = emptyCashTotals();
+  for (const key of CASH_KEYS) copy[key] = totals[key];
+  return copy;
+}
+
+function readCashTotals(value: unknown, label: string, saveVersion: number): CashTotals {
+  const o = asRecord(value, label);
+  const copy = emptyCashTotals(); // factory zeroes are the version defaults
+  for (const key of CASH_KEYS) {
+    if (saveVersion < cashKeyVersion(key)) continue;
+    const amount = asNumber(o[key], `${label}.${key}`);
+    // Every category is a one-directional running SUM (tallyCash is only ever
+    // called with the positive magnitude; `kind` supplies the sign at display).
+    // A negative here would silently invert the Total column and the average.
+    if (amount < 0) fail(`${label}.${key}`, 'a non-negative lifetime total');
+    copy[key] = amount;
+  }
+  return copy;
+}
+
+/** Mirrors readDayReport: the tally goes through `writeTally`, so a future
+ *  tally key is carried automatically in TALLY_KEYS order (§9.7). */
+function writeDayReport(r: DayReport): SavedDayReport {
+  return {
+    ...writeTally(r),
+    day: r.day,
+    cash: r.cash,
+    reputation: r.reputation,
+    avgWaitGameMinutes: r.avgWaitGameMinutes,
+    waitBonusAwarded: r.waitBonusAwarded,
+  };
+}
+
+/** History entries carry NO per-entry version, so the tally MUST route through
+ *  the version-aware `readTally` — a hand-written key-by-key reader would
+ *  break every v7 save the moment v8 adds a tally key. */
+function readDayReport(value: unknown, label: string, saveVersion: number): DayReport {
+  const o = asRecord(value, label);
+  return {
+    ...readTally(o, label, saveVersion),
+    day: asInt(o.day, `${label}.day`),
+    cash: asNumber(o.cash, `${label}.cash`),
+    reputation: asNumber(o.reputation, `${label}.reputation`),
+    avgWaitGameMinutes: asNumberOrNull(o.avgWaitGameMinutes, `${label}.avgWaitGameMinutes`),
+    waitBonusAwarded: asBool(o.waitBonusAwarded, `${label}.waitBonusAwarded`),
+  };
+}
+
+/**
+ * A hard STRUCTURAL bound for malformed input only (§9.7): the balance cap is
+ * enforced by TRIMMING in readRestorePayload, never by rejecting — coupling a
+ * save's validity to a tunable would brick every existing save (production
+ * autosaves included) the day the cap is lowered. This bound exists solely so
+ * a hostile 10-million-entry array can't be materialized before the trim.
+ */
+const MAX_HISTORY_ENTRIES = 1000;
+
+function readHistory(value: unknown, label: string, saveVersion: number): DayReport[] {
+  const entries = asArray(value, label);
+  if (entries.length > MAX_HISTORY_ENTRIES) {
+    fail(label, `at most ${MAX_HISTORY_ENTRIES} entries (got ${entries.length})`);
+  }
+  return entries.map((e, i) => readDayReport(e, `${label}[${i}]`, saveVersion));
 }
 
 // ------------------------------------------------------------------- patients
@@ -696,16 +821,41 @@ function writeRoom(room: Room): SavedRoom {
     quality: room.quality,
     wear: room.wear,
     brokenSince: room.brokenSince,
+    revenueToday: room.revenueToday,
+    revenueTotal: room.revenueTotal,
+    visitsTotal: room.visitsTotal,
   };
 }
 
 /** Version-aware since v6 (the readPatient precedent): pre-v6 rooms restore
- *  wear 0 / in service. */
+ *  wear 0 / in service; pre-v7 rooms restore zeroed income counters (§9.7 —
+ *  per-room revenue cannot be reconstructed from an older save). */
 function readRoom(value: unknown, label: string, saveVersion: number): Room {
   const o = asRecord(value, label);
   const door = o.door === null ? null : asRecord(o.door, `${label}.door`);
   const wear = saveVersion < 6 ? 0 : asInt(o.wear, `${label}.wear`);
   if (wear < 0) fail(`${label}.wear`, 'a non-negative use count');
+  // Income counters only ever grow (billFee adds the positive fee), so a
+  // negative would let a hostile save fabricate a bogus department total.
+  const counter = (key: 'revenueToday' | 'revenueTotal', what: string): number => {
+    if (saveVersion < V7) return 0;
+    const n = asNumber(o[key], `${label}.${key}`);
+    if (n < 0) fail(`${label}.${key}`, what);
+    return n;
+  };
+  const revenueToday = counter('revenueToday', 'a non-negative income total');
+  const revenueTotal = counter('revenueTotal', 'a non-negative income total');
+  const visitsTotal = saveVersion < V7 ? 0 : asInt(o.visitsTotal, `${label}.visitsTotal`);
+  if (visitsTotal < 0) fail(`${label}.visitsTotal`, 'a non-negative visit count');
+  // The pair is checkable, so check it (review MINOR — the border already
+  // enforces the analogous `lifetimeTreatedBase ≤ lifetimeTreated`): billFee
+  // moves both by the same amount in one statement and closeDay only ever
+  // LOWERS revenueToday, so today can never exceed the lifetime figure.
+  // Without this a payload reads "Income today $1,000,000 / Income total $0"
+  // and a department subtotal outruns its own lifetime column.
+  if (revenueToday > revenueTotal) {
+    fail(`${label}.revenueToday`, "an income-today no greater than the room's income total");
+  }
   return {
     id: asInt(o.id, `${label}.id`),
     type: asOneOf(o.type, ROOM_TYPES, `${label}.type`),
@@ -720,24 +870,30 @@ function readRoom(value: unknown, label: string, saveVersion: number): Room {
     quality: asNumber(o.quality, `${label}.quality`),
     wear,
     brokenSince: saveVersion < 6 ? null : asIntOrNull(o.brokenSince, `${label}.brokenSince`),
+    revenueToday,
+    revenueTotal,
+    visitsTotal,
   };
 }
 
 // ------------------------------------------------------------------ amenities
 
-function writeAmenity(a: { kind: AmenityId; tile: GridPoint; fill: number }): SavedAmenity {
-  return { kind: a.kind, tile: writePoint(a.tile), fill: a.fill };
+function writeAmenity(a: Amenity): SavedAmenity {
+  return { kind: a.kind, tile: writePoint(a.tile), fill: a.fill, revenueTotal: a.revenueTotal };
 }
 
-function readAmenity(
-  value: unknown,
-  label: string,
-): { kind: AmenityId; tile: GridPoint; fill: number } {
+/** Version-aware since v7 (the readRoom precedent): pre-v7 machines restore
+ *  revenueTotal 0. */
+function readAmenity(value: unknown, label: string, saveVersion: number): Amenity {
   const o = asRecord(value, label);
+  const revenueTotal =
+    saveVersion < V7 ? 0 : asNumber(o.revenueTotal, `${label}.revenueTotal`);
+  if (revenueTotal < 0) fail(`${label}.revenueTotal`, 'a non-negative income total');
   return {
     kind: asOneOf(o.kind, AMENITY_IDS, `${label}.kind`),
     tile: readPoint(o.tile, `${label}.tile`),
     fill: asNumber(o.fill, `${label}.fill`),
+    revenueTotal,
   };
 }
 
@@ -969,6 +1125,10 @@ export function serializeWorld(world: World): SaveData {
     // v5 FROZEN positions: messes then jobs, after amenities (§S2.4).
     messes: [...world.messes.values()].map(writeMess),
     jobs: [...world.jobs.values()].map(writeJob),
+    // v7 FROZEN positions: lifetime, lifetimeTreatedBase, history, after jobs.
+    lifetime: writeCashTotals(world.lifetime),
+    lifetimeTreatedBase: world.lifetimeTreatedBase,
+    history: world.history.map(writeDayReport),
     patients: [...world.patients.values()].map(writePatient),
     staff: [...world.staff.values()].map(writeStaff),
     candidates: world.candidates.map(writeCandidate),
@@ -1002,9 +1162,12 @@ interface RestorePayload {
   hintedOnce: string[];
   grid: Tile[][];
   rooms: Room[];
-  amenities: { kind: AmenityId; tile: GridPoint; fill: number }[];
+  amenities: Amenity[];
   messes: Mess[];
   jobs: Job[];
+  lifetime: CashTotals;
+  lifetimeTreatedBase: number;
+  history: DayReport[];
   patients: Patient[];
   staff: Staff[];
   candidates: Candidate[];
@@ -1014,6 +1177,20 @@ interface RestorePayload {
 }
 
 function readRestorePayload(root: Record<string, unknown>, saveVersion: number): RestorePayload {
+  // Read once, used twice: on a v<7 load the watermark IS the restored
+  // discharge count (§3.2, the N2 regression) — every discharge the save
+  // carries predates lifetime tracking, so the average-bill denominator must
+  // start counting from here rather than from 0.
+  const lifetimeTreated = asNumber(root.lifetimeTreated, 'lifetimeTreated');
+  const lifetimeTreatedBase =
+    saveVersion < V7 ? lifetimeTreated : asNumber(root.lifetimeTreatedBase, 'lifetimeTreatedBase');
+  if (lifetimeTreatedBase < 0) fail('lifetimeTreatedBase', 'a non-negative watermark');
+  if (lifetimeTreatedBase > lifetimeTreated) {
+    fail(
+      'lifetimeTreatedBase',
+      `a watermark at or below lifetimeTreated (${lifetimeTreatedBase} > ${lifetimeTreated})`,
+    );
+  }
   return {
     seed: asInt(root.seed, 'seed'),
     rngState: asInt(root.rngState, 'rngState'),
@@ -1021,7 +1198,7 @@ function readRestorePayload(root: Record<string, unknown>, saveVersion: number):
     cash: asNumber(root.cash, 'cash'),
     reputation: asNumber(root.reputation, 'reputation'),
     today: readTally(root.today, 'today', saveVersion),
-    lifetimeTreated: asNumber(root.lifetimeTreated, 'lifetimeTreated'),
+    lifetimeTreated,
     lifetimeDied: asNumber(root.lifetimeDied, 'lifetimeDied'),
     bankruptSinceTick: asNumberOrNull(root.bankruptSinceTick, 'bankruptSinceTick'),
     gameOver: asBool(root.gameOver, 'gameOver'),
@@ -1034,7 +1211,9 @@ function readRestorePayload(root: Record<string, unknown>, saveVersion: number):
     amenities:
       saveVersion < 4
         ? []
-        : asArray(root.amenities, 'amenities').map((a, i) => readAmenity(a, `amenities[${i}]`)),
+        : asArray(root.amenities, 'amenities').map((a, i) =>
+            readAmenity(a, `amenities[${i}]`, saveVersion),
+          ),
     // v4→v5: pre-v5 saves carry no messes/jobs — restore empty maps (§4.5).
     messes:
       saveVersion < 5
@@ -1044,6 +1223,21 @@ function readRestorePayload(root: Record<string, unknown>, saveVersion: number):
       saveVersion < 5
         ? []
         : asArray(root.jobs, 'jobs').map((j, i) => readJob(j, `jobs[${i}]`, saveVersion)),
+    // v6→v7: pre-v7 saves carry no lifetime cash and no history (§9.7).
+    lifetime:
+      saveVersion < V7 ? emptyCashTotals() : readCashTotals(root.lifetime, 'lifetime', saveVersion),
+    lifetimeTreatedBase,
+    // TRIM ON LOAD, never reject (review MAJOR 7): the balance cap is a
+    // tunable, and lowering it must not brick existing saves. Keep the NEWEST
+    // entries — the same end the runtime trim in closeDay keeps. Consequence
+    // to respect: an over-cap save is NOT byte-identical on re-save (only
+    // reachable after a cap reduction), so byte-identity fixtures stay under.
+    history:
+      saveVersion < V7
+        ? []
+        : readHistory(root.history, 'history', saveVersion).slice(
+            -BALANCE.finance.historyCapDays,
+          ),
     patients: asArray(root.patients, 'patients').map((p, i) =>
       readPatient(p, `patients[${i}]`, saveVersion),
     ),
@@ -1379,6 +1573,24 @@ function validateReferences(data: RestorePayload): void {
     }
   });
 
+  // -- history (v7, §9.7): closed days are pushed once each, oldest → newest,
+  // so their day numbers strictly increase and none may postdate the save's
+  // own clock. A duplicated or out-of-order entry would draw the finances
+  // grid's columns and the cash graph in the wrong sequence; a future-dated
+  // one would invent a day the hospital never played. LENGTH is deliberately
+  // NOT checked here — it is trimmed in readRestorePayload (MAJOR 7).
+  const currentDay = dayOfTick(data.tick);
+  let previousDay = 0;
+  data.history.forEach((report, i) => {
+    if (report.day <= previousDay) {
+      fail(`history[${i}].day`, `a day after ${previousDay} (got ${report.day})`);
+    }
+    if (report.day > currentDay) {
+      fail(`history[${i}].day`, `a day within the played timeline (got ${report.day})`);
+    }
+    previousDay = report.day;
+  });
+
   // -- staff duty payloads
   const jobsById = new Map(data.jobs.map((j) => [j.id, j]));
   data.staff.forEach((s, i) => {
@@ -1465,6 +1677,11 @@ function restoreInto(world: World, data: RestorePayload): void {
   world.today = data.today;
   world.lifetimeTreated = data.lifetimeTreated;
   world.lifetimeDied = data.lifetimeDied;
+  // `lifetime` and `history` are readonly (the container is the world's), so
+  // the `world.today = …` idiom above cannot be used — mutate in place.
+  Object.assign(world.lifetime, data.lifetime);
+  world.history.push(...data.history);
+  world.lifetimeTreatedBase = data.lifetimeTreatedBase;
   world.bankruptSinceTick = data.bankruptSinceTick;
   world.gameOver = data.gameOver;
   for (let col = 0; col < world.cols; col++) {

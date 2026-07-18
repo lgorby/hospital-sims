@@ -1,3 +1,12 @@
+// NOTE: this import closes a CYCLE (formulas.ts imports `dayNet` for
+// scoreChallenge). It is safe because neither module calls across the cycle at
+// module-evaluation time and both sides export hoisted `function` declarations,
+// so whichever the bundler evaluates first sees a live binding — under Vite's
+// native ESM and Rollup's production output alike (verified by review). What
+// WOULD break it is evaluating an exported binding at module scope on either
+// side (e.g. `const X = netFromCategories(...)` at top level). Don't.
+import { netFromCategories } from './formulas';
+
 /**
  * Per-day tallies for the daily report (M4, GDD §9). The World owns one
  * `DayTally` for the running day, increments it at the same choke points that
@@ -66,7 +75,13 @@ export interface DayReport extends DayTally {
   waitBonusAwarded: boolean;
 }
 
-/** The day's cash movement, one derivation for UI and harness alike (§3.1 rule 4). */
+/**
+ * The day's cash movement, one derivation for UI and harness alike (§3.1 rule
+ * 4). Delegates to `netFromCategories` (FINANCE_PLAN §9.6) so the FINANCE
+ * table is the single fold: a new cash category joins the net automatically
+ * instead of being silently omitted here. A test pins byte-equality with the
+ * legacy formula (`revenue + sellIncome − payroll − hireFees − construction`).
+ */
 export function dayNet(tally: DayTally): number {
-  return tally.revenue + tally.sellIncome - tally.payroll - tally.hireFees - tally.construction;
+  return netFromCategories(tally);
 }

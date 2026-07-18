@@ -38,7 +38,7 @@ describe('Checklist × feeBilled source (live-drive MAJOR 1)', () => {
 
     // End-to-end through the real choke point: the vending path bills with
     // source 'vending' (patientNeeds completion), which must be ignored.
-    world.billFee(5, 'Vending', 'vending');
+    world.billFee(5, 'Vending', { source: 'vending' });
     expect(treatRow(root).classList.contains('checked')).toBe(false);
 
     // The treatment path uses the default source and must complete it.

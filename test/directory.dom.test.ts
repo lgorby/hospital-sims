@@ -76,7 +76,7 @@ describe('DirectoryPanel (hospital inventory pullout)', () => {
     world.buildRoom('dialysis', { col: 10, row: 10, cols: 3, rows: 4 }, { col: 11, row: 14 }, true);
     world.buildRoom('xray', { col: 20, row: 10, cols: 3, rows: 4 }, { col: 21, row: 14 }, true);
     world.breakRoom(world.roomsOfType('xray')[0]!);
-    world.amenities.set('5,5', { kind: 'trashcan', tile: { col: 5, row: 5 }, fill: 3 });
+    world.amenities.set('5,5', { kind: 'trashcan', tile: { col: 5, row: 5 }, fill: 3, revenueTotal: 0 });
     toggle.click();
 
     const content = text(root);
@@ -120,6 +120,91 @@ describe('DirectoryPanel (hospital inventory pullout)', () => {
     expect(content).toContain('2 Nurses');
     expect(content).toContain('1 Maintenance Tech');
     expect(content).not.toContain('Doctor');
+  });
+
+  /**
+   * FINANCE_PLAN §5.2 / §11.11 — the inventory list doubles as the P&L
+   * browser: each room row carries its earned-today value, each category
+   * header the department subtotal.
+   */
+  it('room rows show earned-today and category headers show the department subtotal', () => {
+    const { world, root, toggle } = fixture();
+    world.buildRoom('exam', { col: 10, row: 10, cols: 3, rows: 3 }, { col: 11, row: 13 }, true);
+    world.buildRoom('exam', { col: 30, row: 10, cols: 3, rows: 3 }, { col: 31, row: 13 }, true);
+    world.buildRoom('xray', { col: 20, row: 10, cols: 3, rows: 4 }, { col: 21, row: 14 }, true);
+    const [examA, examB] = world.roomsOfType('exam');
+    examA!.revenueToday = 450;
+    examB!.revenueToday = 200;
+    world.roomsOfType('xray')[0]!.revenueToday = 1200;
+    toggle.click();
+
+    const earned = (label: string): string =>
+      rows(root)
+        .find((r) => r.textContent!.includes(label))!
+        .querySelector('.dir-earned')!.textContent ?? '';
+    expect(earned('Exam Room 3×3')).toBe('$450'); // first exam row
+    expect(earned('X-Ray')).toBe('$1,200');
+
+    const subtotal = (section: string): string =>
+      [...root.querySelectorAll<HTMLElement>('.dir-section')]
+        .find((h) => h.textContent!.startsWith(section))!
+        .querySelector('.dir-subtotal')!.textContent ?? '';
+    expect(subtotal('Treatment')).toBe('$650'); // 450 + 200, both exams
+    expect(subtotal('Imaging')).toBe('$1,200');
+  });
+
+  /**
+   * Both reviews: a room that CANNOT bill must carry no value at all. A
+   * waiting room reading "$0" is not the RCT "this ride earns nothing" signal
+   * — that read only carries information for a unit that could have earned —
+   * and it contradicted the inspect card, which gates the same information on
+   * `roomEarns`. Subtotals are unaffected: non-earners contribute 0.
+   */
+  it('shows no earned value on rooms that cannot bill', () => {
+    const { world, root, toggle } = fixture();
+    world.buildRoom('exam', { col: 10, row: 10, cols: 3, rows: 3 }, { col: 11, row: 13 }, true);
+    world.buildRoom('waiting', { col: 15, row: 10, cols: 3, rows: 3 }, { col: 16, row: 13 }, true);
+    world.roomsOfType('exam')[0]!.revenueToday = 450;
+    toggle.click();
+
+    const row = (label: string): HTMLElement =>
+      rows(root).find((r) => r.textContent!.includes(label))!;
+    // A waiting room cannot bill — no condition step routes a fee through it.
+    const earned = row('Waiting Room').querySelector('.dir-earned');
+    expect(earned === null || earned.textContent === '').toBe(true);
+    // ...while an earner still shows its money, and the subtotal still sums
+    // the whole category (Basics contributes 0, not nothing).
+    expect(row('Exam Room 3×3').querySelector('.dir-earned')!.textContent).toBe('$450');
+  });
+
+  /**
+   * Plan review MINOR 16: the money values join the renderKey on their
+   * RENDERED string, never the raw float. A raw key would rebuild the whole
+   * list on every billed fee and on payroll's sub-cent dust, churning DOM and
+   * hover state while the panel is open.
+   */
+  it('sub-dollar churn does NOT rebuild the list; a rendered change does', () => {
+    const { world, root, toggle, panel } = fixture();
+    world.buildRoom('exam', { col: 10, row: 10, cols: 3, rows: 3 }, { col: 11, row: 13 }, true);
+    const room = world.roomsOfType('exam')[0]!;
+    room.revenueToday = 100;
+    toggle.click();
+    const before = rows(root)[0]!;
+
+    // Dust below the rounding step: money() still renders "$100", so the
+    // identical renderKey must leave the very same DOM node in place.
+    room.revenueToday = 100.4;
+    world.clock.tick += 1; // past the tick gate, so only the key can stop it
+    panel.update();
+    expect(rows(root)[0]).toBe(before);
+    expect(before.querySelector('.dir-earned')!.textContent).toBe('$100');
+
+    // A change the player can actually SEE rebuilds, as it must.
+    room.revenueToday = 250;
+    world.clock.tick += 1;
+    panel.update();
+    expect(rows(root)[0]).not.toBe(before);
+    expect(rows(root)[0]!.querySelector('.dir-earned')!.textContent).toBe('$250');
   });
 
   it('does no DOM work while closed', () => {

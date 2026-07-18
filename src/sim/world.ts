@@ -10,9 +10,10 @@ import {
 } from './build';
 import { GameClock, gameMinutesToTicks, TICKS_PER_DAY, ticksToGameMinutes } from './clock';
 import { emptyDayTally, type DayReport, type DayTally } from './dailyStats';
-import { AMENITY_DEFS, type AmenityId } from './data/amenities';
+import { AMENITY_DEFS, type Amenity, type AmenityId } from './data/amenities';
 import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, type ConditionId } from './data/conditions';
+import { emptyCashTotals, type CashTallyKey, type CashTotals } from './data/finance';
 import { generateAge, generateName, generateStaffAge } from './data/names';
 import { ROLE_DEFS, ROLE_IDS, type RoleId } from './data/roles';
 import {
@@ -119,7 +120,10 @@ export class World implements PathGrid {
    * (trashcan contents) and stays 0 in Stage 1; it ships in SAVE_VERSION 4
    * so Stage 2 needs no map migration.
    */
-  readonly amenities = new Map<string, { kind: AmenityId; tile: GridPoint; fill: number }>();
+  readonly amenities = new Map<
+    string,
+    Amenity
+  >();
   /** Floor messes (Stage 2, §4.1), keyed `${col},${row}`. */
   readonly messes = new Map<string, Mess>();
   /** Facility job queue (Stage 2, §4.3) — clean/empty (+repair in Stage 3). */
@@ -134,6 +138,20 @@ export class World implements PathGrid {
   /** Lifetime counters for the game-over summary. */
   lifetimeTreated = 0;
   lifetimeDied = 0;
+  /** Closed-day reports, oldest → newest, trimmed to `historyCapDays`
+   *  (FINANCE_PLAN §9.5) — the finances grid's columns and cash graph. */
+  readonly history: DayReport[] = [];
+  /** Lifetime cash totals (§3.1 Total, §3.2 average). Real state, not a sum
+   *  over live rooms — a SOLD room takes its counter with it. */
+  readonly lifetime: CashTotals = emptyCashTotals();
+  /**
+   * Discharges that happened BEFORE this save gained lifetime tracking — 0 on
+   * a new game, set to the restored `lifetimeTreated` on a v6→v7 migration.
+   * Without this watermark the average bill divides fresh revenue by
+   * pre-upgrade discharges and reads permanently, invisibly low (§3.2).
+   * Not readonly: the migration assigns it.
+   */
+  lifetimeTreatedBase = 0;
   /** Tick when cash first dropped below the bankruptcy threshold; null = solvent. */
   bankruptSinceTick: number | null = null;
   /** Terminal state (M4): once set, tick() is a no-op — the world is frozen. */
@@ -713,6 +731,9 @@ export class World implements PathGrid {
       quality: roomQuality(type, rect),
       wear: 0,
       brokenSince: null,
+      revenueToday: 0,
+      revenueTotal: 0,
+      visitsTotal: 0,
     };
     this.rooms.set(id, room);
     for (const tile of rectTiles(rect)) {
@@ -725,7 +746,7 @@ export class World implements PathGrid {
       // exactly the table cost.
       const price = priceOf(type, rect);
       this.cash -= price;
-      this.today.construction += price;
+      this.tallyCash('construction', price);
       this.events.emit('cashChanged', { cash: this.cash });
     }
     this.events.emit('roomBuilt', { roomId: id });
@@ -777,7 +798,7 @@ export class World implements PathGrid {
     room.quality = roomQuality(room.type, rect);
     if (!free) {
       this.cash -= price;
-      this.today.construction += price;
+      this.tallyCash('construction', price);
       this.events.emit('cashChanged', { cash: this.cash });
     }
     this.events.emit('roomChanged', { roomId });
@@ -924,7 +945,7 @@ export class World implements PathGrid {
     // SSOT (audit #2): the sim's payout and the UI's button label share this.
     const sellback = sellbackAmount(room.type, room.rect); // rect-aware (Stage 0)
     this.cash += sellback;
-    this.today.sellIncome += sellback;
+    this.tallyCash('sellIncome', sellback);
     this.events.emit('cashChanged', { cash: this.cash });
     this.events.emit('roomSold', { roomId });
     this.recomputePaths();
@@ -977,7 +998,7 @@ export class World implements PathGrid {
       candidate.age,
     );
     this.cash -= BALANCE.economy.hireFee;
-    this.today.hireFees += BALANCE.economy.hireFee;
+    this.tallyCash('hireFees', BALANCE.economy.hireFee);
     this.events.emit('cashChanged', { cash: this.cash });
   }
 
@@ -1337,7 +1358,7 @@ export class World implements PathGrid {
 
   // ------------------------------------------------- amenities (Stage 1)
 
-  amenityAt(col: number, row: number): { kind: AmenityId; tile: GridPoint; fill: number } | null {
+  amenityAt(col: number, row: number): Amenity | null {
     return this.amenities.get(`${col},${row}`) ?? null;
   }
 
@@ -1398,10 +1419,11 @@ export class World implements PathGrid {
       kind,
       tile: { col: tile.col, row: tile.row },
       fill: 0,
+      revenueTotal: 0,
     });
     const cost = AMENITY_DEFS[kind].cost;
     this.cash -= cost;
-    this.today.construction += cost; // capital bucket — dayNet stays honest
+    this.tallyCash('construction', cost); // capital bucket — dayNet stays honest
     this.events.emit('cashChanged', { cash: this.cash });
     this.events.emit('amenityPlaced', { col: tile.col, row: tile.row, kind });
     this.recomputePaths();
@@ -1444,7 +1466,7 @@ export class World implements PathGrid {
     // SSOT: the payout and the inspect button label share amenitySellback.
     const refund = amenitySellback(amenity.kind);
     this.cash += refund;
-    this.today.sellIncome += refund;
+    this.tallyCash('sellIncome', refund);
     this.events.emit('cashChanged', { cash: this.cash });
     this.events.emit('amenitySold', { col: tile.col, row: tile.row, kind: amenity.kind });
     this.recomputePaths();
@@ -1673,13 +1695,40 @@ export class World implements PathGrid {
     this.events.emit('reputationChanged', { reputation: this.reputation });
   }
 
+  /**
+   * THE cash-tally increment (FINANCE_PLAN §9.5, principle 2): today AND
+   * lifetime in one call, so the finances grid's Today and Total columns can
+   * never disagree. It does NOT move `world.cash` — every call site still
+   * adjusts cash itself, which is exactly why it is not named `addCash`.
+   */
+  tallyCash(key: CashTallyKey, amount: number): void {
+    this.today[key] += amount;
+    this.lifetime[key] += amount;
+  }
+
   /** All patient fees flow through here (revenue tally choke point, M4).
    *  `source` discriminates treatment billing from amenity revenue — the
    *  checklist's "treat your first patient" must not complete on a $5 soda
-   *  (Stage-1 live-drive review MAJOR 1). */
-  billFee(amount: number, label: string, source: 'treatment' | 'vending' = 'treatment'): void {
+   *  (Stage-1 live-drive review MAJOR 1). `roomId` attributes the fee to the
+   *  room that earned it (FINANCE_PLAN §4.1); an options object because a
+   *  positional optional that the treatment path MUST supply isn't
+   *  structural. */
+  billFee(
+    amount: number,
+    label: string,
+    opts: { source?: 'treatment' | 'vending'; roomId?: number } = {},
+  ): void {
+    const source = opts.source ?? 'treatment';
     this.cash += amount;
-    this.today.revenue += amount;
+    this.tallyCash('revenue', amount);
+    if (opts.roomId !== undefined) {
+      const room = this.rooms.get(opts.roomId);
+      if (room) {
+        room.revenueToday += amount;
+        room.revenueTotal += amount;
+        room.visitsTotal += 1;
+      }
+    }
     this.events.emit('cashChanged', { cash: this.cash });
     this.events.emit('feeBilled', { amount, label, source });
   }
@@ -1958,7 +2007,17 @@ export class World implements PathGrid {
     });
   }
 
-  /** Midnight close (M4): wait bonus → report snapshot → reset the tally. */
+  /**
+   * Midnight close. FROZEN order (M4 + FINANCE_PLAN §9.5): wait bonus →
+   * cleanliness rep → build the report snapshot → push a COPY to `history`
+   * and trim → reset every `room.revenueToday` → reset `today` → emit
+   * `dayEnded`. Both resets precede the emit deliberately: the `dayEnded`
+   * autosave must persist a CONSISTENT new-day state (`today` zeroed ⇔ every
+   * `revenueToday` zeroed), so a reload can never show phantom earnings. No
+   * `dayEnded` consumer may read `room.revenueToday` — pinned by a test.
+   * Pushing history BEFORE the emit is likewise deliberate: the autosave
+   * captures the entry that just closed.
+   */
   private closeDay(): void {
     const avgWaitGameMinutes =
       this.today.waitCount === 0
@@ -1982,6 +2041,13 @@ export class World implements PathGrid {
       avgWaitGameMinutes,
       waitBonusAwarded,
     };
+    // A COPY: the emitted payload must never alias stored history, or a
+    // consumer that mutates what it was handed rewrites the past.
+    this.history.push({ ...report });
+    // Trim from the FRONT — oldest out, newest kept (the same end the
+    // load-time trim keeps, §9.7).
+    while (this.history.length > BALANCE.finance.historyCapDays) this.history.shift();
+    for (const room of this.rooms.values()) room.revenueToday = 0;
     this.today = emptyDayTally();
     this.events.emit('dayEnded', report);
   }

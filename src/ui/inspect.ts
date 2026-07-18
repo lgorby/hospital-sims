@@ -6,11 +6,11 @@ import { CONDITION_DEFS } from '../sim/data/conditions';
 import { ROOM_DEFS } from '../sim/data/rooms';
 import { ROLE_DEFS } from '../sim/data/roles';
 import { BALANCE } from '../sim/data/balance';
-import { amenitySellback, moodOf, sellbackAmount } from '../sim/formulas';
+import { amenitySellback, moodOf, roomEarns, sellbackAmount } from '../sim/formulas';
 import type { PatientStage } from '../sim/entities/patient';
 import type { Reservation, StaffDuty } from '../sim/entities/staff';
 import type { World } from '../sim/world';
-import { patientStageLabel, staffDutyLabel } from './format';
+import { money, patientStageLabel, staffDutyLabel } from './format';
 
 /** Health/patience scale ceiling comes from the balance table (SSOT audit #1). */
 const VITALS_MAX = BALANCE.stats.vitalsMax;
@@ -166,6 +166,13 @@ export class InspectPanel {
     return `<div class="inspect-row"><span>${esc(label)}</span><span>${esc(value)}</span></div>`;
   }
 
+  /** A §4 Income line. Same row shape, but its own class: "Patients seen"
+   *  does not fit the shared 72px label column, and widening that column
+   *  would reflow every other card. */
+  private incomeLine(label: string, value: string): string {
+    return `<div class="inspect-row income"><span>${esc(label)}</span><span>${esc(value)}</span></div>`;
+  }
+
   private bar(label: string, value: number, color: string): string {
     const clamped = Math.max(0, Math.min(VITALS_MAX, value));
     const pct = (clamped / VITALS_MAX) * CSS_PERCENT;
@@ -226,7 +233,12 @@ export class InspectPanel {
       // plant aura radius comes from the same table refreshAuras reads; the
       // trashcan is pure flavor until Stage-2 messes give it a job.
       const effectLine: Record<AmenityId, string> = {
-        vending: this.line('Drinks', `$${BALANCE.needs.vendingPrice} per use`),
+        vending:
+          this.line('Drinks', `$${BALANCE.needs.vendingPrice} per use`) +
+          // FINANCE_PLAN §4.2 (our RCT shop window): per-MACHINE lifetime
+          // revenue, so a badly-placed machine reads $0 and is visibly dead.
+          // Trashcans and plants earn nothing and render no line at all.
+          this.incomeLine('Income total', money(amenity.revenueTotal)),
         plant: this.line('Effect', `Comfort aura, ${BALANCE.needs.plantAuraRadius} tiles`),
         // Stage 2: `fill` is live trashcan contents (vending litter, §4.1) —
         // frame-polled like every card field, no event needed; the capacity is
@@ -322,6 +334,21 @@ export class InspectPanel {
           (s) => s.duty.kind === 'post' && s.duty.roomId === room.id,
         )
       : [];
+    // FINANCE_PLAN §4.1 — the RCT ride-window Income tab, per room. Rendered
+    // only for rooms that can BILL: roomEarns is derived from CONDITION_DEFS,
+    // so a corridor or a waiting room renders nothing rather than a permanent
+    // $0, while an earning room that has never been used reads $0 — the RCT
+    // "this ride earns nothing" read, which is the whole point of the block.
+    // INCOME, not profit: rooms have no running costs yet (§7 Q2), so nothing
+    // here may imply the room pays for itself.
+    // "Patients seen", never "Treated": treated/lifetimeTreated mean
+    // DISCHARGES, and a 2-step patient would read as 2 across two rooms —
+    // visitsTotal counts completed treatment STEPS in THIS room.
+    const incomeLines = roomEarns(room.type)
+      ? this.incomeLine('Income today', money(room.revenueToday)) +
+        this.incomeLine('Income total', money(room.revenueTotal)) +
+        this.incomeLine('Patients seen', String(room.visitsTotal))
+      : '';
     this.body.innerHTML =
       `<div class="inspect-name">${esc(def.label)}</div>` +
       this.line('Size', `${room.rect.cols}×${room.rect.rows}`) +
@@ -331,7 +358,8 @@ export class InspectPanel {
       (runBy ? this.line('Run by', runBy) : '') +
       (hasPost ? this.line('Posted', posted.map((s) => s.name.short).join(', ') || '—') : '') +
       // "Treating" would be dishonest for a self-service room (§3.3).
-      this.line(stallClaims ? 'In use' : 'Treating', occupant);
+      this.line(stallClaims ? 'In use' : 'Treating', occupant) +
+      incomeLines;
     // sellbackAmount is the sim's payout AND this label (SSOT audit #2);
     // rect-aware since Stage 0 (an oversized room refunds its sized price).
     const refund = sellbackAmount(room.type, room.rect);

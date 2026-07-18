@@ -5,6 +5,7 @@ import { BALANCE } from '../src/sim/data/balance';
 import { dayNet, type DayReport } from '../src/sim/dailyStats';
 import { cleanlinessRepDelta } from '../src/sim/formulas';
 import { appendDailyReportSections } from '../src/ui/dailyReport';
+import { money } from '../src/ui/format';
 
 /**
  * Amenities Stage 2 (§S2.5): the daily report's Cleanliness row — a
@@ -54,6 +55,71 @@ function cleanlinessRow(card: HTMLElement): { text: string; tone: string } | nul
   const value = row.querySelectorAll('span')[1]!;
   return { text: value.textContent ?? '', tone: value.className };
 }
+
+/**
+ * FINANCE_PLAN §9.8 / §11.11 — the Money section now FOLDS the §9.1 category
+ * table (reportOrder, showWhenZero, kind-driven negation + tone) instead of
+ * hand-listing its rows, and must render byte-identically to what shipped.
+ * These pin the shipped output directly, so a wrong fold fails here rather
+ * than silently reordering or re-toning the player's report.
+ */
+describe('daily report Money section (the §9.1 fold renders what shipped)', () => {
+  /** Every Money row as label / value / tone, in render order. */
+  function moneyRows(card: HTMLElement): [string, string, string][] {
+    const section = card.querySelectorAll('.modal-rows')[1]!;
+    return [...section.querySelectorAll('.modal-row')].map((row) => {
+      const spans = row.querySelectorAll('span');
+      return [spans[0]!.textContent ?? '', spans[1]!.textContent ?? '', spans[1]!.className];
+    });
+  }
+
+  it('a full day renders every row in the SHIPPED order, negation and tone', () => {
+    const report = makeReport({
+      revenue: 2400,
+      vendingRevenue: 45,
+      payroll: 1880,
+      hireFees: 100,
+      construction: 8000,
+      sellIncome: 2000,
+      cash: 12345,
+    });
+    // reportOrder, NOT the table's array order (that one is the finances
+    // GRID's): sell-back income closes the section, above the hand-rendered
+    // Net / Cash on hand.
+    expect(moneyRows(render(report))).toEqual([
+      ['Patient fees', '$2,400', 'good'],
+      ['Vending', '$45', 'good'], // a BREAKDOWN of revenue, toned like income
+      ['Payroll', '−$1,880', 'bad'], // kind: 'expense' drives BOTH sign + tone
+      ['Hiring', '−$100', 'bad'],
+      ['Construction', '−$8,000', 'bad'],
+      ['Sell-back income', '$2,000', 'good'],
+      ['Net', `${money(dayNet(report))}`, dayNet(report) >= 0 ? 'good' : 'bad'],
+      ['Cash on hand', '$12,345', ''], // toneless, and not a category
+    ]);
+  });
+
+  it('an empty day zero-suppresses exactly the showWhenZero:false rows', () => {
+    // Patient fees and Payroll always render (showWhenZero); the other four
+    // appear only when they happened — the shipped conditionals, in table form.
+    expect(moneyRows(render(makeReport()))).toEqual([
+      ['Patient fees', '$0', 'good'],
+      ['Payroll', '$0', 'bad'],
+      ['Net', '$0', 'good'],
+      ['Cash on hand', '$0', ''],
+    ]);
+  });
+
+  it('Net is the fold itself and never double-counts the vending breakdown', () => {
+    // dayNet reads `revenue`, which already contains vending — the breakdown
+    // row is display-only. Same revenue, same net, extra row.
+    const withVending = makeReport({ revenue: 100, vendingRevenue: 40 });
+    const without = makeReport({ revenue: 100 });
+    expect(dayNet(withVending)).toBe(dayNet(without));
+    const rows = moneyRows(render(withVending));
+    expect(rows.some(([label]) => label === 'Vending')).toBe(true);
+    expect(rows.find(([label]) => label === 'Net')![1]).toBe(money(dayNet(without)));
+  });
+});
 
 describe('daily report Cleanliness row (amenities Stage 2)', () => {
   it('spotless day WITH arrivals: "+2 rep", tone good', () => {
