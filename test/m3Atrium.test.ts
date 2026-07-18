@@ -4,6 +4,7 @@ import { EventBus } from '../src/events';
 import { BALANCE } from '../src/sim/data/balance';
 import { PROP_STYLE, ROOM_DEFS, WAITING_ROOM_BASE_CHAIRS } from '../src/sim/data/rooms';
 import { ROLE_DEFS } from '../src/sim/data/roles';
+import { propTargetCount } from '../src/sim/formulas';
 import { rectTiles } from '../src/sim/types';
 import { World } from '../src/sim/world';
 
@@ -61,7 +62,7 @@ describe('room props (GDD §5 equipment, auto-placed)', () => {
     for (const spec of expectations) {
       const def = ROOM_DEFS[spec.type];
       const expectedTiles = def.props.reduce(
-        (sum, p) => sum + PROP_STYLE[p.id].tiles * p.count,
+        (sum, p) => sum + PROP_STYLE[p.id].tiles * propTargetCount(p.density, spec.rect),
         0,
       );
       const tiles = rectTiles(spec.rect).map((p) => t.world.tileAt(p.col, p.row)!);
@@ -70,7 +71,7 @@ describe('room props (GDD §5 equipment, auto-placed)', () => {
       // Walkability matches each prop's spec.
       for (const prop of def.props) {
         const ofThis = tiles.filter((tile) => tile.object === prop.id);
-        expect(ofThis.length).toBe(PROP_STYLE[prop.id].tiles * prop.count);
+        expect(ofThis.length).toBe(PROP_STYLE[prop.id].tiles * propTargetCount(prop.density, spec.rect));
         for (const tile of ofThis) expect(tile.walkable).toBe(prop.walkable);
       }
       // The room still works: at least two walkable interior tiles remain.

@@ -45,11 +45,10 @@ function idleStaff(world: World, filter: (s: Staff) => boolean): Staff[] {
   return [...world.staff.values()].filter((s) => s.duty.kind === 'idle' && !s.firing && filter(s));
 }
 
-function roomBusy(world: World, roomId: number): boolean {
-  for (const res of world.reservations.values()) {
-    if (res.roomId === roomId) return true;
-  }
-  return false;
+/** Stage A: a room accepts dispatch while it has an open capacity slot —
+ *  `single` rooms behave exactly as the old any-reservation-blocks check. */
+function hasOpenSlot(world: World, room: Room): boolean {
+  return world.openSlots(room) > 0;
 }
 
 /**
@@ -186,6 +185,10 @@ function makeReservation(
   staffMembers: Staff[],
   stepIndex: number,
 ): void {
+  // Stage A: claim the lowest free capacity slot (0 for `single` rooms). The
+  // index is STABLE for the reservation's lifetime — anchoring and the save
+  // both carry it (CAPACITY_PLAN §3.3).
+  const slotIndex = world.freeSlotIndex(room);
   const reservation: Reservation = {
     id: world.takeId(),
     kind,
@@ -193,6 +196,7 @@ function makeReservation(
     roomId: room.id,
     staffIds: staffMembers.map((s) => s.id),
     stepIndex,
+    slotIndex,
     phase: 'gathering',
     ticksRemaining: 0,
     patientWaitingSince: patient.waitingSince,
@@ -201,7 +205,13 @@ function makeReservation(
   world.setPatientStage(patient, { kind: 'reserved', reservationId: reservation.id });
   patient.waitingSince = null;
   patient.waitingRoomId = null;
-  const patientSpot = world.freeInteriorTile(room, room.door?.inside);
+  // Per-slot anchoring (Stage A): the patient stands beside THEIR bed/machine
+  // so concurrent occupants don't pile on random interior tiles; single rooms
+  // keep the classic free-interior pick inside slotAnchorTile's fallback.
+  const patientSpot =
+    ROOM_DEFS[room.type].capacity.kind === 'perProp'
+      ? world.slotAnchorTile(room, slotIndex)
+      : world.freeInteriorTile(room, room.door?.inside);
   world.setWalkerTarget(patient, patientSpot);
   for (const member of staffMembers) {
     member.duty = { kind: 'reserved', reservationId: reservation.id };
@@ -242,7 +252,7 @@ function assignTriage(world: World): void {
     if (!nurse) return;
     const bay = world
       .roomsOfType('triage')
-      .find((r) => !roomBusy(world, r.id) && canReachRoom(world, patient, r));
+      .find((r) => hasOpenSlot(world, r) && canReachRoom(world, patient, r));
     if (!bay) continue;
     makeReservation(world, 'triage', patient, bay, [nurse], 0);
   }
@@ -260,7 +270,7 @@ function assignTreatment(world: World): void {
     // Flow rule 5 hints moved to emitUrgentNeedHints (HINTS_PLAN §2.2).
     const room = world
       .roomsOfType(step.room)
-      .find((r) => !roomBusy(world, r.id) && canReachRoom(world, patient, r));
+      .find((r) => hasOpenSlot(world, r) && canReachRoom(world, patient, r));
     if (!room) continue;
     // All-or-nothing (tech plan §5): every required role or nothing at all.
     const chosen: Staff[] = [];

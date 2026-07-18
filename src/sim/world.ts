@@ -7,14 +7,7 @@ import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, type ConditionId } from './data/conditions';
 import { generateAge, generateName, generateStaffAge } from './data/names';
 import { ROLE_DEFS, ROLE_IDS, type RoleId } from './data/roles';
-import {
-  PROP_STYLE,
-  ROOM_DEFS,
-  WAITING_ROOM_BASE_CHAIRS,
-  type PropId,
-  type PropSpec,
-  type RoomType,
-} from './data/rooms';
+import { PROP_STYLE, ROOM_DEFS, type PropId, type PropSpec, type RoomType } from './data/rooms';
 import type { Door, Room } from './entities/room';
 import { LEGAL_STAGE_TRANSITIONS, type Patient, type PatientStage } from './entities/patient';
 import type { Candidate, Reservation, Staff } from './entities/staff';
@@ -24,6 +17,7 @@ import {
   checkInCapacity,
   dischargeReputationGain,
   priceOf,
+  propTargetCount,
   roomQuality,
   sellbackAmount,
 } from './formulas';
@@ -314,6 +308,93 @@ export class World implements PathGrid {
     return null;
   }
 
+  // ---------------------------------------------------- capacity (Stage A)
+
+  /**
+   * Slot-prop strip ORIGINS in deterministic row-major order — the slot ids
+   * (index in this array = `Reservation.slotIndex`). Derived from the tile
+   * grid, so capacity needs no saved state: `tilesWithObject / stripLength`
+   * (CAPACITY_PLAN §2.2) falls out of consuming each strip as it is met
+   * (placement lays strips west→east on one row).
+   */
+  slotOrigins(room: Room): GridPoint[] {
+    const cap = ROOM_DEFS[room.type].capacity;
+    if (cap.kind !== 'perProp') return [];
+    const stripLen = PROP_STYLE[cap.prop].tiles;
+    const origins: GridPoint[] = [];
+    for (let row = room.rect.row; row < room.rect.row + room.rect.rows; row++) {
+      for (let col = room.rect.col; col < room.rect.col + room.rect.cols; col++) {
+        if (this.tileAt(col, row)!.object !== cap.prop) continue;
+        origins.push({ col, row });
+        col += stripLen - 1; // consume the rest of this strip
+      }
+    }
+    return origins;
+  }
+
+  /** Concurrent-patient capacity: 1 for `single` rooms, else the placed slot
+   *  count. Sim (dispatch) and UI (inspect readout) both read THIS. Known
+   *  edge (review NIT): a perProp room whose slot props ALL failed placement
+   *  derives capacity 0 and is undispatchable — unreachable at min sizes
+   *  (placement fit is test-proven); Stage B's expansion recompute must keep
+   *  it that way or add a hint. */
+  capacityOf(room: Room): number {
+    return ROOM_DEFS[room.type].capacity.kind === 'single' ? 1 : this.slotOrigins(room).length;
+  }
+
+  /** Live reservations currently holding this room (any phase). */
+  reservationsOn(roomId: number): Reservation[] {
+    return [...this.reservations.values()].filter((r) => r.roomId === roomId);
+  }
+
+  /** Free capacity slots — the dispatcher reserves while this is > 0. */
+  openSlots(room: Room): number {
+    return this.capacityOf(room) - this.reservationsOn(room.id).length;
+  }
+
+  /** The lowest slot index no live reservation holds (0 for `single` rooms). */
+  freeSlotIndex(room: Room): number {
+    const taken = new Set(this.reservationsOn(room.id).map((r) => r.slotIndex));
+    const cap = this.capacityOf(room);
+    for (let i = 0; i < cap; i++) if (!taken.has(i)) return i;
+    // Callers must guard on openSlots > 0 — reaching here would double-book
+    // slot 0 (two patients on one bed). Loud, not silent (review NIT).
+    console.warn(`freeSlotIndex on a full room (id ${room.id}) — caller missed openSlots guard`);
+    return 0;
+  }
+
+  /**
+   * Where the patient of `slotIndex`'s reservation stands: a deterministic
+   * walkable tile beside their slot strip (prefer unclaimed — Flow rule 14),
+   * so concurrent occupants gather at THEIR bed instead of stacking on random
+   * interior tiles (CAPACITY_PLAN §3.3 anchoring). Range-safe: an out-of-range
+   * slot (hostile save) falls back to a free interior tile.
+   */
+  slotAnchorTile(room: Room, slotIndex: number): GridPoint {
+    const cap = ROOM_DEFS[room.type].capacity;
+    const origin = this.slotOrigins(room)[slotIndex];
+    if (cap.kind === 'perProp' && origin) {
+      const stripLen = PROP_STYLE[cap.prop].tiles;
+      const candidates: GridPoint[] = [];
+      for (let i = 0; i < stripLen; i++) {
+        const stripTile = { col: origin.col + i, row: origin.row };
+        for (const step of ORTHOGONAL_STEPS) {
+          const p = { col: stripTile.col + step.col, row: stripTile.row + step.row };
+          if (!rectContains(room.rect, p)) continue;
+          if (!this.tileAt(p.col, p.row)!.walkable) continue;
+          if (room.door && samePoint(p, room.door.inside)) continue;
+          candidates.push(p);
+        }
+      }
+      const free = candidates.find((p) => !this.isTileClaimed(p));
+      if (free) return free;
+      // All bedside tiles claimed: fall THROUGH to freeInteriorTile (which
+      // still prefers unclaimed) rather than stacking on a claimed bedside
+      // tile while free interior tiles exist (Stage A review — rule 14).
+    }
+    return this.freeInteriorTile(room, room.door?.inside);
+  }
+
   /** A random walkable interior tile, preferring unclaimed ones (Flow rule 14). */
   freeInteriorTile(room: Room, avoid?: GridPoint): GridPoint {
     const walkable = rectTiles(room.rect).filter(
@@ -523,10 +604,14 @@ export class World implements PathGrid {
     this.recomputePaths();
   }
 
-  /** Auto-place every prop the room def declares (GDD §5 equipment, M3 ruling). */
+  /** Auto-place every prop the room def declares (GDD §5 equipment, M3
+   *  ruling). Counts derive from the footprint (Stage A density rules) — a
+   *  bigger room places more beds/chairs; failed placements skip silently and
+   *  capacity derives from what actually landed (grid = truth). */
   private placeProps(room: Room): void {
     for (const spec of ROOM_DEFS[room.type].props) {
-      for (let i = 0; i < spec.count; i++) this.placePropStrip(room, spec);
+      const count = propTargetCount(spec.density, room.rect);
+      for (let i = 0; i < count; i++) this.placePropStrip(room, spec);
     }
   }
 
@@ -899,7 +984,9 @@ export class World implements PathGrid {
     const waitingRooms = this.roomsOfType('waiting').filter((r) => r.door);
     for (const room of waitingRooms) {
       const seated = [...this.patients.values()].filter((p) => p.waitingRoomId === room.id).length;
-      if (seated < WAITING_ROOM_BASE_CHAIRS) {
+      // Seats = the placed chairs (Stage A): a bigger waiting room finally
+      // seats more people. capacityOf counts chair tiles, not a constant.
+      if (seated < this.capacityOf(room)) {
         patient.waitingRoomId = room.id;
         this.setWalkerTarget(patient, this.freeSeatTile(room, patient));
         return;

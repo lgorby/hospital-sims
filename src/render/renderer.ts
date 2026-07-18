@@ -282,15 +282,24 @@ export class WorldRenderer {
 
         const tile = this.world.tileAt(col, row)!;
         if (tile.object) {
-          // Strip props slice west/east by same-object-same-room neighbors —
-          // adjacent rooms may both own identical props (M1 review M-4);
-          // single-tile props (chairs!) never pair up.
+          // Strip props slice by RUN OFFSET, not neighbor presence (Stage A
+          // review): density can lay two bed strips end-to-end in one room —
+          // a 4-tile run — where the old east/west-neighbor check drew two
+          // head-ends and no foot. Walking west to the run's start and taking
+          // `offset % stripLen` recovers the true per-strip slice (strips are
+          // placed atomically, so a same-object same-room run is always whole
+          // strips — see slotOrigins' matching consumption). The roomId guard
+          // still splits identical props across a shared wall (M1 review M-4).
           let slice: PropSlice = 'single';
-          if (PROP_STYLE[tile.object].tiles > 1) {
-            const east = this.world.tileAt(col + 1, row);
-            const west = this.world.tileAt(col - 1, row);
-            if (east?.object === tile.object && east.roomId === tile.roomId) slice = 'west';
-            else if (west?.object === tile.object && west.roomId === tile.roomId) slice = 'east';
+          const stripLen = PROP_STYLE[tile.object].tiles;
+          if (stripLen > 1) {
+            let offset = 0;
+            for (let west = col - 1; ; west--) {
+              const t = this.world.tileAt(west, row);
+              if (t?.object !== tile.object || t.roomId !== tile.roomId) break;
+              offset += 1;
+            }
+            slice = offset % stripLen === 0 ? 'west' : 'east';
           }
           const sprite = new Sprite(this.textures.props.get(propKey(tile.object, slice))!);
           sprite.position.set(x - TILE_W / 2, y - PROP_RISE_PAD);

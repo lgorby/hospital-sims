@@ -174,11 +174,27 @@ export class InspectPanel {
     const room = this.world.rooms.get(selection.id)!;
     const def = ROOM_DEFS[room.type];
     const sellCheck = validateRoomSell(this.world, room.id);
-    const reservation = [...this.world.reservations.values()].find((r) => r.roomId === room.id);
+    // Stage A: a room can hold SEVERAL reservations (one per bed/machine) —
+    // list every occupant, not an arbitrary .find of one.
+    const reservations = this.world.reservationsOn(room.id);
     const occupant =
-      reservation === undefined
-        ? '—'
-        : (this.world.patients.get(reservation.patientId)?.name.short ?? '—');
+      reservations
+        .map((r) => this.world.patients.get(r.patientId)?.name.short)
+        .filter((name): name is string => name !== undefined)
+        .join(', ') || '—';
+    // Capacity readout ("Beds 1/3" / "Seats 4/9"): used count differs by rule —
+    // waiting-room seats are occupied by seated waiters, treatment slots by
+    // reservations. capacityOf is the same SSOT the dispatcher reads.
+    const capRule = def.capacity;
+    let capacityLine = '';
+    if (capRule.kind === 'perProp') {
+      const total = this.world.capacityOf(room);
+      const used =
+        room.type === 'waiting'
+          ? [...this.world.patients.values()].filter((p) => p.waitingRoomId === room.id).length
+          : reservations.length;
+      capacityLine = this.line(capRule.noun, `${used}/${total}`);
+    }
     // Who RUNS the room (role SSOT — the dialysis "hire a dialysis member"
     // confusion: roles were invisible in the UI). The posted-names line only
     // makes sense for standing-post rooms (reception/atrium); on treatment
@@ -196,6 +212,7 @@ export class InspectPanel {
       `<div class="inspect-name">${esc(def.label)}</div>` +
       this.line('Size', `${room.rect.cols}×${room.rect.rows}`) +
       this.line('Quality', `+${room.quality}`) +
+      capacityLine +
       (runBy ? this.line('Run by', runBy) : '') +
       (hasPost ? this.line('Posted', posted.map((s) => s.name.short).join(', ') || '—') : '') +
       this.line('Treating', occupant);

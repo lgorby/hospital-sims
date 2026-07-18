@@ -51,6 +51,14 @@ export interface Reservation {
   staffIds: number[];
   /** Treatment step this reservation executes (ignored for triage). */
   stepIndex: number;
+  /**
+   * Which capacity slot (bed/machine) this reservation holds (Stage A,
+   * CAPACITY_PLAN §3.3). 0 for `single`-capacity rooms. STABLE for the
+   * reservation's lifetime — assigned from the free-slot set at reservation
+   * time, never rebound (an nth-live derivation would re-anchor everyone when
+   * a neighbor cancels). Serialized (SAVE_VERSION 3; legacy saves restore 0).
+   */
+  slotIndex: number;
   /** gathering: parties walking to the room. active: timer running. */
   phase: 'gathering' | 'active';
   ticksRemaining: number;

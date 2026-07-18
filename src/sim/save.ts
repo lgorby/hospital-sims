@@ -4,7 +4,7 @@ import { BALANCE } from './data/balance';
 import { CONDITION_IDS, type ConditionId } from './data/conditions';
 import type { PersonName } from './data/names';
 import { ROLE_IDS, type RoleId } from './data/roles';
-import { PROP_STYLE, ROOM_TYPES, type PropId, type RoomType } from './data/rooms';
+import { PROP_STYLE, ROOM_DEFS, ROOM_TYPES, type PropId, type RoomType } from './data/rooms';
 import type { Patient, PatientStage } from './entities/patient';
 import type { Room } from './entities/room';
 import type { Candidate, Reservation, Staff, StaffDuty } from './entities/staff';
@@ -17,7 +17,7 @@ import { World, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 /**
  * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
@@ -31,8 +31,14 @@ export const SAVE_VERSION = 2;
  * compatible by construction). ONE restore-time transform is required all the
  * same: the hiring pool is minted at construction and replenished only
  * like-for-like, so restoreInto tops up candidates for roles the save
- * predates (sonographer/surgeon) — a no-op for complete (v2) pools. A
- * re-save stamps v2. Anything below 1 or above SAVE_VERSION is refused.
+ * predates (sonographer/surgeon) — a no-op for complete (v2) pools.
+ *
+ * v2 → v3 (capacity epic Stage A, CAPACITY_PLAN §5): reservations gain
+ * `slotIndex` (which capacity slot a reservation holds). Migration is a
+ * read-time default: pre-v3 saves lack the field and restore `slotIndex: 0`,
+ * which is exactly right — a pre-Stage-A room could hold at most ONE
+ * reservation, and every legacy room's slot 0 exists. A re-save stamps v3.
+ * Anything below 1 or above SAVE_VERSION is refused.
  */
 export function isLoadableVersion(version: number): boolean {
   return version >= 1 && version <= SAVE_VERSION;
@@ -142,6 +148,8 @@ export interface SavedReservation {
   roomId: number;
   staffIds: number[];
   stepIndex: number;
+  /** v3 (Stage A): the capacity slot held. Pre-v3 saves restore 0. */
+  slotIndex: number;
   phase: 'gathering' | 'active';
   ticksRemaining: number;
   patientWaitingSince: number | null;
@@ -537,13 +545,14 @@ function writeReservation(r: Reservation): SavedReservation {
     roomId: r.roomId,
     staffIds: [...r.staffIds],
     stepIndex: r.stepIndex,
+    slotIndex: r.slotIndex,
     phase: r.phase,
     ticksRemaining: r.ticksRemaining,
     patientWaitingSince: r.patientWaitingSince,
   };
 }
 
-function readReservation(value: unknown, label: string): Reservation {
+function readReservation(value: unknown, label: string, saveVersion: number): Reservation {
   const o = asRecord(value, label);
   return {
     id: asInt(o.id, `${label}.id`),
@@ -554,6 +563,10 @@ function readReservation(value: unknown, label: string): Reservation {
       asInt(id, `${label}.staffIds[${i}]`),
     ),
     stepIndex: asInt(o.stepIndex, `${label}.stepIndex`),
+    // v2→v3 migration (Stage A): pre-v3 saves have no slotIndex — default 0
+    // (correct: a pre-Stage-A room held at most one reservation). A v3 save
+    // must carry it; validateReferences bounds it against the room's capacity.
+    slotIndex: saveVersion < 3 ? 0 : asInt(o.slotIndex, `${label}.slotIndex`),
     phase: asOneOf(o.phase, ['gathering', 'active'], `${label}.phase`),
     ticksRemaining: asNumber(o.ticksRemaining, `${label}.ticksRemaining`),
     patientWaitingSince: asNumberOrNull(o.patientWaitingSince, `${label}.patientWaitingSince`),
@@ -720,7 +733,7 @@ interface RestorePayload {
   nextEntityId: number;
 }
 
-function readRestorePayload(root: Record<string, unknown>): RestorePayload {
+function readRestorePayload(root: Record<string, unknown>, saveVersion: number): RestorePayload {
   return {
     seed: asInt(root.seed, 'seed'),
     rngState: asInt(root.rngState, 'rngState'),
@@ -743,7 +756,7 @@ function readRestorePayload(root: Record<string, unknown>): RestorePayload {
       readCandidate(c, `candidates[${i}]`),
     ),
     reservations: asArray(root.reservations, 'reservations').map((r, i) =>
-      readReservation(r, `reservations[${i}]`),
+      readReservation(r, `reservations[${i}]`, saveVersion),
     ),
     checkInQueues: asArray(root.checkInQueues, 'checkInQueues').map((entry, i): [number, number[]] => {
       const pair = asArray(entry, `checkInQueues[${i}]`);
@@ -803,6 +816,43 @@ function validateReferences(data: RestorePayload): void {
     r.staffIds.forEach((id, j) =>
       mustResolve(id, staffIds, `reservations[${i}].staffIds[${j}]`, 'a staff member'),
     );
+  });
+
+  // -- reservation capacity slots (v3, Stage A): in-range for the room's
+  // GRID-derived capacity and exclusive per room — a hostile slotIndex would
+  // otherwise stack two patients on one bed or anchor into the fallback path.
+  const roomsById = new Map(data.rooms.map((r) => [r.id, r]));
+  const slotsHeld = new Map<number, Set<number>>();
+  data.reservations.forEach((r, i) => {
+    if (r.slotIndex < 0) fail(`reservations[${i}].slotIndex`, 'a non-negative slot');
+    const room = roomsById.get(r.roomId)!; // resolved above
+    const rule = ROOM_DEFS[room.type].capacity;
+    let capacity = 1;
+    if (rule.kind === 'perProp') {
+      let propTiles = 0;
+      for (let col = room.rect.col; col < room.rect.col + room.rect.cols; col++) {
+        for (let row = room.rect.row; row < room.rect.row + room.rect.rows; row++) {
+          if (data.grid[col]?.[row]?.object === rule.prop) propTiles += 1;
+        }
+      }
+      // DELIBERATELY floor(total/stripLen), which is ≤ the runtime's per-run
+      // strip consumption on hand-crafted grids (a 3-tile bed run: 1 here,
+      // 2 at runtime) — the border may only ever be STRICTER than the sim,
+      // never more permissive. Don't "harmonize" this to the run-based count.
+      capacity = Math.floor(propTiles / PROP_STYLE[rule.prop].tiles);
+    }
+    if (r.slotIndex >= capacity) {
+      fail(
+        `reservations[${i}].slotIndex`,
+        `a slot below the room's capacity of ${capacity} (got ${r.slotIndex})`,
+      );
+    }
+    const held = slotsHeld.get(r.roomId) ?? new Set<number>();
+    if (held.has(r.slotIndex)) {
+      fail(`reservations[${i}].slotIndex`, `an exclusive slot (slot ${r.slotIndex} is held twice)`);
+    }
+    held.add(r.slotIndex);
+    slotsHeld.set(r.roomId, held);
   });
 
   // -- patient stage payloads + waiting-room seat
@@ -949,7 +999,7 @@ export function loadWorld(events: EventBus, raw: string): LoadResult {
     }
     // Validate EVERYTHING before a World exists — a failure below never
     // half-constructs (the World is only built once the payload is clean).
-    const payload = readRestorePayload(root);
+    const payload = readRestorePayload(root, version);
     validateReferences(payload);
     // A finished game is frozen (tick() is a no-op) and its gameOver event
     // already fired — loading one would be an unexplained dead world.

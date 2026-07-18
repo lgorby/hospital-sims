@@ -39,6 +39,7 @@ function fakeReservation(world: World, patient: Patient, staffIds: number[] = []
     roomId: -1,
     staffIds,
     stepIndex: patient.stepIndex,
+    slotIndex: 0,
     phase: 'active',
     ticksRemaining: 0,
     patientWaitingSince: patient.waitingSince,

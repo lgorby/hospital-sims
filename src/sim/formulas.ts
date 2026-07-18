@@ -6,7 +6,7 @@ import {
   type ChallengeGoal,
 } from './data/challenges';
 import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditions';
-import { ROOM_DEFS, type RoomType } from './data/rooms';
+import { ROOM_DEFS, type PropDensity, type RoomType } from './data/rooms';
 import { dayNet } from './dailyStats';
 import { rectTiles, type GridPoint, type Rect } from './types';
 
@@ -173,6 +173,19 @@ export function sellbackAmount(roomType: RoomType, rect: Rect): number {
  * quality. Moved out of `buildRoom` (design-review NIT) so Stage B's
  * expansion recompute calls the same derivation.
  */
+/**
+ * How many of a prop this footprint should carry (Stage A, CAPACITY_PLAN
+ * §3.2): fixed counts pass through; perTiles floors area/tilesPerProp into
+ * [min, max]. The density tables are authored so a MINIMUM footprint derives
+ * exactly the pre-epic count (pinned by test).
+ */
+export function propTargetCount(density: PropDensity, rect: Rect): number {
+  if (density.kind === 'fixed') return density.count;
+  const derived = Math.floor((rect.cols * rect.rows) / density.tilesPerProp);
+  const capped = density.max === undefined ? derived : Math.min(density.max, derived);
+  return Math.max(density.min, capped);
+}
+
 export function roomQuality(roomType: RoomType, rect: Rect): number {
   // Clamped like priceOf (sub-min rects are rejected before rooms exist;
   // the exported Stage-B API stays symmetric and never returns negatives).

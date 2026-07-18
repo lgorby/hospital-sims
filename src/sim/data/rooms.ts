@@ -21,13 +21,39 @@ export type PropId =
   | 'anesthesiaCart'
   | 'scrubSink';
 
+/**
+ * How many of a prop a room's footprint carries (capacity epic Stage A):
+ * `fixed` is today's behavior; `perTiles` scales with area — one prop per
+ * `tilesPerProp` tiles, floored, clamped to [min, max]. RULE (CAPACITY_PLAN
+ * §3.2): a MINIMUM-size room must derive exactly its pre-epic count, so
+ * existing saves and the balance harness behave identically at min size.
+ */
+export type PropDensity =
+  | { readonly kind: 'fixed'; readonly count: number }
+  | {
+      readonly kind: 'perTiles';
+      readonly tilesPerProp: number;
+      readonly min: number;
+      readonly max?: number;
+    };
+
 /** One auto-placed equipment item (M3 ruling: fixed layouts, no rearrange UI in V1). */
 export interface PropSpec {
   readonly id: PropId;
   /** Seats people stand on stay walkable; machines/desks block the tile. */
   readonly walkable: boolean;
-  readonly count: number;
+  readonly density: PropDensity;
 }
+
+/**
+ * How many patients a room serves CONCURRENTLY (capacity epic Stage A,
+ * owner-ratified roster): `single` = one reservation at a time (today);
+ * `perProp` = one slot per placed slot-prop (beds/machines/chairs) — the
+ * props ARE the capacity. `noun` labels the inspect-panel readout.
+ */
+export type CapacityRule =
+  | { readonly kind: 'single' }
+  | { readonly kind: 'perProp'; readonly prop: PropId; readonly noun: string };
 
 /**
  * The one table per prop (§3.1 rule 5 — one module per fact): placeholder-art
@@ -74,6 +100,8 @@ interface RoomDef {
   readonly staffedBy: readonly RoleId[];
   /** Placeholder floor tint (render palette lives with the data it colors). */
   readonly floorColor: number;
+  /** Concurrent-patient rule (Stage A) — see CapacityRule. */
+  readonly capacity: CapacityRule;
   /** Auto-placed equipment (M3): placed on build, reverted if it would strand tiles. */
   readonly props: readonly PropSpec[];
 }
@@ -89,7 +117,8 @@ export const ROOM_DEFS = {
     cost: 2_000,
     floorColor: 0xe3c9a8,
     staffedBy: ['receptionist'],
-    props: [{ id: 'desk', walkable: false, count: 1 }],
+    capacity: { kind: 'single' },
+    props: [{ id: 'desk', walkable: false, density: { kind: 'fixed', count: 1 } }],
   },
   waiting: {
     label: 'Waiting Room',
@@ -100,7 +129,16 @@ export const ROOM_DEFS = {
     cost: 1_000,
     floorColor: 0xc9d9b1,
     staffedBy: [],
-    props: [{ id: 'chair', walkable: true, count: WAITING_ROOM_BASE_CHAIRS }],
+    // Seats scale with the floor (Stage A): 1 chair per 1.5 tiles — 3×3 min
+    // (9 tiles) derives exactly the pre-epic 6, so old saves/harness match.
+    capacity: { kind: 'perProp', prop: 'chair', noun: 'Seats' },
+    props: [
+      {
+        id: 'chair',
+        walkable: true,
+        density: { kind: 'perTiles', tilesPerProp: 1.5, min: WAITING_ROOM_BASE_CHAIRS },
+      },
+    ],
   },
   triage: {
     label: 'Triage Bay',
@@ -111,7 +149,8 @@ export const ROOM_DEFS = {
     cost: 1_500,
     floorColor: 0xf0d1a0,
     staffedBy: ['nurse'],
-    props: [{ id: 'vitalsCart', walkable: false, count: 1 }],
+    capacity: { kind: 'single' },
+    props: [{ id: 'vitalsCart', walkable: false, density: { kind: 'fixed', count: 1 } }],
   },
   exam: {
     label: 'Exam Room',
@@ -122,7 +161,8 @@ export const ROOM_DEFS = {
     cost: 3_000,
     floorColor: 0xaacbe0,
     staffedBy: ['doctor', 'nurse'],
-    props: [{ id: 'bed', walkable: false, count: 1 }],
+    capacity: { kind: 'single' },
+    props: [{ id: 'bed', walkable: false, density: { kind: 'fixed', count: 1 } }],
   },
   xray: {
     label: 'X-Ray',
@@ -133,7 +173,8 @@ export const ROOM_DEFS = {
     cost: 8_000,
     floorColor: 0xb9b1c9,
     staffedBy: ['radTech'],
-    props: [{ id: 'xrayMachine', walkable: false, count: 1 }],
+    capacity: { kind: 'single' },
+    props: [{ id: 'xrayMachine', walkable: false, density: { kind: 'fixed', count: 1 } }],
   },
   resp: {
     label: 'Respiratory Therapy',
@@ -144,7 +185,8 @@ export const ROOM_DEFS = {
     cost: 5_000,
     floorColor: 0xa9d9c9,
     staffedBy: ['respTherapist'],
-    props: [{ id: 'nebulizer', walkable: false, count: 1 }],
+    capacity: { kind: 'single' },
+    props: [{ id: 'nebulizer', walkable: false, density: { kind: 'fixed', count: 1 } }],
   },
   er: {
     label: 'ER Bay',
@@ -155,7 +197,13 @@ export const ROOM_DEFS = {
     cost: 10_000,
     floorColor: 0xe0a9a9,
     staffedBy: ['doctor', 'nurse'],
-    props: [{ id: 'traumaBed', walkable: false, count: 1 }],
+    // The owner's ward scenario (Stage A): beds scale with the floor — 3×4
+    // min (12 tiles) derives exactly the pre-epic 1 bed; growth earns more,
+    // and each bed treats a patient CONCURRENTLY (with its own staff pair).
+    capacity: { kind: 'perProp', prop: 'traumaBed', noun: 'Beds' },
+    props: [
+      { id: 'traumaBed', walkable: false, density: { kind: 'perTiles', tilesPerProp: 12, min: 1 } },
+    ],
   },
   // ---- Expansion 1 (GDD §12): imaging suite + treatment departments.
   // Prop ordering note: multi-tile strips are listed FIRST in each props list
@@ -170,9 +218,10 @@ export const ROOM_DEFS = {
     cost: 4_000,
     floorColor: 0x9fc4d6,
     staffedBy: ['sonographer'],
+    capacity: { kind: 'single' },
     props: [
-      { id: 'bed', walkable: false, count: 1 },
-      { id: 'ultrasoundCart', walkable: false, count: 1 },
+      { id: 'bed', walkable: false, density: { kind: 'fixed', count: 1 } },
+      { id: 'ultrasoundCart', walkable: false, density: { kind: 'fixed', count: 1 } },
     ],
   },
   ct: {
@@ -184,9 +233,10 @@ export const ROOM_DEFS = {
     cost: 14_000,
     floorColor: 0xc4b5d6,
     staffedBy: ['radTech'],
+    capacity: { kind: 'single' },
     props: [
-      { id: 'ctGantry', walkable: false, count: 1 },
-      { id: 'desk', walkable: false, count: 1 },
+      { id: 'ctGantry', walkable: false, density: { kind: 'fixed', count: 1 } },
+      { id: 'desk', walkable: false, density: { kind: 'fixed', count: 1 } },
     ],
   },
   mri: {
@@ -198,10 +248,11 @@ export const ROOM_DEFS = {
     cost: 18_000,
     floorColor: 0xa8aed6,
     staffedBy: ['radTech'],
+    capacity: { kind: 'single' },
     props: [
-      { id: 'mriBore', walkable: false, count: 1 },
-      { id: 'desk', walkable: false, count: 1 },
-      { id: 'shieldScreen', walkable: false, count: 1 },
+      { id: 'mriBore', walkable: false, density: { kind: 'fixed', count: 1 } },
+      { id: 'desk', walkable: false, density: { kind: 'fixed', count: 1 } },
+      { id: 'shieldScreen', walkable: false, density: { kind: 'fixed', count: 1 } },
     ],
   },
   nucMed: {
@@ -213,9 +264,10 @@ export const ROOM_DEFS = {
     cost: 16_000,
     floorColor: 0xcfd9a0,
     staffedBy: ['radTech'],
+    capacity: { kind: 'single' },
     props: [
-      { id: 'gammaCamera', walkable: false, count: 1 },
-      { id: 'hotLabBench', walkable: false, count: 1 },
+      { id: 'gammaCamera', walkable: false, density: { kind: 'fixed', count: 1 } },
+      { id: 'hotLabBench', walkable: false, density: { kind: 'fixed', count: 1 } },
     ],
   },
   dialysis: {
@@ -227,9 +279,17 @@ export const ROOM_DEFS = {
     cost: 9_000,
     floorColor: 0xa0d9d0,
     staffedBy: ['nurse'],
+    // RATIFIED retro jump (CAPACITY_PLAN §8 Q2): both min-size machines now
+    // treat concurrently (1→2 at ship). Chairs mirror the machine density so
+    // every new machine gets its companion seat.
+    capacity: { kind: 'perProp', prop: 'dialysisMachine', noun: 'Machines' },
     props: [
-      { id: 'dialysisMachine', walkable: false, count: 2 },
-      { id: 'chair', walkable: true, count: 2 },
+      {
+        id: 'dialysisMachine',
+        walkable: false,
+        density: { kind: 'perTiles', tilesPerProp: 6, min: 2 },
+      },
+      { id: 'chair', walkable: true, density: { kind: 'perTiles', tilesPerProp: 6, min: 2 } },
     ],
   },
   surgery: {
@@ -241,10 +301,11 @@ export const ROOM_DEFS = {
     cost: 20_000,
     floorColor: 0x9fd0b0,
     staffedBy: ['surgeon', 'nurse'],
+    capacity: { kind: 'single' },
     props: [
-      { id: 'orTable', walkable: false, count: 1 },
-      { id: 'anesthesiaCart', walkable: false, count: 1 },
-      { id: 'scrubSink', walkable: false, count: 1 },
+      { id: 'orTable', walkable: false, density: { kind: 'fixed', count: 1 } },
+      { id: 'anesthesiaCart', walkable: false, density: { kind: 'fixed', count: 1 } },
+      { id: 'scrubSink', walkable: false, density: { kind: 'fixed', count: 1 } },
     ],
   },
   atrium: {
@@ -256,7 +317,8 @@ export const ROOM_DEFS = {
     cost: 4_000,
     floorColor: 0xd0e8d0,
     staffedBy: ['greeter'],
-    props: [{ id: 'helpDesk', walkable: false, count: 1 }],
+    capacity: { kind: 'single' },
+    props: [{ id: 'helpDesk', walkable: false, density: { kind: 'fixed', count: 1 } }],
   },
 } as const satisfies Record<string, RoomDef>;
 

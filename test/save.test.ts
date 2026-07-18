@@ -91,7 +91,10 @@ function pipelineRich(world: World): boolean {
     reservations.some((r) => r.kind === 'triage') &&
     reservations.some((r) => r.kind === 'treatment') &&
     reservations.some((r) => r.phase === 'gathering') &&
-    reservations.some((r) => r.phase === 'active')
+    reservations.some((r) => r.phase === 'active') &&
+    // Stage A: a CONCURRENT reservation (slot 1 of the dialysis room) must be
+    // live at the save tick, or the gate never exercises multi-slot state.
+    reservations.some((r) => r.slotIndex > 0)
   );
 }
 
@@ -134,6 +137,10 @@ function assertRichPremises(world: World): void {
     new Set(['gathering', 'active']),
   );
   expect(
+    reservations.some((r) => r.slotIndex > 0),
+    'a concurrent (nonzero-slot) reservation at the save tick (Stage A)',
+  ).toBe(true);
+  expect(
     [...world.checkInQueues.values()].some((q) => q.length > 0),
     'a populated check-in queue',
   ).toBe(true);
@@ -155,6 +162,7 @@ function bootScenario(): { world: World; events: EventBus } {
   setupNewGame(world);
   world.addStaffMember('nurse', 3, 150);
   world.addStaffMember('nurse', 3, 150);
+  world.addStaffMember('nurse', 3, 150); // third: keeps dialysis dual-booking likely
   world.addStaffMember('doctor', 3, 300);
   world.addStaffMember('doctor', 3, 300);
   queue.push({
@@ -162,6 +170,15 @@ function bootScenario(): { world: World; events: EventBus } {
     roomType: 'triage',
     rect: { col: 10, row: 30, cols: 2, rows: 2 },
     doorOutside: { col: 10, row: 32 },
+  });
+  // Dialysis (Stage A gate coverage): min size = TWO machines = capacity 2 —
+  // the enrichment loop must reach a tick with CONCURRENT reservations
+  // (a nonzero slotIndex) so the round-trip gate exercises multi-slot state.
+  queue.push({
+    type: 'buildRoom',
+    roomType: 'dialysis',
+    rect: { col: 28, row: 28, cols: 3, rows: 4 },
+    doorOutside: { col: 29, row: 32 },
   });
   // Exam far NORTH (same rect as the m3 determinism test): treated patients
   // trek ~25 corridor tiles, which is what makes wrong turns organic.
@@ -205,6 +222,8 @@ function bootScenario(): { world: World; events: EventBus } {
         queue.push({ type: 'debugSpawnPatient', condition: 'flu' });
         queue.push({ type: 'debugSpawnPatient', condition: 'flu' });
         queue.push({ type: 'debugSpawnPatient', condition: 'laceration' });
+        queue.push({ type: 'debugSpawnPatient', condition: 'kidneyFailure' });
+        queue.push({ type: 'debugSpawnPatient', condition: 'kidneyFailure' });
         world.applyCommands(queue);
       }
     }
@@ -239,7 +258,7 @@ function bootScenario(): { world: World; events: EventBus } {
 describe('save/load round-trip (THE acceptance gate, plan rule 4)', () => {
   it('save → load → run N ticks: identical event logs and identical final state', () => {
     const a = bootScenario(); // asserts every schema-corner premise at the save tick
-    expect(a.world.rooms.size).toBe(5); // reception, waiting, triage, exam, atrium
+    expect(a.world.rooms.size).toBe(6); // reception, waiting, triage, exam, atrium, dialysis
 
     const json = saveToString(a.world);
     const loadedEvents = new EventBus();
@@ -366,9 +385,10 @@ describe('load border (audit #8: garbage dies here)', () => {
     );
   });
 
-  it('refuses version 3 (one past SAVE_VERSION — the policy is 1..2, not >=1)', () => {
-    const v3 = { ...parsedSmallSave(), saveVersion: 3 };
-    const result = loadOf(v3);
+  it('refuses one past SAVE_VERSION (the policy is 1..SAVE_VERSION, not >=1)', () => {
+    // Version-relative (Stage A bumped to 3; a literal here broke on the bump).
+    const future = { ...parsedSmallSave(), saveVersion: SAVE_VERSION + 1 };
+    const result = loadOf(future);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason.toLowerCase()).toContain('version');
   });
@@ -450,6 +470,7 @@ describe('load border referential integrity (review MAJOR 1)', () => {
       roomId: save.rooms[0]!.id,
       staffIds: [424242], // dangling
       stepIndex: 0,
+      slotIndex: 0,
       phase: 'gathering',
       ticksRemaining: 33,
       patientWaitingSince: null,

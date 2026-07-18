@@ -5,6 +5,7 @@ import { TICKS_PER_DAY } from '../src/sim/clock';
 import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from '../src/sim/data/conditions';
 import { PROP_STYLE, ROOM_DEFS, ROOM_TYPES, type RoomType } from '../src/sim/data/rooms';
 import { rollCondition } from '../src/sim/systems/spawn';
+import { propTargetCount } from '../src/sim/formulas';
 import { rectTiles } from '../src/sim/types';
 import { World } from '../src/sim/world';
 
@@ -96,7 +97,7 @@ describe('new-room prop fit (GDD §12 equipment at minimum footprint)', () => {
         expect(
           placed.get(spec.id) ?? 0,
           `${type}: ${spec.id} tiles placed`,
-        ).toBe(spec.count * PROP_STYLE[spec.id].tiles);
+        ).toBe(propTargetCount(spec.density, rect) * PROP_STYLE[spec.id].tiles);
       }
 
       // Door landing stays free of props, and the interior keeps room for the
@@ -135,7 +136,9 @@ describe('new-room prop fit (GDD §12 equipment at minimum footprint)', () => {
       if (object !== null) placed.set(object, (placed.get(object) ?? 0) + 1);
     }
     for (const spec of ROOM_DEFS.ultrasound.props) {
-      expect(placed.get(spec.id) ?? 0, spec.id).toBe(spec.count * PROP_STYLE[spec.id].tiles);
+      expect(placed.get(spec.id) ?? 0, spec.id).toBe(
+        propTargetCount(spec.density, rect) * PROP_STYLE[spec.id].tiles,
+      );
     }
     const door = [...t.world.rooms.values()][0]!.door!;
     expect(t.world.tileAt(door.inside.col, door.inside.row)!.object).toBeNull();
