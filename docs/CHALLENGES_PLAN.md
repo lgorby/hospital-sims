@@ -11,10 +11,12 @@ Companion to `PERSISTENCE_PLAN.md` (persistence roadmap) and `TECH_PLAN.md`
 (architecture / SSOT §3.1). Where they disagree with this doc, they win until
 this doc is ratified.
 
-**Revision:** Draft v4 — v1→v3 incorporated adversarial review rounds 1 (4
-major, 5 minor, 3 nit) and 2 (2 new major, 4 minor, 2 nit); round 3 verified v3
-sign-off-ready. v4 folds in the ratified owner decisions (§10) — notably the
-automatic `RULES_HASH` (§2.1) replacing manual versioning. Round 1 independently
+**Revision:** Draft v5 — v1→v3 incorporated adversarial review rounds 1-3; v4
+folded in the ratified owner decisions (§10). v5 revises decision #2 after the
+**pre-implementation code-plan review** (`docs/CHALLENGES_IMPL_PLAN.md`): the
+rules-identity comparability notice is **deferred to Phase 3** (§2.1) — both the
+manual and auto-hash options were poor trades, and Phase 2's honor-system +
+co-versioned live deploy make the warning low-value. Round 1 independently
 verified the core determinism premise (the `src/sim/` tree is free of
 `Math.random`/`Date.now`/`performance.now`/`new Date` and of non-IEEE-safe float
 ops, so identical inputs yield identical streams cross-machine).
@@ -77,29 +79,27 @@ lint/test**, not just a Phase-3 aspiration — a future `formulas.ts` that adds
 `Math.pow` would silently break cross-machine comparability under an unchanged
 `RULES_VERSION`. Grep is clean today; the guard keeps it clean.
 
-### 2.1 Rules identity — OWNER RULING: automatic build-time sim-source hash
+### 2.1 Rules identity — the "may not be comparable" NOTICE is DEFERRED to Phase 3
 
-**OWNER RULING (2026-07-17): use an automatic `RULES_HASH`, not a manual
-version.** Directive was "the less the user needs to do, the better." A Vite
-build step hashes the contents of the entire **`src/sim/**` source tree** into a
-short `RULES_HASH`, injected as a build-time `define` — **zero ongoing
-maintenance**, and complete (any sim change, data OR logic, changes the hash;
-non-sim changes — render/UI/docs — do not). This supersedes the manual
-`RULES_VERSION` proposed below; wherever this doc says "`RULES_VERSION`", read
-"the automatic `RULES_HASH`."
+**OWNER RULING (2026-07-17, revised after the pre-implementation review): Phase 2
+ships NO comparability warning.** The rules-identity *gap* (input 3 above) is
+real, but the pre-impl review showed every Phase-2 mechanism for surfacing it is
+a poor trade: a manual `RULES_VERSION` is ongoing effort the owner explicitly
+wants to avoid, and an automatic `src/sim/**` hash is noisy (fires on cosmetic
+edits → the notice gets ignored) AND adds a Vite plugin + CRLF normalization.
+Since **Phase 2 is honor-system (§7) and the live auto-deploy keeps players
+co-versioned** (everyone on `hospital-sims.vercel.app` runs the same build; a
+built-in challenge always resolves from the current table), the warning's value
+is small. **Deferred to Phase 3**, where command-log replay makes comparability
+*verifiable* and the rules fingerprint gets a real home.
 
-- A **built-in** challenge always resolves from the *current* table, so it
-  carries the current build's hash — always comparable on the live deploy.
-- An **ad-hoc share URL** embeds the sharer's hash as `&r=<hash>` (§4); on open,
-  a mismatch vs the opener's build shows the non-blocking notice.
-- Tradeoff (accepted): a comment-only edit inside `src/sim/` changes the hash,
-  so the notice can fire when scores *are* comparable — benign, and it is NEVER
-  wrong in the unsafe direction (it never calls incomparable runs comparable).
-  This is strictly better than the manual scheme's signal-erosion risk because
-  no human ever forgets to bump it.
+Consequences for the Phase-2 design: `ChallengeSpec` carries **no** rules-hash
+field, ad-hoc URLs carry **no** `&r=` param, and there is no mismatch notice or
+`RULES_HASH` build plugin. **The one guard that STAYS is the float-op lint**
+(§2 invariant) — keeping `src/sim/` cross-machine-deterministic is a Phase-3
+prerequisite worth protecting now, at zero cost.
 
-The `RULES_HASH` note is derived, never saved into a Phase-1 save (like
-`auraRevision`). Options originally considered (superseded by the ruling):
+Options originally considered for a Phase-2 notice (all now deferred):
 - **(a) Manual `RULES_VERSION` integer**, bumped on ANY behavior-changing edit
   **anywhere in `src/sim/`**. Simple, honest about logic changes, one SSOT
   constant. Cost: discipline (same failure class as the "new World field → save
@@ -113,18 +113,7 @@ The `RULES_HASH` note is derived, never saved into a Phase-1 save (like
 - **(c) Hybrid**: data-hash + manual `SIM_LOGIC_VERSION`. Most precise, most
   moving parts.
 
-The ruling's automatic hash makes the manual-guard discussion moot: there is no
-number to forget, so no "did you bump it?" CI guard is needed. On a hash
-mismatch the game shows a **non-blocking notice** ("this challenge was set on a
-different game version — scores may not be directly comparable"), never a
-refusal. The one guard that DOES remain (unchanged) is the float-determinism
-lint (§2): the hash proves two builds' sim *source* matches, but only the lint
-keeps that source cross-machine-deterministic in the first place.
-
-*Implementation note for the pre-build review: confirm the Vite hash `define`
-covers exactly `src/sim/**` (not `render/`/`ui/`/`loop.ts`, which don't affect
-fresh-run determinism), is stable across OSes (normalize line endings before
-hashing — this repo is CRLF-on-Windows), and excludes pure test files.*
+(Deferred: none of these ship in Phase 2 — see the ruling above.)
 
 ---
 
@@ -151,10 +140,7 @@ interface ChallengeSpec {
   id: string | null;               // builtin id, or null for ad-hoc
   scenario: { kind: 'default'; seed: number }; // seed lives WITH the scenario
   goal: ChallengeGoal;             // §5
-  authoredHash: string | null;     // builtin → current build hash; url → the
-                                   // embedded &r= value, or null if absent.
-                                   // Compared to the live RULES_HASH for the
-                                   // non-blocking mismatch notice (§2.1).
+  // No rules-identity field in Phase 2 (§2.1 — comparability notice deferred).
 }
 ```
 
@@ -211,9 +197,7 @@ New precedence, all parsing in `src/sim/challenge.ts`:
      artifact can't produce a conflicting or different-looking-but-same run
      (round-2 nit).
    - `?seed=N&goal=<metric>:<day>` — ad-hoc: `seed` required, resolves to
-     `source:'url'`. The share UI appends `&r=<RULES_HASH>` (the sharer's build
-     fingerprint) so the opener can flag a version mismatch; a hand-typed URL
-     without `&r=` just resolves `authoredHash:null` (notice suppressed).
+     `source:'url'`. (No `&r=` rules-fingerprint param in Phase 2 — §2.1.)
    - **A malformed challenge (unknown id, bad `goal`, `goal` without `seed`,
      out-of-range seed) is a readable boot-failure card (`showBootFailure`),
      NEVER a fresh random roll.** This is the MAJOR-3 fix: presence of
@@ -403,8 +387,11 @@ The renderer/UI reads challenge state; it never owns it.
 1. **Scoring default = reputation, compare-raw** (leaderboard-style: highest
    reputation by the challenge's day wins). The `SCORE_METRICS` registry still
    supports cash / treated / died for other challenges; day is per-challenge.
-2. **Rules identity = automatic `RULES_HASH`** (§2.1 ruling — build-time hash of
-   `src/sim/**`, zero maintenance). Not manual versioning.
+2. **Rules identity = no Phase-2 warning** (§2.1 ruling, revised after the
+   pre-impl review). A comparability notice is DEFERRED to Phase 3 (verifiable
+   replay); Phase 2 is honor-system + co-versioned on the live deploy, and both
+   the manual and auto-hash options were poor trades. Only the float-op
+   determinism lint stays.
 3. **Debug commands in challenge mode = disabled** — every `debug*` is blocked at
    the CommandQueue boundary while a challenge is active (§7); a challenge run is
    provably debug-free.
@@ -421,8 +408,8 @@ challenge's day-N. None gate starting the build.
 
 ## 11. Explicitly OUT of Phase 2 (stays Phase 3)
 
-Save-file challenges (§3.1); command-log replay / verifiable results; any
-leaderboard or cross-device sync (needs a backend + database); `applyAt(tick)`
-deterministic command scheduling; real-time/lockstep play. Phase 2 ships
-*shareable, comparable, honor-system* **seed** challenges on the determinism we
-already have — nothing more.
+Save-file challenges (§3.1); the rules-identity comparability notice / fingerprint
+(§2.1); command-log replay / verifiable results; any leaderboard or cross-device
+sync (needs a backend + database); `applyAt(tick)` deterministic command
+scheduling; real-time/lockstep play. Phase 2 ships *shareable, honor-system*
+**seed** challenges on the determinism we already have — nothing more.
