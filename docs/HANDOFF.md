@@ -1,6 +1,13 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-18 (amenities epic STAGE 2 SHIPPED: EVS + messes + cleanliness, SAVE_VERSION 5)
+**Last updated:** 2026-07-18 (amenities Stage 2 SHIPPED, **PUSHED + DEPLOYED** — `43caea9` on `master`, CI green, production serving the new build)
+**OWNER DECISIONS PENDING (adopt-unless-vetoed, both review-recommended):**
+(1) the clean-day +2 cleanliness rep bonus requires ≥1 arrival that day (the
+wait-bonus "an empty hospital isn't fast" principle — ratified §4.2 didn't
+contemplate empty days); (2) idle EVS stand where released instead of
+wandering (matches all released staff; §4.4's "wander" overstated). Both are
+one-line reverts if vetoed (`cleanlinessRepDelta` in formulas.ts; no code
+for the second — it's the absence of a wander system).
 **State: M0–M4 + audit + save/load + V1 DoD + Expansion 1 + art pass + DEPLOY + Phase 2 (seed challenges) + HINTS + UI polish + build-UX + the FULL capacity & growth epic + Quit-to-Title + amenities **Stage 1** (needs/restroom/amenities, SAVE_VERSION 4) + amenities **Stage 2** (vomit/litter/accident messes, trashcan overflow, the facility JOB QUEUE — the new `job` StaffDuty kind — EVS Worker role, cleanliness patience + daily-rep channels, mess decals, SAVE_VERSION 5). Live at https://hospital-sims.vercel.app (git push to `master` auto-deploys). **439 tests, all gates green.** Stage 2 ran the full workflow: S2 plan pre-impl-reviewed (7 MAJOR folded — incl. the honest rng-blast-radius section: the evs role's CONSTRUCTOR candidates dominate, so the role landed WITH the re-pins) → freeze → 3 parallel tracks → 2 adversarial reviews (code/contract: 1 MAJOR through-wall clean, fixed via `world.canApproach` guarding the work-tile derivation; live-drive: COMMIT, 0 MAJOR, 12/12 checklist PASS — its 3 visual MINORs fixed: prop-tile decal spill, hover-hint honesty) → ALL findings fixed + regressions. NEXT: amenities **Stage 3 (failures + maintenance)** per `docs/AMENITIES_PLAN.md` §5 — room wear/broken, repair jobs on the Stage-2 machinery, piping bursts, Maintenance Tech, SAVE_VERSION 6. Then: patient click-highlight (small), capacity/contention hints (small). See Next.**
 
 ## What this project is
@@ -245,7 +252,7 @@ Both were hardened by independent adversarial reviews before any code was writte
 
 ## Gotchas
 
-- **Windows + PowerShell 5.1.** No `&&`/`||` chaining (use `if ($?) { }`). Use the Write/Edit tools for file content — a `Get-Content`/`Set-Content` round-trip once mangled UTF-8 `§` chars.
+- **Windows + PowerShell 5.1.** No `&&`/`||` chaining (use `if ($?) { }`). Use the Write/Edit tools for file content — a `Get-Content`/`Set-Content` round-trip once mangled UTF-8 `§` chars (it happened AGAIN in the Stage-1 session — BOM + `—`→`â€"`; reverted via git checkout). Long commit messages: write to a scratch file and `git commit -F <file>` — multi-line here-strings to `git commit -m` have mis-parsed and leaked message text as pathspecs.
 - `as const` balance tables produce literal types — widen explicitly where mutated (`cash: number = BALANCE...`).
 - The dev server may already be running in a background task; Vite HMR picks up edits.
 - Queue slot tiles clamp at obstacles and stack (documented); reception's door orientation matters for queue room (see `newGame.ts` comment).
