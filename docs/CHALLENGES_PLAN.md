@@ -280,6 +280,14 @@ whichever comes first:
 - `gameOver` before that → outcome `dnf` (did-not-finish); a target-based
   challenge is a **fail**, a compare-raw challenge records DNF (no number).
 
+**Tie-break (implementation ruling, post-commit review):** if the bankruptcy
+grace expires *exactly on the goal-day midnight tick*, **the bank forecloses
+first** — `checkBankruptcy` runs before `closeDay` in `world.tick()`, `dayEnded`
+for `goal.day` never fires, and the outcome is `dnf` with the bust day equal to
+`goal.day`. Deterministic (same for every player on the same seed+commands), and
+consistent with the game rule that a foreclosed hospital has no day-close.
+Pinned by a regression test.
+
 Both emit a single `challengeComplete` typed event carrying
 `{ spec, outcome, score|null, context }`. A challenge can never silently hang.
 

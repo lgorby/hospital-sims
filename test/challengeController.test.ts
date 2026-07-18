@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EventBus, type GameOverPayload } from '../src/events';
-import { TICKS_PER_DAY } from '../src/sim/clock';
+import { gameMinutesToTicks, TICKS_PER_DAY } from '../src/sim/clock';
+import { BALANCE } from '../src/sim/data/balance';
 import type { ChallengeSpec } from '../src/sim/data/challenges';
 import type { DayReport } from '../src/sim/dailyStats';
 import { setupNewGame } from '../src/sim/newGame';
@@ -169,14 +170,73 @@ describe('End-to-end reached run drives the coordinator (real World)', () => {
     expect(emitted).toHaveBeenCalledTimes(1);
     const payload = emitted.mock.calls[0]![0];
     expect(payload.outcome).toBe('reached');
-    // The score sources from the goal-day snapshot, which `closeDay` stamps
-    // AFTER applying the wait-close reputation bonus (§5, M4) — proven by
-    // equality with the report's reputation, not just "is a number".
     expect(typeof payload.score).toBe('number');
-    expect(payload.score).toBe(payload.context.report.reputation);
-    expect(payload.context.terminal.reputation).toBe(payload.context.report.reputation);
     // The card — not the daily report — owns the goal-day midnight.
     expect(card.opened).toHaveLength(1);
     expect(daily.opened).toHaveLength(0);
+  });
+
+  it('the reached score includes the day-close wait bonus (applied BEFORE the snapshot)', () => {
+    // Non-vacuous (post-commit review: the previous score===report.reputation
+    // assert was A===A by construction). Here the bonus is provably AWARDED and
+    // the score must equal the PRE-close reputation plus the bonus — which
+    // fails if closeDay ever snapshots before applying it.
+    const events = new EventBus();
+    const world = new World(events, 1337, true);
+    setupNewGame(world);
+    const controller = new ChallengeController(world, events, urlSpec(1));
+    const coordinator = new MidnightModalCoordinator(events);
+    const daily = new FakeDaily();
+    const card = new FakeCard();
+    coordinator.setDailyReport(daily as unknown as DailyReportModal);
+    coordinator.setChallenge(controller, card as unknown as ChallengeResultCard);
+    const emitted = vi.fn();
+    events.on('challengeComplete', emitted);
+
+    for (let i = 0; i < TICKS_PER_DAY - 1; i++) world.tick();
+    // Fabricate a fast-care day (fixture write): one first-treatment wait well
+    // under the bonus threshold, so closeDay MUST award the bonus.
+    world.today.waitCount = 1;
+    world.today.waitSumTicks = gameMinutesToTicks(30);
+    const preClose = world.reputation;
+    world.tick(); // midnight → closeDay → dayEnded → coordinator → controller
+
+    expect(emitted).toHaveBeenCalledTimes(1);
+    const payload = emitted.mock.calls[0]![0];
+    expect(payload.context.report.waitBonusAwarded).toBe(true);
+    expect(payload.score).toBe(preClose + BALANCE.reputation.dayCloseWaitBonus);
+  });
+
+  it('tie-break: a bust exactly ON the goal-day midnight is a DNF (bank forecloses first)', () => {
+    // Pinned ruling (CHALLENGES_PLAN §5): checkBankruptcy runs before closeDay,
+    // so when grace expires exactly at goal.day's midnight tick, dayEnded never
+    // fires and the outcome is dnf with the bust day === goal.day.
+    const events = new EventBus();
+    const world = new World(events, 1337, true);
+    setupNewGame(world);
+    const controller = new ChallengeController(world, events, urlSpec(2)); // goal day 2
+    const coordinator = new MidnightModalCoordinator(events);
+    const daily = new FakeDaily();
+    const card = new FakeCard();
+    coordinator.setDailyReport(daily as unknown as DailyReportModal);
+    coordinator.setChallenge(controller, card as unknown as ChallengeResultCard);
+    events.on('gameOver', (p) => controller.onGameOver(p)); // as GameOverScreen does
+    const emitted = vi.fn();
+    events.on('challengeComplete', emitted);
+
+    for (let i = 0; i < TICKS_PER_DAY - 1; i++) world.tick();
+    world.cash = -10_000_000; // fixture write: deep below the threshold
+    // The next tick is day-1 midnight: bankruptSinceTick lands ON it, so grace
+    // (exactly one day) expires ON the day-2 midnight — the goal-day close.
+    for (let i = 0; i < TICKS_PER_DAY + 1 && !world.gameOver; i++) world.tick();
+
+    expect(world.gameOver).toBe(true);
+    expect(world.clock.tick).toBe(2 * TICKS_PER_DAY);
+    expect(emitted).toHaveBeenCalledTimes(1);
+    const payload = emitted.mock.calls[0]![0];
+    expect(payload.outcome).toBe('dnf');
+    expect(payload.context.day).toBe(2); // === goal.day (the documented tie-break)
+    expect(card.opened).toHaveLength(0); // the reached card never opened
+    expect(daily.opened.map((r) => r.day)).toEqual([1]); // only day 1 closed
   });
 });

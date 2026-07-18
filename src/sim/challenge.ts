@@ -59,13 +59,14 @@ function parseGoalExpr(raw: string | null): ChallengeGoal | null {
 /** Resolve a built-in def to a runnable spec (canonicalizing its seed). */
 function resolveBuiltin(id: ChallengeId): ChallengeSpec {
   const def = CHALLENGE_DEFS[id];
-  // Built-in seeds are authored canonical (a test enforces it); the `% SEED_MAX`
-  // is a defensive clamp so the seed shown/run always matches what the URL
-  // would round-trip, even if a future def were authored out of range.
+  // Built-in seeds are authored canonical — enforced by the roster test in
+  // test/challenge.test.ts (integer, [0, SEED_MAX)). No runtime clamp: a JS
+  // `%` would pass negatives/floats through anyway (review nit), so the test
+  // is the real guard.
   return {
     source: 'builtin',
     id,
-    scenario: { kind: 'default', seed: def.seed % SEED_MAX },
+    scenario: { kind: 'default', seed: def.seed },
     goal: def.goal,
   };
 }
@@ -134,6 +135,20 @@ export function resolveBoot(params: URLSearchParams): BootAction {
   }
 
   return { kind: 'title' };
+}
+
+/**
+ * Scrub every boot param that would override a fresh `?seed=` run. The grammar
+ * SSOT companion to `resolveBoot`: without this, "New Game" from a challenge
+ * game-over would keep `challenge`/`goal` in the URL and re-boot the SAME
+ * challenge (a builtin ignores stray seeds — the table wins), not a fresh
+ * sandbox run (post-commit review MAJOR). Keep in sync with the params
+ * `resolveBoot` reads.
+ */
+export function clearBootParams(params: URLSearchParams): void {
+  params.delete('load');
+  params.delete('challenge');
+  params.delete('goal');
 }
 
 /**

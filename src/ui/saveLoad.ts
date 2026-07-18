@@ -352,6 +352,10 @@ export class SaveLoadModal {
  * already isolates handlers, and this wraps anyway.
  */
 export function installAutosave(events: EventBus, world: World): void {
+  // A challenge run never autosaves (post-commit review): it would clobber the
+  // player's sandbox auto slot with a world that reloads as a spec-less normal
+  // run (challengeMode is deliberately unsaved). Manual saves stay available.
+  if (world.challengeMode) return;
   events.on('dayEnded', () => {
     if (world.gameOver) return;
     try {

@@ -19,7 +19,7 @@ import { isSlotName, readSlotRaw, slotLabel } from './ui/saveStore';
 import { ThoughtLog } from './ui/thoughtLog';
 import { TitleScreen } from './ui/title';
 import { Toasts } from './ui/toasts';
-import { resolveBoot, SEED_MAX } from './sim/challenge';
+import { clearBootParams, resolveBoot, SEED_MAX } from './sim/challenge';
 import type { ChallengeSpec } from './sim/data/challenges';
 import { setupNewGame } from './sim/newGame';
 import { loadWorld } from './sim/save';
@@ -29,7 +29,10 @@ import { World } from './sim/world';
  *  way to boot a fresh deterministic world (and makes runs shareable). */
 function startNewGame(): void {
   const url = new URL(window.location.href);
-  url.searchParams.delete('load'); // a fresh run must not re-load a save
+  // A fresh run must not re-load a save NOR re-enter a challenge — the scrub
+  // list is grammar SSOT in challenge.ts (post-commit review MAJOR: leaving
+  // `challenge`/`goal` here re-booted the same challenge from its game-over).
+  clearBootParams(url.searchParams);
   // Math.random is fine HERE (bootstrap layer): the seed is the boundary —
   // everything inside the sim draws from world.rng only. SEED_MAX is the one
   // seed-bound SSOT (challenge.ts) — the roll and challenge seeds agree.

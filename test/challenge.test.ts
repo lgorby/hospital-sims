@@ -4,6 +4,7 @@ import { EventBus } from '../src/events';
 import { TICKS_PER_DAY } from '../src/sim/clock';
 import {
   challengeToQuery,
+  clearBootParams,
   resolveBoot,
   SEED_MAX,
   type BootAction,
@@ -130,6 +131,24 @@ describe('challenge seed canonicalization ([0, 2^31))', () => {
       expect(Number.isInteger(seed)).toBe(true);
       expect(seed).toBeGreaterThanOrEqual(0);
       expect(seed).toBeLessThan(SEED_MAX);
+    }
+  });
+});
+
+describe('clearBootParams — "New Game" escapes a challenge (post-commit MAJOR)', () => {
+  it('scrubs challenge/goal/load so a fresh roll resolves to a bare seed', () => {
+    // Without the scrub, New Game from a challenge game-over kept ?challenge=
+    // in the URL and re-booted the SAME challenge (the table wins over a stray
+    // seed) — the startNewGame flow is scrub + set seed, mirrored here.
+    for (const query of [
+      'challenge=rep-rush',
+      'seed=42&goal=cash:3',
+      'load=1&challenge=rep-rush&goal=cash:3',
+    ]) {
+      const params = new URLSearchParams(query);
+      clearBootParams(params);
+      params.set('seed', '12345');
+      expect(resolveBoot(params)).toEqual({ kind: 'seed', seed: 12345 });
     }
   });
 });

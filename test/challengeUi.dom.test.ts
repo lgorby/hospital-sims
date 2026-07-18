@@ -13,6 +13,8 @@ import { appendChallengeResult, ChallengeResultCard } from '../src/ui/challengeR
 import { DailyReportModal } from '../src/ui/dailyReport';
 import { GameOverScreen } from '../src/ui/gameOver';
 import { MidnightModalCoordinator } from '../src/ui/midnightModal';
+import { installAutosave } from '../src/ui/saveLoad';
+import { readSlotRaw } from '../src/ui/saveStore';
 
 /**
  * Phase 2 — Track 2 DOM wiring (happy-dom). Covers the paths the node-only
@@ -120,6 +122,29 @@ describe('appendChallengeResult renders target pass/fail', () => {
     const card = document.createElement('div');
     appendChallengeResult(card, targetResult(500));
     expect(card.textContent).toContain('Missed ✗');
+  });
+});
+
+describe('autosave is disabled in challenge mode (post-commit review)', () => {
+  it('a challenge midnight never writes the auto slot; a sandbox midnight does', () => {
+    localStorage.clear();
+    // Challenge run: installAutosave must be inert (it would clobber the
+    // player's sandbox autosave with a world that reloads spec-less).
+    const challengeEvents = new EventBus();
+    const challengeWorld = new World(challengeEvents, 1337, true);
+    setupNewGame(challengeWorld);
+    installAutosave(challengeEvents, challengeWorld);
+    challengeEvents.emit('dayEnded', makeReport(1));
+    expect(readSlotRaw('auto')).toBeNull();
+
+    // Sanity (guard is load-bearing, not vacuous): a normal run DOES autosave.
+    const events = new EventBus();
+    const world = new World(events, 1337);
+    setupNewGame(world);
+    installAutosave(events, world);
+    events.emit('dayEnded', makeReport(1));
+    expect(readSlotRaw('auto')).not.toBeNull();
+    localStorage.clear();
   });
 });
 
