@@ -1,5 +1,6 @@
 import { ROOM_DEFS, type RoomType } from './data/rooms';
 import { BALANCE } from './data/balance';
+import { priceOf } from './formulas';
 import type { Door } from './entities/room';
 import {
   ORTHOGONAL_STEPS,
@@ -50,7 +51,9 @@ export function validateRoomRect(
     const def = ROOM_DEFS[type];
     return fail(`${def.label} needs at least ${def.minCols}×${def.minRows}`);
   }
-  if (!free && world.cash < ROOM_DEFS[type].cost) return fail('Not enough cash');
+  // Size-based economy (Stage 0): the check prices the ACTUAL rect, so the
+  // ghost turns red the moment a drag grows past what the player can afford.
+  if (!free && world.cash < priceOf(type, rect)) return fail('Not enough cash');
 
   const entrance = BALANCE.map.entrance;
   for (const tile of rectTiles(rect)) {

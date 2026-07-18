@@ -23,6 +23,8 @@ import {
   candidateSalary,
   checkInCapacity,
   dischargeReputationGain,
+  priceOf,
+  roomQuality,
   sellbackAmount,
 } from './formulas';
 import { findPath, type PathGrid } from './path/astar';
@@ -495,15 +497,13 @@ export class World implements PathGrid {
       return;
     }
 
-    const def = ROOM_DEFS[type];
     const id = this.takeId();
     const room: Room = {
       id,
       type,
       rect,
       door,
-      quality:
-        (rect.cols * rect.rows - def.minCols * def.minRows) * BALANCE.rooms.qualityPerExtraTile,
+      quality: roomQuality(type, rect),
     };
     this.rooms.set(id, room);
     for (const tile of rectTiles(rect)) {
@@ -511,8 +511,12 @@ export class World implements PathGrid {
     }
     this.placeProps(room);
     if (!free) {
-      this.cash -= def.cost;
-      this.today.construction += def.cost;
+      // Size-based economy (Stage 0, CAPACITY_PLAN §4.1): the price grows
+      // per tile beyond the minimum footprint — a min-size stamp costs
+      // exactly the table cost.
+      const price = priceOf(type, rect);
+      this.cash -= price;
+      this.today.construction += price;
       this.events.emit('cashChanged', { cash: this.cash });
     }
     this.events.emit('roomBuilt', { roomId: id });
@@ -644,7 +648,7 @@ export class World implements PathGrid {
       }
     }
     // SSOT (audit #2): the sim's payout and the UI's button label share this.
-    const sellback = sellbackAmount(room.type);
+    const sellback = sellbackAmount(room.type, room.rect); // rect-aware (Stage 0)
     this.cash += sellback;
     this.today.sellIncome += sellback;
     this.events.emit('cashChanged', { cash: this.cash });

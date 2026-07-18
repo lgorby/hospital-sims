@@ -12,6 +12,8 @@ import { auraCoversTile, moodOf } from '../sim/formulas';
 import { PATIENT_TILES_PER_TICK, STAFF_TILES_PER_TICK } from '../sim/systems/movement';
 import { samePoint, type GridPoint, type Rect } from '../sim/types';
 import type { Walker, World } from '../sim/world';
+import { priceOf } from '../sim/formulas';
+import { HintLine } from './hintLine';
 import { depthKey, TILE_H, TILE_W, toScreen, toTile, type TilePoint } from './iso';
 import { growRect, minRectAt } from './placement';
 import {
@@ -87,6 +89,9 @@ export class WorldRenderer {
   private ghost = new Graphics();
   /** drawGhost input signature — rebuild only on change (see drawGhost). */
   private lastGhostKey = '';
+  /** Arbitrates the shared hint line: instructions / errors / live price
+   *  (Stage 0 review MAJOR — the price must not clobber a rejection reason). */
+  private hintLine = new HintLine((text) => this.onHint?.(text));
   private highlight!: Sprite;
   private textures!: TileTextures;
   private markers = new Map<string, Sprite>();
@@ -186,14 +191,16 @@ export class WorldRenderer {
     this.sellMode = false;
     if (mode.kind === 'build') {
       this.build = { type: mode.type, phase: 'drag', anchor: null, rect: null };
-      this.onHint?.(`Click to place the ${ROOM_DEFS[mode.type].label} — hold and drag to grow it`);
+      this.hintLine.instruction(
+        `Click to place the ${ROOM_DEFS[mode.type].label} — hold and drag to grow it`,
+      );
     } else if (mode.kind === 'sell') {
       this.sellMode = true;
-      this.onHint?.(
+      this.hintLine.instruction(
         `Click a room to sell it (${BALANCE.economy.roomSellbackRatio * 100}% refund)`,
       );
     } else {
-      this.onHint?.('');
+      this.hintLine.instruction('');
     }
     this.onModeChanged?.(this.mode);
   }
@@ -537,12 +544,12 @@ export class WorldRenderer {
       } else if (this.build.rect) {
         const door = doorFromOutsideTile(this.build.rect, tile);
         if (!door) {
-          this.onHint?.('Click a corridor tile touching the room wall');
+          this.hintLine.error('Click a corridor tile touching the room wall');
           return;
         }
         const check = validateRoomBuild(this.world, this.build.type, this.build.rect, door);
         if (!check.ok) {
-          this.onHint?.(check.reason);
+          this.hintLine.error(check.reason);
           return;
         }
         this.commands.push({
@@ -572,7 +579,9 @@ export class WorldRenderer {
     const rect = this.build.rect;
     const check = validateRoomRect(this.world, this.build.type, rect);
     if (!check.ok) {
-      this.onHint?.(check.reason);
+      // error(): the reason must survive the ghost's immediate re-seed +
+      // re-price next frame (Stage 0 review MAJOR).
+      this.hintLine.error(check.reason);
       this.build.anchor = null;
       this.build.rect = null;
       return;
@@ -588,7 +597,7 @@ export class WorldRenderer {
     } else {
       this.build.phase = 'door';
       this.build.anchor = null;
-      this.onHint?.('Click a corridor tile beside the room to place the door');
+      this.hintLine.instruction('Click a corridor tile beside the room to place the door');
     }
   }
 
@@ -801,6 +810,21 @@ export class WorldRenderer {
     // old flow anchored a 1×1 invalid red rect, which read as broken.
     if (this.build?.phase === 'drag' && !this.build.anchor) {
       this.build.rect = this.hoveredTile ? minRectAt(this.build.type, this.hoveredTile) : null;
+    }
+    // Live price readout (Stage 0, CAPACITY_PLAN §4.1): size costs money, so
+    // the hint line tracks the ghost — "Exam Room 4×3 — $4,000 · click to
+    // place, drag to grow". Emitted only when the string changes (per tile
+    // crossed, not per frame).
+    if (this.build?.phase === 'drag' && this.build.rect) {
+      const rect = this.build.rect;
+      const price = priceOf(this.build.type, rect);
+      this.hintLine.price(
+        `${ROOM_DEFS[this.build.type].label} ${rect.cols}×${rect.rows} — ` +
+          `$${price.toLocaleString('en-US')} · click to place, drag to grow`,
+        // Geometry key incl. POSITION — the text repeats across tiles at the
+        // same size, and an error hold must release when the ghost moves.
+        `${rect.col},${rect.row},${rect.cols},${rect.rows}`,
+      );
     }
 
     this.updateActors(alpha);

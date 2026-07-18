@@ -103,6 +103,8 @@ export class BuildMenu {
 
   private refreshAffordability(): void {
     for (const [type, span] of this.costSpans) {
+      // Min-size price on purpose (see the catalog label note above); the
+      // sized check happens in validateRoomRect against the live ghost.
       span.classList.toggle('unaffordable', ROOM_DEFS[type].cost > this.world.cash);
     }
   }
@@ -147,6 +149,9 @@ export class BuildMenu {
       }
       const cost = document.createElement('span');
       cost.className = 'room-cost';
+      // INTENTIONALLY the MIN-size price (CAPACITY_PLAN §6): `def.cost ===
+      // priceOf(type, minRect)` (pinned by test/pricing.test.ts); the live
+      // grown price shows in the placement hint line, not the catalog.
       cost.textContent = `$${def.cost.toLocaleString()}`;
       this.costSpans.set(type, cost);
       button.append(size, cost);

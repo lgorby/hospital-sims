@@ -130,9 +130,54 @@ export function candidateSalary(baseSalary: number, skill: number): number {
   return Math.round(baseSalary * (1 + (skill - baseline) * BALANCE.hiring.salaryPerSkillStep));
 }
 
-/** GDD §5 sell-back refund (SSOT audit #2): the sim's payout AND the UI's button label. */
-export function sellbackAmount(roomType: RoomType): number {
-  return Math.floor(ROOM_DEFS[roomType].cost * BALANCE.economy.roomSellbackRatio);
+/** Area of a room's minimum footprint — the denominator of the per-tile rate. */
+function minArea(roomType: RoomType): number {
+  return ROOM_DEFS[roomType].minCols * ROOM_DEFS[roomType].minRows;
+}
+
+/**
+ * Capacity epic Stage 0 (CAPACITY_PLAN §4.1, owner ruling "size affects
+ * cost"): the per-tile price of growing a room beyond its minimum footprint.
+ * Derived from the table (`ceil(cost / minArea)`) — zero new balance numbers.
+ */
+export function perTileRate(roomType: RoomType): number {
+  return Math.ceil(ROOM_DEFS[roomType].cost / minArea(roomType));
+}
+
+/**
+ * THE room price (CAPACITY_PLAN §4.1): base cost + per-tile rate on every
+ * tile beyond the minimum footprint. One formula prices a NEW build and (in
+ * Stage B) an EXPANSION — no arbitrage between "build big" and "grow later".
+ * A minimum-size rect (either orientation — the areas are equal) prices at
+ * exactly the table cost. The max(0, …) is defensive; validation rejects
+ * sub-minimum rects before money moves.
+ */
+export function priceOf(roomType: RoomType, rect: Rect): number {
+  const extraTiles = Math.max(0, rect.cols * rect.rows - minArea(roomType));
+  return ROOM_DEFS[roomType].cost + perTileRate(roomType) * extraTiles;
+}
+
+/**
+ * GDD §5 sell-back refund (SSOT audit #2): the sim's payout AND the UI's
+ * button label. Rect-aware since Stage 0 (CAPACITY_PLAN §4.1): the refund
+ * derives from what the SAME rect would cost today — no amount-paid
+ * bookkeeping. Known, accepted quirk: rooms built oversized BEFORE the
+ * size-based economy refund more than their flat price (one-time, bounded).
+ */
+export function sellbackAmount(roomType: RoomType, rect: Rect): number {
+  return Math.floor(priceOf(roomType, rect) * BALANCE.economy.roomSellbackRatio);
+}
+
+/**
+ * Room quality from footprint (GDD §5): every tile beyond the minimum adds
+ * quality. Moved out of `buildRoom` (design-review NIT) so Stage B's
+ * expansion recompute calls the same derivation.
+ */
+export function roomQuality(roomType: RoomType, rect: Rect): number {
+  // Clamped like priceOf (sub-min rects are rejected before rooms exist;
+  // the exported Stage-B API stays symmetric and never returns negatives).
+  const extraTiles = Math.max(0, rect.cols * rect.rows - minArea(roomType));
+  return extraTiles * BALANCE.rooms.qualityPerExtraTile;
 }
 
 /** Flow rule 1 check-in capacity (SSOT audit #5): the desk slot + the queue tiles behind it. */

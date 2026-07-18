@@ -199,8 +199,9 @@ export class InspectPanel {
       (runBy ? this.line('Run by', runBy) : '') +
       (hasPost ? this.line('Posted', posted.map((s) => s.name.short).join(', ') || '—') : '') +
       this.line('Treating', occupant);
-    // sellbackAmount is the sim's payout AND this label (SSOT audit #2).
-    const refund = sellbackAmount(room.type);
+    // sellbackAmount is the sim's payout AND this label (SSOT audit #2);
+    // rect-aware since Stage 0 (an oversized room refunds its sized price).
+    const refund = sellbackAmount(room.type, room.rect);
     this.actionButton.textContent = sellCheck.ok
       ? `Sell (+$${refund.toLocaleString()})`
       : `Sell — ${sellCheck.reason}`;
