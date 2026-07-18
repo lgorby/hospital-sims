@@ -111,7 +111,7 @@ async function bootstrap(boot: Boot): Promise<void> {
   // GDD §9 ruling: bottom-bar panels are mutually exclusive dropdowns — the
   // coordinator is shared so no panel needs to know about the others.
   const bottomBar = new BottomBarDropdowns();
-  const buildMenu = new BuildMenu(renderer, commands, events, bottomBar, world.challengeMode);
+  const buildMenu = new BuildMenu(renderer, commands, events, bottomBar, world, world.challengeMode);
   buildMenu.mount(uiRoot);
   const jump = (col: number, row: number): void => renderer.jumpTo(col, row);
   new Toasts(events, world, jump).mount(uiRoot);

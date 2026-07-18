@@ -13,6 +13,7 @@ import { PATIENT_TILES_PER_TICK, STAFF_TILES_PER_TICK } from '../sim/systems/mov
 import { samePoint, type GridPoint, type Rect } from '../sim/types';
 import type { Walker, World } from '../sim/world';
 import { depthKey, TILE_H, TILE_W, toScreen, toTile, type TilePoint } from './iso';
+import { growRect, minRectAt } from './placement';
 import {
   CHARACTER_FRAMES,
   characterKey,
@@ -84,6 +85,8 @@ export class WorldRenderer {
   private roomFloorLayer = new Container();
   private sortedLayer = new Container();
   private ghost = new Graphics();
+  /** drawGhost input signature — rebuild only on change (see drawGhost). */
+  private lastGhostKey = '';
   private highlight!: Sprite;
   private textures!: TileTextures;
   private markers = new Map<string, Sprite>();
@@ -183,7 +186,7 @@ export class WorldRenderer {
     this.sellMode = false;
     if (mode.kind === 'build') {
       this.build = { type: mode.type, phase: 'drag', anchor: null, rect: null };
-      this.onHint?.(`Drag to lay out the ${ROOM_DEFS[mode.type].label}`);
+      this.onHint?.(`Click to place the ${ROOM_DEFS[mode.type].label} — hold and drag to grow it`);
     } else if (mode.kind === 'sell') {
       this.sellMode = true;
       this.onHint?.(
@@ -521,13 +524,16 @@ export class WorldRenderer {
     return target instanceof Element && target.closest('[data-ui]') !== null;
   }
 
+
   // ------------------------------------------------------------------- input
 
   private handleLeftClick(tile: TilePoint): void {
     if (this.build) {
       if (this.build.phase === 'drag') {
+        // Anchor at the default size (hybrid placement): a plain click stamps
+        // this rect; dragging grows it from here (never below a valid min).
         this.build.anchor = tile;
-        this.build.rect = { col: tile.col, row: tile.row, cols: 1, rows: 1 };
+        this.build.rect = minRectAt(this.build.type, tile);
       } else if (this.build.rect) {
         const door = doorFromOutsideTile(this.build.rect, tile);
         if (!door) {
@@ -603,13 +609,10 @@ export class WorldRenderer {
       if (this.build?.phase === 'drag' && this.build.anchor) {
         const tile = this.tileFromClient(e.clientX, e.clientY);
         if (tile) {
-          const a = this.build.anchor;
-          this.build.rect = {
-            col: Math.min(a.col, tile.col),
-            row: Math.min(a.row, tile.row),
-            cols: Math.abs(tile.col - a.col) + 1,
-            rows: Math.abs(tile.row - a.row) + 1,
-          };
+          // Grow from the anchor toward the cursor, clamped to a VALID minimum
+          // in either orientation (placement.ts — orientation follows the
+          // drag, so rotated footprints the sim accepts stay reachable).
+          this.build.rect = growRect(this.build.type, this.build.anchor, tile);
         }
       }
     });
@@ -704,9 +707,23 @@ export class WorldRenderer {
   // -------------------------------------------------------------------- draw
 
   private drawGhost(): void {
+    // Since hybrid placement the rect exists the whole time a tool is armed
+    // (minutes, not just mid-drag) — rebuild the Graphics and re-run the
+    // validators only when the picture's inputs change (build-UX review: the
+    // draw() hot path must not gain per-frame work; mirrors lastOverlayKey).
+    // The sim tick IS an input: validity reads live actors/cash, which change
+    // per tick — so the color stays honest at ≤10 revalidations/s, not 60fps.
+    const rect = this.build?.rect ?? null;
+    const key = !this.build
+      ? ''
+      : `${this.build.type}:${this.build.phase}:${this.world.clock.tick}:` +
+        `${rect ? `${rect.col},${rect.row},${rect.cols},${rect.rows}` : 'none'}:` +
+        `${this.build.phase === 'door' && this.hoveredTile ? `${this.hoveredTile.col},${this.hoveredTile.row}` : '-'}`;
+    if (key === this.lastGhostKey) return;
+    this.lastGhostKey = key;
+
     this.ghost.clear();
     if (!this.build) return;
-    const rect = this.build.rect;
     if (!rect) return;
 
     const rectValid = validateRoomRect(this.world, this.build.type, rect).ok;
@@ -778,6 +795,14 @@ export class WorldRenderer {
       this.app.canvas.style.cursor = cursor;
     }
 
+    // Hybrid placement (owner ruling 2026-07-18): before any drag anchors, the
+    // ghost previews the room at its DEFAULT (minimum) size under the cursor —
+    // a click stamps it; holding and dragging grows it (never below min). The
+    // old flow anchored a 1×1 invalid red rect, which read as broken.
+    if (this.build?.phase === 'drag' && !this.build.anchor) {
+      this.build.rect = this.hoveredTile ? minRectAt(this.build.type, this.hoveredTile) : null;
+    }
+
     this.updateActors(alpha);
     this.drawGhost();
     this.drawOverlay();
@@ -835,34 +860,27 @@ export class WorldRenderer {
     // very frame rebuilds instead of showing one stale frame.
     this.world.refreshAuras();
 
-    // Ghost radius: potential coverage of the pending atrium rect — or, before
-    // any drag has anchored one (GDD §9 "while placing"), of a MIN-SIZE atrium
-    // footprint anchored at the hovered tile, so arming the tool previews
-    // reach immediately. WHICH atrium is selected is deliberately not in the
-    // key — the overlay draws coverage for ALL atriums, so the picture only
-    // depends on the aura grid (auraRevision) and the preview geometry.
+    // Ghost radius: potential coverage of the pending atrium rect (GDD §9
+    // "while placing"). Since the hybrid-placement pass, `build.rect` is
+    // ALWAYS set while the tool is armed and the pointer is on the map — the
+    // hover preview IS a min-size rect at the cursor — so the old separate
+    // hover fallback leg is gone. WHICH atrium is selected is deliberately not
+    // in the key — the overlay draws coverage for ALL atriums, so the picture
+    // only depends on the aura grid (auraRevision) and the preview geometry.
     const atriumBuild = this.build?.type === 'atrium' ? this.build : null;
-    const ghostRect = atriumBuild?.rect ?? null;
-    const hoverRect =
-      atriumBuild && !ghostRect && this.hoveredTile
-        ? {
-            col: this.hoveredTile.col,
-            row: this.hoveredTile.row,
-            cols: ROOM_DEFS.atrium.minCols,
-            rows: ROOM_DEFS.atrium.minRows,
-          }
-        : null;
-    const previewRect = ghostRect ?? hoverRect;
-    // The hover leg makes the key pointer-dependent ONLY in the
-    // tool-armed-but-not-dragging state (and even then it moves per tile
-    // crossed, not per frame); every other state's key is pointer-independent,
-    // so the no-per-frame-rebuild guarantee holds outside placement.
+    const previewRect = atriumBuild?.rect ?? null;
+    /** Anchored = the player is committing a drag; pre-anchor hover is dimmed. */
+    const anchored = atriumBuild?.anchor != null;
+    // The preview leg makes the key pointer-dependent ONLY while the atrium
+    // tool is armed (and even then it moves per tile crossed, not per frame);
+    // every other state's key is pointer-independent, so the
+    // no-per-frame-rebuild guarantee holds outside placement.
     let key = `aura:${this.world.auraRevision}`;
-    if (ghostRect) {
-      key += `:${ghostRect.col},${ghostRect.row},${ghostRect.cols},${ghostRect.rows}`;
-    } else if (atriumBuild) {
-      key += `:hover:${hoverRect ? `${hoverRect.col},${hoverRect.row}` : 'none'}`;
+    if (previewRect) {
+      key += `:${anchored ? 'drag' : 'hover'}:${previewRect.col},${previewRect.row},${previewRect.cols},${previewRect.rows}`;
     }
+    // No preview (pointer off-map/over UI) draws the same picture as the
+    // plain aura state, so the base key is correct — no extra rebuild leg.
     if (key === this.lastOverlayKey) return;
     this.lastOverlayKey = key;
 
@@ -880,7 +898,7 @@ export class WorldRenderer {
           // can never drift from the live coverage refreshAuras computes.
           // Anchored-drag ghost keeps its wash; the pre-anchor hover preview
           // is dimmed (same convention as the unstaffed comfort tint).
-          this.tintTile(col, row, 0xffe066, ghostRect ? 0.18 : 0.12);
+          this.tintTile(col, row, 0xffe066, anchored ? 0.18 : 0.12);
         }
       }
     }

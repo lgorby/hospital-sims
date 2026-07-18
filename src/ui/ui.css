@@ -183,6 +183,12 @@ body {
   font-size: 11px;
 }
 
+/* Affordability tint (owner ruling): red price when cost > cash — the entry
+   stays clickable; the sim's placement validation is the hard gate. */
+.dropdown-panel .room-cost.unaffordable {
+  color: #e08585;
+}
+
 #hint {
   position: fixed;
   bottom: 52px;

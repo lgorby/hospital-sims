@@ -2,6 +2,7 @@ import type { CommandQueue } from '../commands';
 import type { EventBus } from '../events';
 import { ROLE_DEFS } from '../sim/data/roles';
 import { ROOM_DEFS, ROOM_TYPES, type RoomCategory, type RoomType } from '../sim/data/rooms';
+import type { World } from '../sim/world';
 import type { UiMode, WorldRenderer } from '../render/renderer';
 import type { BottomBarDropdowns } from './bottomBar';
 
@@ -32,6 +33,8 @@ const CATEGORIES = Object.keys(CATEGORY_LABELS) as RoomCategory[];
 export class BuildMenu {
   private roomButtons = new Map<RoomType, HTMLButtonElement>();
   private categoryButtons = new Map<RoomCategory, HTMLButtonElement>();
+  /** Price spans, re-tinted on cashChanged (RCT-style affordability signal). */
+  private costSpans = new Map<RoomType, HTMLElement>();
   private sellButton!: HTMLButtonElement;
   private hintEl!: HTMLElement;
   /** The hire panel registers this button with the coordinator. */
@@ -42,6 +45,9 @@ export class BuildMenu {
     private commands: CommandQueue,
     private events: EventBus,
     private bottomBar: BottomBarDropdowns,
+    /** Read-only: affordability tinting (owner ruling — red price, still
+     *  clickable; the sim's placement validation stays the hard gate). */
+    private world: World,
     /** Phase 2: a challenge run hides debug affordances (the spawn button) so
      *  the build bar carries no inert, comparability-breaking controls. */
     private challengeMode = false,
@@ -88,6 +94,17 @@ export class BuildMenu {
     this.renderer.onModeChanged = (mode) => this.syncButtons(mode);
     this.renderer.onHint = (hint) => this.setHint(hint);
     this.events.on('buildRejected', ({ reason }) => this.setHint(reason));
+    // Affordability tint (owner ruling — red price, still clickable, live):
+    // entries stay selectable so a player can preview a room they're saving
+    // toward; the sim's cash check at placement remains the hard gate.
+    this.events.on('cashChanged', () => this.refreshAffordability());
+    this.refreshAffordability();
+  }
+
+  private refreshAffordability(): void {
+    for (const [type, span] of this.costSpans) {
+      span.classList.toggle('unaffordable', ROOM_DEFS[type].cost > this.world.cash);
+    }
   }
 
   /** One §9 category group: a toggle button plus its dropdown of room entries. */
@@ -128,7 +145,11 @@ export class BuildMenu {
         roles.textContent = def.staffedBy.map((role) => ROLE_DEFS[role].label).join(', ');
         button.appendChild(roles);
       }
-      button.append(size, `$${def.cost.toLocaleString()}`);
+      const cost = document.createElement('span');
+      cost.className = 'room-cost';
+      cost.textContent = `$${def.cost.toLocaleString()}`;
+      this.costSpans.set(type, cost);
+      button.append(size, cost);
       panel.appendChild(button);
       this.roomButtons.set(type, button);
     }
