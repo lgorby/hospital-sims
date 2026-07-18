@@ -1,7 +1,7 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-18 (after the hints milestone)
-**State: M0–M4 + audit + save/load + V1 DoD + Expansion 1 + art pass + DEPLOY + Phase 2 (seed challenges + round-5 fixes) + HINTS milestone complete. Live at https://hospital-sims.vercel.app (auto-deploy on push to `master`; recent commits NOT yet pushed — push deploys). 246 tests. Next: the owner design backlog (patient click-highlight; amenities/EVS/facility-failure layer — needs scoping first). See Next.**
+**Last updated:** 2026-07-18 (after the capacity-epic ratification)
+**State: M0–M4 + audit + save/load + V1 DoD + Expansion 1 + art pass + DEPLOY + Phase 2 (seed challenges + round-5 fixes) + HINTS + UI polish + build-UX complete. Live at https://hospital-sims.vercel.app (auto-deploy on push to `master`; commits since `9cf62a5` NOT yet pushed — push deploys). 255 tests. NEXT UP: the ratified capacity & growth epic — `docs/CAPACITY_PLAN.md` (Stage 0 size-based pricing → Stage A multi-slot capacity → Stage B expand tool). Then: owner design backlog (patient click-highlight; amenities/EVS/facility-failure layer). See Next.**
 
 ## What this project is
 
@@ -106,6 +106,17 @@ Both were hardened by independent adversarial reviews before any code was writte
 - **Camera input polish: DONE** (2026-07-17, trackpad complaint). `renderer.ts` wheel handler: plain wheel / two-finger scroll → pan both axes (fixes trackpad up/down, which the old wheel-zoom binding ate); ctrl/meta+wheel (= trackpad pinch) → continuous cursor-anchored zoom (MIN_ZOOM 0.5 .. MAX_ZOOM 2, was 3 discrete steps). Known tradeoff: a classic mouse wheel now pans; mouse users zoom via ctrl+wheel.
 - **Input supported today = mouse + trackpad ONLY** (clarified 2026-07-17: an owner touchscreen report turned out to be finger-on-display, which the game doesn't handle — the fix above is wheel-based, i.e. mouse/trackpad). **Touchscreen / touch input is DEFERRED** — GDD §11 item 17: touch gestures emit *touch* pointer events the canvas ignores; adding one-finger pan/tap + two-finger pinch (via Pointer Events, coexisting with tap-select/drag-build) is a self-contained future pass that makes the game tablet-playable. Owner chose to build it later.
 - **View rotation: SCOPED, not built** — GDD §11 item 16 + `TECH_PLAN.md` §2.7. It's a rendering-architecture milestone (orientation-aware `iso.ts` projection+picking, `depthKey`, wall far/near, and character facings), NOT input polish — give it its own milestone + pre-implementation review. Do not conflate with the camera-input pass above.
+- **Capacity & growth epic: RATIFIED, ready to implement (2026-07-18)** —
+  `docs/CAPACITY_PLAN.md` v2 (design-reviewed: 5 MAJORs folded — flat-cost
+  drag-big exploit, dialysis 1→2 retro jump, slotIndex save field,
+  rect-aware sellback, stale atrium aura on expand). Owner-ratified: proposed
+  multi-slot roster (Waiting/ER/Dialysis; rest single); dialysis jump
+  accepted; derived per-tile pricing (`ceil(cost/minArea)`) + rect-aware
+  sellback + legacy-refund quirk accepted; reservation-free-but-seated-ok
+  expand rule; no caps/crowding v1. Staging is LOAD-BEARING: **Stage 0
+  (size-based pricing) MUST ship before Stage A (capacity)** or drag-built
+  giant rooms are strictly dominant; Stage B (expand tool) last. Each stage
+  gets the full milestone workflow.
 - **HINTS milestone: SHIPPED (2026-07-18)** — see the commit table `*(hints)*`
   row and `docs/HINTS_PLAN.md` (marked IMPLEMENTED, deltas listed). The owner's
   OR confusion is addressed: the panel names the full chain ahead of time
