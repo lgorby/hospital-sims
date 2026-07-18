@@ -242,6 +242,9 @@ export function validateRoomExpand(
   ) {
     return fail('Out of bounds');
   }
+  // Stage 3 (§5.2): a broken room cannot grow — capacity is 0 while broken,
+  // and a "Beds 2/0" readout is exactly the confusion this reject prevents.
+  if (room.brokenSince !== null) return fail('Out of service — repair it first');
   for (const reservation of world.reservations.values()) {
     if (reservation.roomId === roomId) return fail('Room is busy — wait for treatments to finish');
   }

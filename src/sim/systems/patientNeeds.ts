@@ -117,6 +117,11 @@ function advanceBreak(
   // breakdown line incremented at the SAME choke point, never re-added.
   if (nb.kind === 'restroom') {
     patient.bladder = BALANCE.stats.vitalsMax;
+    // Stage-3 wear hook (§5.1): restrooms have no reservations, so their
+    // use completion lives here. No-op while broken (a claimant who was
+    // in-flight at the breakdown finishes without re-rolling).
+    const usedRoom = nb.roomId === undefined ? null : (world.rooms.get(nb.roomId) ?? null);
+    if (usedRoom) world.applyRoomUse(usedRoom);
   } else {
     patient.thirst = BALANCE.stats.vitalsMax;
     world.billFee(BALANCE.needs.vendingPrice, 'Vending', 'vending');

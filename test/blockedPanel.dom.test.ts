@@ -154,6 +154,29 @@ describe('BlockedPanel', () => {
     expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(true);
   });
 
+  it('roomBroken invalidates without a tick (amenities Stage 3, §S3.6)', () => {
+    // debugBreakRoom fires while paused — the broken-room row must appear on
+    // the roomBroken event, not wait for the clock. Same proof shape as the
+    // Stage-1/2 paused-staleness tests above.
+    const { world, events, root, panel } = fixture();
+    const patient = world.spawnPatient('flu');
+    patient.stage = { kind: 'waitingTriage' };
+    world.tick();
+    panel.update();
+    expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(true);
+
+    // Clear the need by DIRECT mutation — no event, no tick. The panel stays
+    // (correctly) stale, proving the tick gate is closed; the assertion after
+    // the emit can only pass via the roomBroken invalidation.
+    world.patients.delete(patient.id);
+    panel.update();
+    expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(true);
+
+    events.emit('roomBroken', { roomId: 1 });
+    panel.update();
+    expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(false);
+  });
+
   it('caps visible rows at 8 + a "+N more" tail (live-drive MAJOR 2: never occlude the inspect card)', () => {
     const { world, root, panel } = fixture();
     // A wide condition spread in a bare hospital produces well over 8 needs

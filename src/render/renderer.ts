@@ -10,7 +10,7 @@ import {
   validateRoomRect,
 } from '../sim/build';
 import { BALANCE } from '../sim/data/balance';
-import { ROOM_DEFS, type RoomType } from '../sim/data/rooms';
+import { ROOM_DEFS, roomFailure, type RoomType } from '../sim/data/rooms';
 import type { WallEdge } from '../sim/entities/room';
 import { boundaryEdges } from '../sim/entities/room';
 import type { Patient } from '../sim/entities/patient';
@@ -29,6 +29,7 @@ import {
   FEET_ANCHOR,
   generateCharacterTextures,
   generateTileTextures,
+  hazardKey,
   IDLE_FACING,
   MESS_VARIANTS,
   messKey,
@@ -68,6 +69,23 @@ const WALL_Z_NEAR = 0.45;
 const WALK_FRAME_TICKS = 3;
 /** Bubble height above the feet anchor. */
 const BUBBLE_RISE = 46;
+/**
+ * Broken-room floor treatment (Stage 3, §S3.7): pull `def.floorColor` toward
+ * its own luminance (desaturate) then darken — unmistakably "out of service"
+ * grey, with the room's hue still recognizable underneath. Render styling
+ * only (like WALL_BASE), not a game number.
+ */
+const BROKEN_FLOOR_GREY_MIX = 0.65;
+const BROKEN_FLOOR_DARKEN = 0.7;
+function brokenFloorTint(color: number): number {
+  const r = (color >> 16) & 0xff;
+  const g = (color >> 8) & 0xff;
+  const b = color & 0xff;
+  const lum = 0.299 * r + 0.587 * g + 0.114 * b; // Rec.601 luma
+  const mix = (c: number): number =>
+    Math.round((c + (lum - c) * BROKEN_FLOOR_GREY_MIX) * BROKEN_FLOOR_DARKEN);
+  return (mix(r) << 16) | (mix(g) << 8) | mix(b);
+}
 
 import { AMENITY_DEFS, type AmenityId } from '../sim/data/amenities';
 
@@ -347,11 +365,17 @@ export class WorldRenderer {
     if (!room) return;
     const visuals: (Sprite | Graphics)[] = [];
     const def = ROOM_DEFS[room.type];
+    // Broken room (Stage 3, §S3.7): grey the floors; the hazard decal below
+    // marks the fault. `roomChanged` fires on breakdown AND repair completion,
+    // so the existing removeRoom+drawRoom wiring redraws both transitions —
+    // no new event subscription.
+    const broken = room.brokenSince !== null;
+    const floorTint = broken ? brokenFloorTint(def.floorColor) : def.floorColor;
 
     for (let col = room.rect.col; col < room.rect.col + room.rect.cols; col++) {
       for (let row = room.rect.row; row < room.rect.row + room.rect.rows; row++) {
         const floor = new Sprite(this.textures.plain);
-        floor.tint = def.floorColor;
+        floor.tint = floorTint;
         floor.alpha = 0.92;
         const { x, y } = toScreen(col, row);
         floor.position.set(x - TILE_W / 2, y);
@@ -386,6 +410,43 @@ export class WorldRenderer {
           visuals.push(sprite);
         }
       }
+    }
+
+    // Hazard decal at the repair job's anchor tile (Stage 3, §S3.7). Parented
+    // in decalLayer (flat: above floors, below the depth-sorted world) but
+    // registered in THIS room's visuals[] so removeRoom destroys it with the
+    // room — NEVER keyed in messSprites, which syncMess owns (pre-impl
+    // MINOR 7: a decal in decalLayer but not in visuals leaks one sprite per
+    // redraw/sell).
+    if (broken) {
+      const failure = roomFailure(room.type)!; // broken ⇒ a failure def exists
+      // breakRoom mints the repair job BEFORE emitting roomChanged (frozen
+      // order), so the rect-origin fallback is defensive, not a real path.
+      let anchor: GridPoint = { col: room.rect.col, row: room.rect.row };
+      for (const job of this.world.jobs.values()) {
+        if (job.kind === 'repair' && job.roomId === room.id) {
+          anchor = job.tile;
+          break;
+        }
+      }
+      const sprite = new Sprite(this.textures.hazards.get(hazardKey(failure.kind))!);
+      const { x, y } = toScreen(anchor.col, anchor.row);
+      // The anchor is usually the machine's own (non-walkable prop) tile —
+      // spill the decal toward the tile's FRONT edge so it peeks out at the
+      // prop's base instead of hiding behind it (the syncMess convention,
+      // Stage-2 live-drive MINORs 1–2).
+      const propSpill = this.world.tileAt(anchor.col, anchor.row)?.object ? TILE_H * 0.4 : 0;
+      // Mirror bit hashes the ANCHOR tile coords (never rng) — the same
+      // broken room redraws identically across re-syncs and reloads.
+      const hash = ((Math.imul(anchor.col, 73856093) ^ Math.imul(anchor.row, 19349663)) >>> 0) >>> 4;
+      if ((hash & 1) === 1) {
+        sprite.scale.x = -1;
+        sprite.position.set(x + TILE_W / 2, y + propSpill);
+      } else {
+        sprite.position.set(x - TILE_W / 2, y + propSpill);
+      }
+      this.decalLayer.addChild(sprite);
+      visuals.push(sprite);
     }
 
     if (def.kind !== 'open') {

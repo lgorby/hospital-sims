@@ -122,7 +122,7 @@ async function bootstrap(boot: Boot): Promise<void> {
   // A challenge run is provably debug-free (plan §7): the World rejects debug*
   // commands, and the dev panel that would send them isn't even mounted, so a
   // stray backtick reveals nothing.
-  if (boot.kind !== 'challenge') new DebugPanel(renderer, commands).mount(uiRoot);
+  if (boot.kind !== 'challenge') new DebugPanel(renderer, commands, world).mount(uiRoot);
   // Left column (HINTS_PLAN §2.3): one fixed flex stack owns top-left, so the
   // checklist and the blocked panel never overlap and re-flow on dismiss.
   const leftStack = document.createElement('div');

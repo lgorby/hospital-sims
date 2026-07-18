@@ -1,5 +1,5 @@
 import { Graphics, type Renderer, type Texture } from 'pixi.js';
-import { PROP_STYLE, type PropId } from '../sim/data/rooms';
+import { PROP_STYLE, type PropId, type RoomFailure } from '../sim/data/rooms';
 import type { Mess } from '../sim/world';
 import { PROP_RISE_PAD, shade, TILE_H, TILE_W } from './sprites/shared';
 
@@ -34,6 +34,10 @@ export interface TileTextures {
    *  `messKey(kind, variant)` — the renderer picks variant + mirror by
    *  hashing TILE coords (never rng), so a mess always re-syncs identically. */
   messes: Map<string, Texture>;
+  /** Broken-room hazard decals (Stage 3, §S3.7), keyed by `hazardKey(kind)` —
+   *  sparks for mechanical failures, steam-and-drip for piping. One variant
+   *  per kind; the renderer's mirror bit hashes the anchor tile (never rng). */
+  hazards: Map<string, Texture>;
 }
 
 export type PropSlice = 'single' | 'west' | 'east';
@@ -362,6 +366,91 @@ function messDecal(kind: Mess['kind'], variant: number): Graphics {
   return g;
 }
 
+// --------------------------------------------- hazard decals (Stage 3, §S3.7)
+
+export function hazardKey(kind: RoomFailure['kind']): string {
+  return `hazard:${kind}`;
+}
+
+/**
+ * Mechanical failure: a scorch smudge under the fault with a few jagged spark
+ * bolts flung flat across the ground plane and hot pinpoints at their tips —
+ * "the machine is arcing". Same flat decal language as the messes (all shapes
+ * squashed toward 2:1, no rise), subtle but readable on any floor color.
+ */
+function hazardSparks(g: Graphics): void {
+  const cx = TILE_W / 2;
+  const cy = TILE_H / 2;
+  const scorch = 0x3a3733;
+  const spark = 0xffd23f; // hot yellow
+  const ember = 0xf29a2e; // cooler orange secondary
+  const hot = 0xfff3b8; // near-white pinpoints
+  // Scorch smudge — two stacked soot lobes.
+  g.ellipse(cx, cy, 9.5, 4.6).fill({ color: scorch, alpha: 0.38 });
+  g.ellipse(cx + 2, cy + 1, 5, 2.4).fill({ color: shade(scorch, 0.55), alpha: 0.45 });
+  // Jagged bolts radiating from the smudge (flat zigzag strokes).
+  const bolt = (pts: readonly number[], color: number, width: number): void => {
+    g.moveTo(cx + pts[0]!, cy + pts[1]!);
+    for (let i = 2; i < pts.length; i += 2) g.lineTo(cx + pts[i]!, cy + pts[i + 1]!);
+    g.stroke({ color, width, alpha: 0.9 });
+  };
+  bolt([2, -1, 8, -4, 13, -2], spark, 1.4);
+  bolt([-3, 1, -9, 3, -14, 1], spark, 1.4);
+  bolt([1, 2, 5, 5, 11, 4], ember, 1.2);
+  bolt([-1, -2, -4, -5, -9, -6], ember, 1.1);
+  // Hot pinpoints at the bolt tips + one at the source.
+  g.circle(cx + 13, cy - 2, 1.3).fill(hot);
+  g.circle(cx - 14, cy + 1, 1.1).fill(hot);
+  g.circle(cx + 11, cy + 4, 1).fill({ color: hot, alpha: 0.9 });
+  g.circle(cx - 9, cy - 6, 0.9).fill({ color: hot, alpha: 0.85 });
+  g.circle(cx, cy - 1, 1.5).fill({ color: hot, alpha: 0.95 });
+}
+
+/**
+ * Piping failure: a standing water film with a bright rim (the messWater
+ * palette, so the burst puddles nearby rhyme with it), a couple of landed
+ * drips, and pale steam wisps curling up from the leak — "the pipe is
+ * venting". Wisps stay inside the tile canvas: decals are flat, no rise pad.
+ */
+function hazardSteam(g: Graphics): void {
+  const cx = TILE_W / 2;
+  const cy = TILE_H / 2;
+  const water = 0x4f86c2; // same base as messWater
+  const sheen = 0xdff0fa;
+  const mist = 0xeef5f8;
+  // Standing film with a bright rim — reads "leak source", not a full puddle.
+  g.ellipse(cx, cy + 2, 10, 5).fill({ color: water, alpha: 0.3 });
+  g.ellipse(cx, cy + 2, 10, 5).stroke({ color: shade(water, 1.25), width: 1, alpha: 0.5 });
+  g.ellipse(cx - 3, cy + 1, 4, 1.5).fill({ color: sheen, alpha: 0.4 });
+  // Landed drips just past the rim.
+  g.ellipse(cx + 10, cy - 1, 1.6, 0.9).fill({ color: water, alpha: 0.6 });
+  g.ellipse(cx - 11, cy + 5, 1.4, 0.8).fill({ color: water, alpha: 0.6 });
+  g.ellipse(cx + 6, cy + 7, 1.2, 0.7).fill({ color: water, alpha: 0.55 });
+  // Steam wisps curling up from the film (upper half of the canvas), fading
+  // with height; the NW-light glint convention keeps them pale, not white-hot.
+  g.moveTo(cx - 4, cy).bezierCurveTo(cx - 8, cy - 3, cx - 2, cy - 6, cx - 6, cy - 10);
+  g.stroke({ color: mist, width: 1.6, alpha: 0.55 });
+  g.moveTo(cx + 3, cy + 1).bezierCurveTo(cx + 7, cy - 2, cx + 1, cy - 5, cx + 5, cy - 9);
+  g.stroke({ color: mist, width: 1.4, alpha: 0.45 });
+  g.moveTo(cx, cy - 2).bezierCurveTo(cx - 2, cy - 5, cx + 2, cy - 7, cx, cy - 11);
+  g.stroke({ color: mist, width: 1.2, alpha: 0.35 });
+}
+
+/** Exhaustive by construction: a new failure kind is a compile error until painted. */
+const HAZARD_PAINTERS: Readonly<Record<RoomFailure['kind'], (g: Graphics) => void>> = {
+  mechanical: hazardSparks,
+  piping: hazardSteam,
+};
+
+/** One flat hazard decal on the ground-tile canvas — same near-invisible
+ *  bounds rect as messDecal, so ground-tile placement math applies verbatim. */
+function hazardDecal(kind: RoomFailure['kind']): Graphics {
+  const g = new Graphics();
+  g.rect(0, 0, TILE_W, TILE_H).fill({ color: 0xffffff, alpha: 0.001 });
+  HAZARD_PAINTERS[kind](g);
+  return g;
+}
+
 /** A box prism filling one tile — the per-tile slice of (multi-tile) furniture. */
 function propSlice(id: PropId, slice: PropSlice): Graphics {
   const { color, rise } = PROP_STYLE[id];
@@ -502,6 +591,11 @@ export function generateTileTextures(renderer: Renderer): TileTextures {
     }
   }
 
+  const hazards = new Map<string, Texture>();
+  for (const kind of Object.keys(HAZARD_PAINTERS) as RoomFailure['kind'][]) {
+    hazards.set(hazardKey(kind), renderer.generateTexture(hazardDecal(kind)));
+  }
+
   return {
     ground: [renderer.generateTexture(groundA), renderer.generateTexture(groundB)],
     plain: renderer.generateTexture(plain),
@@ -510,5 +604,6 @@ export function generateTileTextures(renderer: Renderer): TileTextures {
     entrance: renderer.generateTexture(entrance),
     props,
     messes,
+    hazards,
   };
 }

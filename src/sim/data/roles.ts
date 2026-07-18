@@ -25,6 +25,12 @@ export const ROLE_DEFS = {
   // draws before tick 0), shifting EVERY fixed-seed trajectory — the Stage-2
   // re-pin pass (impl plan §S2.6b) landed together with this entry.
   evs: { label: 'EVS Worker', salaryPerDay: 90, color: 0x9b7653, standingPost: false },
+  // Amenities Stage 3 (AMENITIES_PLAN §5.3): the repair trade. Orange —
+  // far from the teal/green cluster AND from evs brown. NOTE: adding a role
+  // mints constructor candidates (~12 seeded rng draws before tick 0),
+  // shifting EVERY fixed-seed trajectory — the Stage-3 re-pin pass (impl
+  // plan §S3.8) landed together with this entry.
+  maintenance: { label: 'Maintenance Tech', salaryPerDay: 140, color: 0xe07a3f, standingPost: false },
 } as const;
 
 export type RoleId = keyof typeof ROLE_DEFS;

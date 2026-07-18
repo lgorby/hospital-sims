@@ -20,9 +20,12 @@ import type { World } from './world';
  */
 
 export interface BlockedNeed {
-  /** Stable dedupe/hint key: 'room:<RoomType>' | 'role:<RoleId>'. */
+  /** Stable dedupe/hint key: 'room:<RoomType>' | 'role:<RoleId>' |
+   *  'broken:<roomId>:<brokenSince>' (instance-keyed — Stage 3, design
+   *  MINOR 8: hintedOnce persists per save, so a room-keyed toast would
+   *  announce only the FIRST breakdown ever). */
   key: string;
-  kind: 'room' | 'role';
+  kind: 'room' | 'role' | 'broken';
   room?: RoomType;
   role?: RoleId;
   /** Live pre-terminal patients affected (deduped per need). */
@@ -226,6 +229,45 @@ export function computeBlockedNeeds(world: World): BlockedNeed[] {
       urgent: world.messes.size >= BALANCE.mess.evsUrgentMesses,
       label: 'Hire an EVS Worker — messes need cleaning',
     });
+  }
+
+  // Broken rooms (amenities Stage 3, §6): per-instance callouts, always
+  // urgent — a disabled room blocks progress NOW. `patients: 0` (design:
+  // no patient count — broken rows sort after patient-backed urgent rows;
+  // accepted). The §6 sketch's room-type/roomId payload fields are dropped
+  // (no consumer needs them — recorded design delta, pre-impl NIT 10).
+  for (const room of world.rooms.values()) {
+    if (room.brokenSince === null) continue;
+    needs.push({
+      key: `broken:${room.id}:${room.brokenSince}`,
+      kind: 'broken',
+      patients: 0,
+      conditions: [],
+      urgent: true,
+      label: `${ROOM_DEFS[room.type].label} is broken — needs repair`,
+    });
+  }
+
+  // Maintenance need (Stage 3): broken-room-based, standalone like role:evs.
+  // Always urgent while anything is broken and nobody can fix it; `patients`
+  // carries the broken-room count (the role:evs mess-count precedent — it
+  // drives the sort tie-break).
+  if (!hiredRoles.has('maintenance')) {
+    let brokenRooms = 0;
+    for (const room of world.rooms.values()) {
+      if (room.brokenSince !== null) brokenRooms += 1;
+    }
+    if (brokenRooms > 0) {
+      needs.push({
+        key: 'role:maintenance',
+        kind: 'role',
+        role: 'maintenance',
+        patients: brokenRooms,
+        conditions: [],
+        urgent: true,
+        label: 'Hire a Maintenance Tech — a room needs repair',
+      });
+    }
   }
 
   // Total, deterministic order: urgent first, most-affected first, key tiebreak.

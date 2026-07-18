@@ -69,15 +69,28 @@ const JOB_KIND_LABELS: Record<Job['kind'], string> = {
   repair: 'Repairing',
 };
 
-/** Player-facing staff duty; phase splits walking-to-patient from treating. */
+/** En-route wording (Stage-3 live-drive MINOR 2: "Repairing" while still
+ *  walking contradicted the room card's "repair pending") — the
+ *  reservation walking/working split, applied to jobs. */
+const JOB_ENROUTE_LABELS: Record<Job['kind'], string> = {
+  clean: 'Heading to a mess',
+  empty: 'Heading to a trashcan',
+  repair: 'Heading to a repair',
+};
+
+/** Player-facing staff duty; phase splits walking-to-patient from treating.
+ *  For jobs, `jobPhase` splits en-route from at-work the same way. */
 export function staffDutyLabel(
   duty: StaffDuty,
   reservationPhase?: Reservation['phase'],
   jobKind?: Job['kind'],
+  jobPhase?: Job['phase'],
 ): string {
   if (duty.kind === 'reserved') {
     return reservationPhase === 'active' ? 'Treating a patient' : 'Walking to a patient';
   }
-  if (duty.kind === 'job' && jobKind !== undefined) return JOB_KIND_LABELS[jobKind];
+  if (duty.kind === 'job' && jobKind !== undefined) {
+    return jobPhase === 'working' ? JOB_KIND_LABELS[jobKind] : JOB_ENROUTE_LABELS[jobKind];
+  }
   return STAFF_DUTY_LABELS[duty.kind];
 }

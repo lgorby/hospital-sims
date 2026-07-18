@@ -80,6 +80,10 @@ const STANDARD_STAFF: { role: RoleId; count: number }[] = [
   // messes occur organically (vomit + litter) and the envelope must stay
   // green with one EVS working the job queue.
   { role: 'evs', count: 1 },
+  // Amenities Stage 3 (§S3.8 exit gate): the reference build repairs —
+  // wear accrues per use, breakdowns occur organically (MTBF ≈31/≈45 uses),
+  // and the envelope must stay green with one tech cycling repairs.
+  { role: 'maintenance', count: 1 },
 ];
 
 interface RunSummary {
@@ -93,6 +97,11 @@ interface RunSummary {
   /** Stage 2 (§S2.6b): summed daily messTicks — proves messes occur
    *  organically in the reference run (the gate premise is asserted). */
   messTicksTotal: number;
+  /** Stage 3 (§S3.8): organic breakdown count — the wear/repair loop ran. */
+  breakdowns: number;
+  /** Stage 3 probe: repairs completed (a breakdown that never un-breaks
+   *  would pass the count above while the tech spins). */
+  roomsBrokenAtEnd: number;
   lostEpisodes: number;
   chestPainArrived: number;
   /** Per-tick probe: the longest ANY reservation lived, in ticks. */
@@ -142,6 +151,8 @@ function runHospital(
     totalDied: 0,
     totalAma: 0,
     messTicksTotal: 0,
+    breakdowns: 0,
+    roomsBrokenAtEnd: 0,
     lostEpisodes: 0,
     chestPainArrived: 0,
     maxReservationAgeTicks: 0,
@@ -157,6 +168,7 @@ function runHospital(
     }
   });
   events.on('patientDied', () => (summary.totalDied += 1));
+  events.on('roomBroken', () => (summary.breakdowns += 1));
   events.on('patientLeftAma', () => (summary.totalAma += 1));
   events.on('patientLost', () => (summary.lostEpisodes += 1));
   events.on('patientSpawned', ({ patientId }) => {
@@ -185,6 +197,9 @@ function runHospital(
   // Stage discipline (audit #5): days of full-pipeline sim must produce zero
   // illegal lifecycle transitions.
   expect(world.stageViolations).toEqual([]);
+  for (const room of world.rooms.values()) {
+    if (room.brokenSince !== null) summary.roomsBrokenAtEnd += 1;
+  }
   return summary;
 }
 
@@ -203,6 +218,15 @@ describe('headless balance harness (M4)', () => {
     // re-validated green as-is (probe: ~16.8k mess-ticks over 5 days, a can
     // overflow, EVS steady-state ~5 standing messes, 124 treated / 0 died,
     // rep 545) — no alternate-seed hunt needed; the fixture seed stands.
+    // Stage 3 (§S3.8): the maintenance role + wear rolls shifted every
+    // stream a third time. Pre-balance-pass 1338 failed appendicitis
+    // (arrival luck, audited across 5 seeds) — but the SAME audit exposed
+    // the break-watchdog defect (30 game-min ≈ a 14-tile walk: 373 restroom
+    // claims → 23 completions, the owner's "bathrooms don't look used").
+    // After the watchdog/meter balance pass, 1338 re-validated green
+    // (probe: 132 restroom visits, 5 organic breakdowns incl. the restroom's
+    // piping, 0 broken at end, 111 treated / 3 died, rep 459) — the fixture
+    // seed stands un-re-pinned.
     const s = runHospital(1338, STANDARD_ROOMS, 5);
     const w = s.world;
 
@@ -216,6 +240,12 @@ describe('headless balance harness (M4)', () => {
     // ORGANICALLY in this run — the envelope above was earned with the
     // cleanliness layer live, not on a spotless fluke.
     expect(s.messTicksTotal).toBeGreaterThan(0);
+    // Stage-3 gate premises (§S3.8): breakdowns occurred ORGANICALLY (the
+    // wear loop is live, MTBFs are in a felt range) AND the lone tech kept
+    // up — the run must not END with a broken-room backlog (a repair that
+    // never completes would pass the count while the hospital rots).
+    expect(s.breakdowns).toBeGreaterThan(0);
+    expect(s.roomsBrokenAtEnd).toBeLessThanOrEqual(1); // at most one mid-repair at the bell
     // End-to-end coverage of every §12 path (review MINOR): each expansion
     // condition must actually DISCHARGE — an idle nucMed or dialysis room
     // would otherwise pass every aggregate gate above.

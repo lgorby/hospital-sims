@@ -15,13 +15,21 @@ import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, type ConditionId } from './data/conditions';
 import { generateAge, generateName, generateStaffAge } from './data/names';
 import { ROLE_DEFS, ROLE_IDS, type RoleId } from './data/roles';
-import { PROP_STYLE, ROOM_DEFS, type PropId, type PropSpec, type RoomType } from './data/rooms';
+import {
+  PROP_STYLE,
+  ROOM_DEFS,
+  roomFailure,
+  type PropId,
+  type PropSpec,
+  type RoomType,
+} from './data/rooms';
 import type { Door, Room } from './entities/room';
 import { LEGAL_STAGE_TRANSITIONS, type Patient, type PatientStage } from './entities/patient';
 import type { Candidate, Job, Reservation, Staff } from './entities/staff';
 import {
   amenitySellback,
   auraCoversTile,
+  breakdownChance,
   candidateSalary,
   checkInCapacity,
   cleanlinessRepDelta,
@@ -399,6 +407,10 @@ export class World implements PathGrid {
    *  (placement fit is test-proven); Stage B's expansion recompute must keep
    *  it that way or add a hint. */
   capacityOf(room: Room): number {
+    // Stage 3 (§5.2): a broken room disables — hasOpenSlot gates every
+    // dispatch path and freeStallIndex returns null for restrooms. Actives
+    // finish (transiently negative openSlots is the verified-safe case).
+    if (room.brokenSince !== null) return 0;
     return ROOM_DEFS[room.type].capacity.kind === 'single' ? 1 : this.slotOrigins(room).length;
   }
 
@@ -627,6 +639,16 @@ export class World implements PathGrid {
       case 'debugSpawnPatient':
         this.spawnPatient(command.condition ?? 'flu');
         return;
+      case 'debugBreakRoom': {
+        // Live-drive/test affordance (Stage 3): mirrors the REAL breakdown
+        // path (the debugForce precedent — bursts included). Guarded at the
+        // border (audit #8): unknown, no-failure, or already-broken rooms
+        // are inert no-ops.
+        const room = this.rooms.get(command.roomId);
+        if (!room || !roomFailure(room.type) || room.brokenSince !== null) return;
+        this.breakRoom(room);
+        return;
+      }
       case 'debugForce':
         this.debugForce(command.patientId, command.outcome);
         return;
@@ -689,6 +711,8 @@ export class World implements PathGrid {
       rect,
       door,
       quality: roomQuality(type, rect),
+      wear: 0,
+      brokenSince: null,
     };
     this.rooms.set(id, room);
     for (const tile of rectTiles(rect)) {
@@ -859,6 +883,15 @@ export class World implements PathGrid {
     // Geometry sweep (Stage 2, design MAJOR 4): messes inside the sold room
     // leave with it (their jobs deleted, workers released).
     for (const tile of rectTiles(room.rect)) this.removeMess(tile);
+    // Stage-3 orphan rule (§5.2): the repair job targets the ROOM, not a
+    // mess — it leaves with the room too, its tech released (step-out).
+    for (const job of [...this.jobs.values()]) {
+      if (job.roomId === roomId) {
+        this.jobs.delete(job.id);
+        this.releaseJobWorker(job);
+        this.events.emit('jobChanged', { jobId: job.id });
+      }
+    }
     for (const tile of rectTiles(room.rect)) {
       const t = this.tileAt(tile.col, tile.row)!;
       t.roomId = null;
@@ -1004,14 +1037,17 @@ export class World implements PathGrid {
    * Mint a queued job iff none targets the tile (one job per target, §4.3 —
    * the keyed check). The overflow path calls this with 'empty' BEFORE
    * addMess (FROZEN order, pre-impl MAJOR 2), so addMess's own 'clean' mint
-   * then finds the empty job and stands down — no double-mint.
+   * then finds the empty job and stands down — no double-mint. Returns the
+   * job, or null when the tile was already targeted (Stage-3 pre-impl MAJOR
+   * 2a: the repair path must never treat a suppressed mint as success).
    */
-  mintJob(kind: Job['kind'], tile: GridPoint): void {
-    if (this.jobAt(tile) !== null) return;
+  mintJob(kind: Job['kind'], tile: GridPoint, roomId: number | null = null): Job | null {
+    if (this.jobAt(tile) !== null) return null;
     const job: Job = {
       id: this.takeId(),
       kind,
       tile: { col: tile.col, row: tile.row },
+      roomId,
       staffId: null,
       phase: 'queued',
       ticksRemaining: 0,
@@ -1019,6 +1055,7 @@ export class World implements PathGrid {
     };
     this.jobs.set(job.id, job);
     this.events.emit('jobChanged', { jobId: job.id });
+    return job;
   }
 
   /** One mess per tile (a repeat refreshes `since`); mints a `clean` job iff
@@ -1034,6 +1071,32 @@ export class World implements PathGrid {
         tile: { col: tile.col, row: tile.row },
         since: this.clock.tick,
       });
+    }
+    // Stage-3 code-review MAJOR 1: a REPAIR job can hold a WALKABLE anchor
+    // (the scan's pass-2 tiles), and both organic mess sources drop at
+    // `patient.at` — an in-room accident/vomit on the anchor would leave a
+    // mess whose only cover is a job that leaves at repair completion (a
+    // border-invalid world whose own save refuses to load; clean/empty
+    // suppression stays NORMAL — refreshes and can-overflows rely on it).
+    // Re-anchor the repair job off the tile (the scan skips job-held tiles,
+    // including its own current one), releasing any worker to re-converge
+    // on the new anchor — a WORKING tech left in place would violate the
+    // border's worker-beside-target bound the moment the tile moved.
+    const holder = this.jobAt(tile);
+    if (holder?.kind === 'repair') {
+      const room = holder.roomId === null ? null : (this.rooms.get(holder.roomId) ?? null);
+      const next = room === null ? null : this.repairAnchorTile(room);
+      if (next !== null && this.jobAt(next) === null) {
+        if (holder.staffId !== null) {
+          this.releaseJobWorker(holder);
+          holder.phase = 'queued';
+          holder.ticksRemaining = 0;
+        }
+        holder.tile = { col: next.col, row: next.row };
+        this.events.emit('jobChanged', { jobId: holder.id });
+      } else {
+        console.warn(`addMess: could not re-anchor repair job ${holder.id} off ${key}`);
+      }
     }
     this.mintJob('clean', tile); // no-op when ANY job already targets the tile
     this.messRevision += 1;
@@ -1084,6 +1147,141 @@ export class World implements PathGrid {
       if (spot) this.setWalkerTarget(member, spot);
     }
     this.events.emit('staffUpdated', { staffId: member.id });
+  }
+
+  // ---------------------------------------------- failures & repair (Stage 3)
+
+  /**
+   * THE wear choke point (§5.1 / impl plan §S3.1): no failure def → no-op;
+   * already broken → no-op (no wear while disabled — keeps the border's
+   * broken ⇒ wear 0 invariant, and a finishing restroom occupant can't
+   * double-break the room). Else wear += 1 and roll the ONE derivation.
+   */
+  applyRoomUse(room: Room): void {
+    const failure = roomFailure(room.type);
+    if (!failure || room.brokenSince !== null) return;
+    room.wear += 1;
+    if (this.rng.chance(breakdownChance(failure.kind, room.wear))) this.breakRoom(room);
+  }
+
+  /**
+   * The repair-job ANCHOR (impl plan §S3.1, pre-impl MAJOR 1): a tile is
+   * eligible iff NO job targets it (MAJOR 2a — a suppressed repair mint is
+   * a border-invalid world) AND it has ≥1 orthogonal neighbor that is
+   * walkable + standable (same-room exception) + legally facing it across
+   * the edge — a claim-FREE structural pre-check (claims are transient;
+   * jobWorkTile arbitrates them at assignment). Without it, a 2×3
+   * west-door restroom's stalls anchor a job no worker can ever stand
+   * beside — a permanently unrepairable room on an eternal re-hold loop.
+   * Scan: non-walkable prop tiles row-major (the machine), then walkable
+   * non-door tiles row-major (a propless room is border-legal), then the
+   * rect origin as a defensive last resort. Deterministic, rng-free, and
+   * stable while broken (no expand while broken; props never move).
+   */
+  private repairAnchorTile(room: Room): GridPoint {
+    const workable = (tile: GridPoint): boolean => {
+      if (this.jobAt(tile) !== null) return false;
+      for (const step of ORTHOGONAL_STEPS) {
+        const n = { col: tile.col + step.col, row: tile.row + step.row };
+        if (!this.isWalkable(n)) continue;
+        if (!this.standableTile(n, { sameRoomAs: tile })) continue;
+        if (!this.canApproach(n, tile)) continue;
+        return true;
+      }
+      return false;
+    };
+    const passes: ((t: Tile, p: GridPoint) => boolean)[] = [
+      (t): boolean => t.object !== null && !t.walkable,
+      (t, p): boolean =>
+        t.walkable && !(room.door && samePoint(room.door.inside, p)),
+    ];
+    for (const pass of passes) {
+      for (const p of rectTiles(room.rect)) {
+        const t = this.tileAt(p.col, p.row)!;
+        if (pass(t, p) && workable(p)) return p;
+      }
+    }
+    // Last resort (post-impl review MINOR 2): even here, NEVER a job-held
+    // tile — a held anchor either suppresses the repair mint (a broken room
+    // with no job — the MAJOR-2a border-invalid world) or double-books the
+    // tile on an addMess re-anchor. Workability is best-effort at this depth.
+    for (const p of rectTiles(room.rect)) {
+      if (this.jobAt(p) === null) return p;
+    }
+    return { col: room.rect.col, row: room.rect.row }; // every tile job-held — unreachable in practice
+  }
+
+  /**
+   * THE breakdown path (§5.2 / impl plan §S3.1) — the wear roll and
+   * `debugBreakRoom` share it. FROZEN order: flag → rule-8 cancel of
+   * gathering reservations (actives finish — disable, never harm) → mint
+   * the repair job → piping burst → events. The mint is guaranteed by the
+   * anchor scan skipping job-held tiles; a null return here is a bug, and
+   * it warns loudly rather than silently bricking the save border.
+   */
+  breakRoom(room: Room): void {
+    room.brokenSince = this.clock.tick;
+    room.wear = 0;
+    for (const reservation of [...this.reservations.values()]) {
+      if (reservation.roomId === room.id && reservation.phase === 'gathering') {
+        // Not a layout problem — no corridor hint (the breakdown announces
+        // itself through the needs pipeline's instance-keyed toast).
+        this.cancelReservation(reservation, { hint: false });
+      }
+    }
+    const anchor = this.repairAnchorTile(room);
+    const job = this.mintJob('repair', anchor, room.id);
+    if (!job) {
+      console.warn(
+        `breakRoom: repair mint suppressed for room ${room.id} at ${anchor.col},${anchor.row}`,
+      );
+    }
+    if (roomFailure(room.type)?.kind === 'piping') this.burstPipes(room);
+    this.events.emit('roomBroken', { roomId: room.id });
+    this.events.emit('roomChanged', { roomId: room.id });
+  }
+
+  /**
+   * Piping burst (§5.4 / impl plan §S3.3): 2–4 `water` messes on rng-picked
+   * candidates — walkable tiles inside the rect + orthogonally-adjacent
+   * corridor/open-plan tiles (never a neighboring WALLED room's interior).
+   * Tiles already holding a mess are excluded (addMess would only refresh
+   * `since` — the count claim stays honest, pre-impl MINOR 5), as are
+   * job-held tiles (pre-impl MAJOR 2b: water on the repair anchor would
+   * outlive its suppressed clean job as a border-invalid jobless mess).
+   * FROZEN rng order: count draw, then per-pick index draws WITHOUT
+   * replacement; fewer candidates than count → place them all.
+   */
+  private burstPipes(room: Room): void {
+    const candidates: GridPoint[] = [];
+    const consider = (p: GridPoint): void => {
+      if (!this.isWalkable(p)) return;
+      if (this.messes.has(`${p.col},${p.row}`)) return;
+      if (this.jobAt(p) !== null) return;
+      candidates.push(p);
+    };
+    for (const tile of rectTiles(room.rect)) consider(tile);
+    const { rect } = room;
+    const ring: GridPoint[] = [];
+    for (let col = rect.col; col < rect.col + rect.cols; col++) {
+      ring.push({ col, row: rect.row - 1 }, { col, row: rect.row + rect.rows });
+    }
+    for (let row = rect.row; row < rect.row + rect.rows; row++) {
+      ring.push({ col: rect.col - 1, row }, { col: rect.col + rect.cols, row });
+    }
+    for (const p of ring) {
+      const neighborRoom = this.roomAt(p);
+      if (neighborRoom !== null && ROOM_DEFS[neighborRoom.type].kind !== 'open') continue;
+      consider(p);
+    }
+    const count = this.rng.intInRange(
+      BALANCE.maintenance.burstMessesMin,
+      BALANCE.maintenance.burstMessesMax,
+    );
+    for (let i = 0; i < count && candidates.length > 0; i++) {
+      const picked = candidates.splice(this.rng.intBelow(candidates.length), 1)[0]!;
+      this.addMess('water', picked);
+    }
   }
 
   /** Mess-proximity cache (§4.2 channel 1): rebuilt only when `messRevision`
@@ -1639,6 +1837,9 @@ export class World implements PathGrid {
     ) {
       // Mirror the REAL complication path (M2 review #11) so debug reproduces
       // the same bug class the game can hit, including death at health 0.
+      // KNOWN divergence (Stage-3 post-impl review NIT): the wear hook lives
+      // in updateTreatment, so a debug-forced complication adds NO wear —
+      // adding it here would shift debug rng draws for no test value.
       resolveTreatmentOutcome(this, this.reservations.get(patient.stage.reservationId)!, false);
     } else {
       patient.health -= BALANCE.treatment.complicationHealthPenalty;

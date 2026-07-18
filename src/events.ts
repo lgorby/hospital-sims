@@ -42,6 +42,9 @@ export interface EventMap {
   /** Stage B: a built room's footprint grew (expand tool) — re-render it. */
   roomChanged: { roomId: number };
   roomSold: { roomId: number };
+  /** Amenities Stage 3: a room broke down (breakRoom also emits roomChanged
+   *  for the redraw) — panels invalidate (the paused-staleness rule). */
+  roomBroken: { roomId: number };
   /** Amenities Stage 1: roomless prop placed/sold — render + panels react
    *  per-change (roomless props have no roomBuilt to piggyback on). */
   amenityPlaced: { col: number; row: number; kind: AmenityId };

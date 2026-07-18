@@ -3,6 +3,8 @@ import type { WorldRenderer } from '../render/renderer';
 import { TICKS_PER_DAY, TICKS_PER_GAME_HOUR } from '../sim/clock';
 import { BALANCE } from '../sim/data/balance';
 import { CONDITION_DEFS, CONDITION_IDS } from '../sim/data/conditions';
+import { roomFailure } from '../sim/data/rooms';
+import type { World } from '../sim/world';
 import { isTextEditable } from './dom';
 
 const SPAWN_BATCH = 5;
@@ -17,6 +19,8 @@ export class DebugPanel {
   constructor(
     private renderer: WorldRenderer,
     private commands: CommandQueue,
+    /** Stage 3: read-only room scan for the Break-a-room affordance. */
+    private world: World,
   ) {}
 
   mount(parent: HTMLElement): void {
@@ -56,6 +60,18 @@ export class DebugPanel {
     this.button('Fast-forward 1 day', () =>
       this.commands.push({ type: 'debugFastForward', ticks: TICKS_PER_DAY }),
     );
+    // Amenities Stage 3 (impl plan §S3.1): break the FIRST breakable
+    // in-service room — deterministic (Map insertion order) and dumb like the
+    // other debug buttons. The world handler runs the REAL breakRoom path
+    // (bursts included) and the command border keeps invalid targets inert.
+    this.button('Break a room', () => {
+      for (const room of this.world.rooms.values()) {
+        if (roomFailure(room.type) !== undefined && room.brokenSince === null) {
+          this.commands.push({ type: 'debugBreakRoom', roomId: room.id });
+          return;
+        }
+      }
+    });
     this.button('Toggle walkability overlay', () => {
       this.renderer.showWalkOverlay = !this.renderer.showWalkOverlay;
     });

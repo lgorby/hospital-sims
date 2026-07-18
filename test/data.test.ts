@@ -69,10 +69,10 @@ describe('SSOT data integrity', () => {
         for (const role of step.roles) usedRoles.add(role);
       }
     }
-    // Amenities Stage 2 (AMENITIES_PLAN §4.3): EVS works the facility JOB
-    // queue — dispatched via world.jobs (assignJobs), never condition steps
-    // or standing posts. A future maintenance role (Stage 3) joins this set.
-    const jobQueueRoles = new Set<string>(['evs']);
+    // Amenities Stages 2–3 (AMENITIES_PLAN §4.3/§5.3): EVS and Maintenance
+    // work the facility JOB queue — dispatched via world.jobs (assignJobs),
+    // never condition steps or standing posts.
+    const jobQueueRoles = new Set<string>(['evs', 'maintenance']);
     for (const role of ROLE_IDS) {
       const standingPostSomewhere =
         ROLE_DEFS[role].standingPost &&

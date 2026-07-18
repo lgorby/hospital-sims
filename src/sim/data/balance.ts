@@ -199,10 +199,29 @@ export const BALANCE = {
     /** Quality bonus per tile above minimum footprint (GDD §5). */
     qualityPerExtraTile: 1,
   },
+  /** Room failures & repair (amenities Stage 3, AMENITIES_PLAN §5). */
+  maintenance: {
+    /** Per-use breakdown-probability slope: p = wearFactor × wear, rolled
+     *  at each use completion (formulas.breakdownChance — the ONE
+     *  derivation). MTBFs ≈31 uses mechanical / ≈45 piping (§5.1) —
+     *  HARNESS-TUNED before ship. */
+    wearFactor: { mechanical: 0.002, piping: 0.001 },
+    /** Repair base duration, skill-scaled via treatmentDurationTicks. */
+    repairGameMinutes: 15,
+    /** A piping burst drops this many `water` messes (rng-inclusive). */
+    burstMessesMin: 2,
+    burstMessesMax: 4,
+  },
   /** Patient need meters + side-trips (amenities epic Stage 1,
    *  AMENITIES_PLAN §3.1–3.2). Meters share the vitals 0–100 scale. */
   needs: {
-    bladderPerGameHour: 10,
+    /** Stage-3 balance pass (owner report 2026-07-18 "bathrooms don't look
+     *  used", verified by harness probe: ~25 visits per 5 days at the old
+     *  10/h + 60-floor — patients were treated long before their ~4.5h
+     *  time-to-seek). 12/h + spawn floor 45 puts the average waiter at
+     *  ~3.1h to seek, in range of real door-to-treatment times.
+     *  ADOPT-UNLESS-VETOED (flagged in HANDOFF). */
+    bladderPerGameHour: 12,
     thirstPerGameHour: 8,
     /** Below this a waiting patient seeks the matching amenity. */
     seekThreshold: 35,
@@ -216,15 +235,24 @@ export const BALANCE = {
     accidentPatienceFloor: 1,
     restroomUseGameMinutes: 3,
     vendingUseGameMinutes: 1,
-    /** A break that never reached `using` is abandoned after this long. */
-    breakWatchdogGameMinutes: 30,
+    /** A break that never reached `using` is abandoned after this long.
+     *  Stage-3 balance pass (the owner's "bathrooms don't look used"
+     *  report, root-caused by harness trace): walking is ~2.1 game-min per
+     *  TILE (1.4 tiles/s real at 8 real-min days), so the original 30 only
+     *  covered a ~14-tile walk — the watchdog was aborting nearly every
+     *  legitimate cross-map trip mid-walk (373 claims → 23 completions on
+     *  seed 1341), wedging stalls and cascading into accidents. 120 covers
+     *  the full map with wrong-turn slack; genuinely lost claimants still
+     *  abandon within 2 game-hours. ADOPT-UNLESS-VETOED. */
+    breakWatchdogGameMinutes: 120,
     /** Retry hold after ANY failed/abandoned break (the dispatchHoldUntil
      *  analogue — a doomed side-trip must not rearm every tick). */
     breakRetryGameMinutes: 15,
     /** Charged per vending use through billFee (revenue). */
     vendingPrice: 5,
-    /** Spawn meter roll floor (max = stats.vitalsMax). */
-    spawnMeterMin: 60,
+    /** Spawn meter roll floor (max = stats.vitalsMax). Stage-3 balance
+     *  pass: 60 → 45 (see bladderPerGameHour note). */
+    spawnMeterMin: 45,
     /** Plant comfort-aura radius — Chebyshev (a square patch around the
      *  pot). DELIBERATELY different from room auras, which are Euclidean
      *  (`auraCoversTile`): a 1-tile prop reads fine as a square, and the

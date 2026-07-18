@@ -6,7 +6,14 @@ import { BALANCE } from './data/balance';
 import { CONDITION_IDS, type ConditionId } from './data/conditions';
 import type { PersonName } from './data/names';
 import { ROLE_IDS, type RoleId } from './data/roles';
-import { PROP_STYLE, ROOM_DEFS, ROOM_TYPES, type PropId, type RoomType } from './data/rooms';
+import {
+  PROP_STYLE,
+  ROOM_DEFS,
+  ROOM_TYPES,
+  roomFailure,
+  type PropId,
+  type RoomType,
+} from './data/rooms';
 import type { NeedBreak, Patient, PatientStage } from './entities/patient';
 import type { Room } from './entities/room';
 import type { Candidate, Job, Reservation, Staff, StaffDuty } from './entities/staff';
@@ -20,7 +27,7 @@ import { World, type Mess, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 
 /**
  * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
@@ -58,6 +65,13 @@ export const SAVE_VERSION = 5;
  * saves restore empty mess/job maps and messTicks 0. NOTE (§S2.6b): v5 also
  * added the `evs` ROLE, so `topUpCandidates` mints evs candidates on every
  * v≤4 load — deliberate stream divergence, the v1→v2 sonographer precedent.
+ *
+ * v5 → v6 (amenities epic Stage 3, AMENITIES_PLAN §5.5): rooms gain
+ * `wear`/`brokenSince`; jobs gain `roomId` and the `repair` kind becomes
+ * LEGAL (v5 payloads still reject it — version-aware reader). Migration is
+ * read-time defaults: pre-v6 rooms restore wear 0 / in service, pre-v6 jobs
+ * roomId null. v6 also added the `maintenance` ROLE — `topUpCandidates`
+ * mints its candidates on every v≤5 load (the evs precedent).
  * Anything below 1 or above SAVE_VERSION is refused.
  */
 export function isLoadableVersion(version: number): boolean {
@@ -179,6 +193,11 @@ export interface SavedRoom {
   rect: SavedRect;
   door: { inside: SavedPoint; outside: SavedPoint } | null;
   quality: number;
+  /** v6 (amenities Stage 3): use count since last breakdown/repair. Pre-v6
+   *  saves restore 0. FROZEN position — after quality (byte-identity). */
+  wear: number;
+  /** v6: breakdown tick, null = in service. Pre-v6 saves restore null. */
+  brokenSince: number | null;
 }
 
 export interface SavedReservation {
@@ -212,13 +231,16 @@ export interface SavedMess {
   since: number;
 }
 
-/** v5 (amenities Stage 2, §4.5): a facility job. `repair` is a reserved
- *  union value with NO legal v5 target — the border REJECTS it (a
- *  shape-valid repair job would sit queued forever, pre-impl MINOR 10). */
+/** v5 (amenities Stage 2, §4.5): a facility job. `repair` was a reserved
+ *  union value with NO legal v5 target — v5 payloads still reject it; v6
+ *  accepts it with a roomId-flavored target (Stage 3, §5.5). */
 export interface SavedJob {
   id: number;
   kind: 'clean' | 'empty' | 'repair';
   tile: SavedPoint;
+  /** v6 (Stage 3): the room a repair job fixes; null for clean/empty.
+   *  Pre-v6 saves restore null. FROZEN position — after tile. */
+  roomId: number | null;
   staffId: number | null;
   phase: 'queued' | 'assigned' | 'working';
   ticksRemaining: number;
@@ -672,12 +694,18 @@ function writeRoom(room: Room): SavedRoom {
         ? null
         : { inside: writePoint(room.door.inside), outside: writePoint(room.door.outside) },
     quality: room.quality,
+    wear: room.wear,
+    brokenSince: room.brokenSince,
   };
 }
 
-function readRoom(value: unknown, label: string): Room {
+/** Version-aware since v6 (the readPatient precedent): pre-v6 rooms restore
+ *  wear 0 / in service. */
+function readRoom(value: unknown, label: string, saveVersion: number): Room {
   const o = asRecord(value, label);
   const door = o.door === null ? null : asRecord(o.door, `${label}.door`);
+  const wear = saveVersion < 6 ? 0 : asInt(o.wear, `${label}.wear`);
+  if (wear < 0) fail(`${label}.wear`, 'a non-negative use count');
   return {
     id: asInt(o.id, `${label}.id`),
     type: asOneOf(o.type, ROOM_TYPES, `${label}.type`),
@@ -690,6 +718,8 @@ function readRoom(value: unknown, label: string): Room {
             outside: readPoint(door.outside, `${label}.door.outside`),
           },
     quality: asNumber(o.quality, `${label}.quality`),
+    wear,
+    brokenSince: saveVersion < 6 ? null : asIntOrNull(o.brokenSince, `${label}.brokenSince`),
   };
 }
 
@@ -733,6 +763,7 @@ function writeJob(j: Job): SavedJob {
     id: j.id,
     kind: j.kind,
     tile: writePoint(j.tile),
+    roomId: j.roomId,
     staffId: j.staffId,
     phase: j.phase,
     ticksRemaining: j.ticksRemaining,
@@ -740,16 +771,23 @@ function writeJob(j: Job): SavedJob {
   };
 }
 
-function readJob(value: unknown, label: string): Job {
+/** Version-aware since v6: `repair` stays REJECTED in v5 payloads (its v5
+ *  reservation had no legal target — pre-impl MINOR 10) and is legal from
+ *  v6 with a roomId target (Stage 3, §5.5). */
+function readJob(value: unknown, label: string, saveVersion: number): Job {
   const o = asRecord(value, label);
   const kind = asOneOf(o.kind, ['clean', 'empty', 'repair'], `${label}.kind`);
-  // `repair` is REJECTED in v5 (pre-impl MINOR 10): a reserved union value
-  // with no legal target — it would sit queued forever.
-  if (kind === 'repair') fail(`${label}.kind`, "a v5-workable job kind ('repair' is Stage 3)");
-  // Bounded like readNeedBreak (§S2.4): the longest job duration at the
-  // slowest skill — a hostile timer would pin the worker indefinitely.
+  if (kind === 'repair' && saveVersion < 6) {
+    fail(`${label}.kind`, "a v5-workable job kind ('repair' is Stage 3)");
+  }
+  // Bounded like readNeedBreak (§S2.4), KIND-AWARE (Stage-3 pre-impl MINOR
+  // 6 — one shared max() would loosen the clean/empty hostile-timer bound
+  // ~7.5×; borders get stricter, never looser): the job's own longest
+  // duration at the slowest skill.
   const maxJobTicks = treatmentDurationTicks(
-    Math.max(BALANCE.mess.cleanGameMinutes, BALANCE.mess.emptyGameMinutes),
+    kind === 'repair'
+      ? BALANCE.maintenance.repairGameMinutes
+      : Math.max(BALANCE.mess.cleanGameMinutes, BALANCE.mess.emptyGameMinutes),
     BALANCE.stats.min,
     0,
   );
@@ -761,6 +799,7 @@ function readJob(value: unknown, label: string): Job {
     id: asInt(o.id, `${label}.id`),
     kind,
     tile: readPoint(o.tile, `${label}.tile`),
+    roomId: saveVersion < 6 ? null : asIntOrNull(o.roomId, `${label}.roomId`),
     staffId: asIntOrNull(o.staffId, `${label}.staffId`),
     phase: asOneOf(o.phase, ['queued', 'assigned', 'working'], `${label}.phase`),
     ticksRemaining,
@@ -990,7 +1029,7 @@ function readRestorePayload(root: Record<string, unknown>, saveVersion: number):
       asString(k, `hintedOnce[${i}]`),
     ),
     grid: decodeGrid(asString(root.grid, 'grid'), BALANCE.map.cols, BALANCE.map.rows),
-    rooms: asArray(root.rooms, 'rooms').map((r, i) => readRoom(r, `rooms[${i}]`)),
+    rooms: asArray(root.rooms, 'rooms').map((r, i) => readRoom(r, `rooms[${i}]`, saveVersion)),
     // v3→v4: pre-v4 saves carry no amenities — restore an empty store.
     amenities:
       saveVersion < 4
@@ -1002,7 +1041,9 @@ function readRestorePayload(root: Record<string, unknown>, saveVersion: number):
         ? []
         : asArray(root.messes, 'messes').map((m, i) => readMess(m, `messes[${i}]`)),
     jobs:
-      saveVersion < 5 ? [] : asArray(root.jobs, 'jobs').map((j, i) => readJob(j, `jobs[${i}]`)),
+      saveVersion < 5
+        ? []
+        : asArray(root.jobs, 'jobs').map((j, i) => readJob(j, `jobs[${i}]`, saveVersion)),
     patients: asArray(root.patients, 'patients').map((p, i) =>
       readPatient(p, `patients[${i}]`, saveVersion),
     ),
@@ -1220,25 +1261,55 @@ function validateReferences(data: RestorePayload): void {
     messTileKeys.add(key);
   });
 
-  // -- jobs (v5, §S2.4): job↔target BOTH ways (clean → a mess on the tile;
-  // empty → a trashcan amenity on the tile; ≤1 job per tile; every mess has
-  // a job — the addMess mint invariant), phase ⇔ staffId consistency, and
-  // assigned/working back-references an `evs` worker whose duty is this job.
+  // -- jobs (v5, §S2.4 / v6, §S3.5): job↔target BOTH ways (clean → a mess on
+  // the tile; empty → a trashcan amenity on the tile; repair → a BROKEN
+  // failure-def room with the anchor inside its rect; ≤1 job per tile; every
+  // mess has a clean/empty job — the addMess mint invariant), phase ⇔
+  // staffId consistency, and assigned/working back-references a worker of
+  // the job's TRADE (evs for clean/empty, maintenance for repair) whose
+  // duty is this job.
   const trashcanTileKeys = new Set(
     data.amenities.filter((a) => a.kind === 'trashcan').map((a) => `${a.tile.col},${a.tile.row}`),
   );
   const staffById = new Map(data.staff.map((s) => [s.id, s]));
   const jobTileKeys = new Set<string>();
+  const cleanupTileKeys = new Set<string>(); // clean/empty only — repair anchors don't service messes
+  const repairRoomIds = new Set<number>();
   data.jobs.forEach((j, i) => {
     if (!data.grid[j.tile.col]?.[j.tile.row]) fail(`jobs[${i}].tile`, 'a tile inside the map');
     const key = `${j.tile.col},${j.tile.row}`;
     if (jobTileKeys.has(key)) fail(`jobs[${i}].tile`, `one job per tile (${key} is targeted twice)`);
     jobTileKeys.add(key);
+    if (j.kind !== 'repair') cleanupTileKeys.add(key);
     if (j.kind === 'clean' && !messTileKeys.has(key)) {
       fail(`jobs[${i}].tile`, `a mess on the clean job's tile (none at ${key})`);
     }
     if (j.kind === 'empty' && !trashcanTileKeys.has(key)) {
       fail(`jobs[${i}].tile`, `a trashcan on the empty job's tile (none at ${key})`);
+    }
+    // v6 (Stage 3): repair ⇔ roomId; clean/empty carry none.
+    if (j.kind === 'repair') {
+      if (j.roomId === null) fail(`jobs[${i}].roomId`, "a room for a 'repair' job");
+      const room = roomsById.get(j.roomId);
+      if (!room) fail(`jobs[${i}].roomId`, `a room in this save (got ${j.roomId})`);
+      if (!roomFailure(room.type)) {
+        fail(`jobs[${i}].roomId`, `a room type that can break (${room.type} has no failure def)`);
+      }
+      if (room.brokenSince === null) {
+        fail(`jobs[${i}].roomId`, `a BROKEN room (room ${room.id} is in service)`);
+      }
+      if (repairRoomIds.has(j.roomId)) {
+        fail(`jobs[${i}].roomId`, `one repair job per room (room ${j.roomId} has two)`);
+      }
+      repairRoomIds.add(j.roomId);
+      const inRect =
+        j.tile.col >= room.rect.col &&
+        j.tile.col < room.rect.col + room.rect.cols &&
+        j.tile.row >= room.rect.row &&
+        j.tile.row < room.rect.row + room.rect.rows;
+      if (!inRect) fail(`jobs[${i}].tile`, `an anchor inside room ${room.id}'s footprint`);
+    } else if (j.roomId !== null) {
+      fail(`jobs[${i}].roomId`, `null for a '${j.kind}' job (got ${j.roomId})`);
     }
     if (j.phase === 'queued') {
       if (j.staffId !== null) {
@@ -1248,8 +1319,10 @@ function validateReferences(data: RestorePayload): void {
       if (j.staffId === null) fail(`jobs[${i}].staffId`, `a worker for an ${j.phase} job`);
       const member = staffById.get(j.staffId);
       if (!member) fail(`jobs[${i}].staffId`, `a staff member in this save (got ${j.staffId})`);
-      if (member.role !== 'evs') {
-        fail(`jobs[${i}].staffId`, `an EVS worker (staff ${j.staffId} is a ${member.role})`);
+      const trade = j.kind === 'repair' ? 'maintenance' : 'evs';
+      if (member.role !== trade) {
+        const tradeLabel = trade === 'evs' ? 'an EVS' : 'a Maintenance Tech';
+        fail(`jobs[${i}].staffId`, `${tradeLabel} worker (staff ${j.staffId} is a ${member.role})`);
       }
       if (member.duty.kind !== 'job' || member.duty.jobId !== j.id) {
         fail(`jobs[${i}].staffId`, `a worker whose duty back-references this job`);
@@ -1269,10 +1342,40 @@ function validateReferences(data: RestorePayload): void {
     }
   });
   // Reverse direction: a mess with NO job would never be cleaned — an
-  // uncleanable permanent reputation leak (the addMess invariant).
+  // uncleanable permanent reputation leak (the addMess invariant). Since v6
+  // the servicing job must be clean/empty: a repair anchor's job leaves at
+  // repair completion without touching messes, so a mess whose ONLY cover
+  // is a repair job is that same leak deferred (pre-impl MAJOR 2b class —
+  // the sim never bursts onto job-held tiles).
   data.messes.forEach((m, i) => {
-    if (!jobTileKeys.has(`${m.tile.col},${m.tile.row}`)) {
-      fail(`messes[${i}]`, 'a job targeting the mess tile (none does)');
+    if (!cleanupTileKeys.has(`${m.tile.col},${m.tile.row}`)) {
+      fail(`messes[${i}]`, 'a clean/empty job targeting the mess tile (none does)');
+    }
+  });
+
+  // -- broken rooms (v6, §S3.5): breakdown state is internally consistent —
+  // broken only on failure-def types, wear 0 while broken (applyRoomUse
+  // no-ops), brokenSince within the played timeline, and EXACTLY one repair
+  // job (breakRoom mints it; only repair completion or sellRoom remove it —
+  // the "mint on load" alternative was rejected: id churn + divergence).
+  data.rooms.forEach((room, i) => {
+    if (room.brokenSince === null) {
+      if (repairRoomIds.has(room.id)) {
+        fail(`rooms[${i}]`, `no repair job on an in-service room (room ${room.id} has one)`);
+      }
+      return;
+    }
+    if (!roomFailure(room.type)) {
+      fail(`rooms[${i}].brokenSince`, `null for a room type that never breaks (${room.type})`);
+    }
+    if (room.wear !== 0) {
+      fail(`rooms[${i}].wear`, `0 while broken (got ${room.wear})`);
+    }
+    if (room.brokenSince < 0 || room.brokenSince > data.tick) {
+      fail(`rooms[${i}].brokenSince`, `a tick within the played timeline (got ${room.brokenSince})`);
+    }
+    if (!repairRoomIds.has(room.id)) {
+      fail(`rooms[${i}]`, `a repair job for broken room ${room.id} (none targets it)`);
     }
   });
 

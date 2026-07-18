@@ -1,14 +1,26 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-18 (amenities Stage 2 SHIPPED, **PUSHED + DEPLOYED** — `43caea9` on `master`, CI green, production serving the new build)
-**OWNER DECISIONS PENDING (adopt-unless-vetoed, both review-recommended):**
+**Last updated:** 2026-07-18 (amenities Stage 3 SHIPPED — the AMENITIES EPIC
+IS COMPLETE; SAVE_VERSION 6, 497 tests, all gates green)
+**OWNER DECISIONS PENDING (adopt-unless-vetoed, all review-recommended):**
 (1) the clean-day +2 cleanliness rep bonus requires ≥1 arrival that day (the
 wait-bonus "an empty hospital isn't fast" principle — ratified §4.2 didn't
 contemplate empty days); (2) idle EVS stand where released instead of
 wandering (matches all released staff; §4.4's "wander" overstated). Both are
 one-line reverts if vetoed (`cleanlinessRepDelta` in formulas.ts; no code
 for the second — it's the absence of a wander system).
-**State: M0–M4 + audit + save/load + V1 DoD + Expansion 1 + art pass + DEPLOY + Phase 2 (seed challenges) + HINTS + UI polish + build-UX + the FULL capacity & growth epic + Quit-to-Title + amenities **Stage 1** (needs/restroom/amenities, SAVE_VERSION 4) + amenities **Stage 2** (vomit/litter/accident messes, trashcan overflow, the facility JOB QUEUE — the new `job` StaffDuty kind — EVS Worker role, cleanliness patience + daily-rep channels, mess decals, SAVE_VERSION 5). Live at https://hospital-sims.vercel.app (git push to `master` auto-deploys). **439 tests, all gates green.** Stage 2 ran the full workflow: S2 plan pre-impl-reviewed (7 MAJOR folded — incl. the honest rng-blast-radius section: the evs role's CONSTRUCTOR candidates dominate, so the role landed WITH the re-pins) → freeze → 3 parallel tracks → 2 adversarial reviews (code/contract: 1 MAJOR through-wall clean, fixed via `world.canApproach` guarding the work-tile derivation; live-drive: COMMIT, 0 MAJOR, 12/12 checklist PASS — its 3 visual MINORs fixed: prop-tile decal spill, hover-hint honesty) → ALL findings fixed + regressions. NEXT: amenities **Stage 3 (failures + maintenance)** per `docs/AMENITIES_PLAN.md` §5 — room wear/broken, repair jobs on the Stage-2 machinery, piping bursts, Maintenance Tech, SAVE_VERSION 6. Then: patient click-highlight (small), capacity/contention hints (small). See Next.**
+(3) **Stage-3 balance pass (the owner's "bathrooms don't look used" report,
+2026-07-18):** `breakWatchdogGameMinutes` 30→120 — the old value covered a
+~14-tile walk (walking costs ~2.1 game-min/tile), so the watchdog aborted
+nearly every legitimate restroom trip MID-WALK (harness trace: 373 claims →
+23 completions; patients visibly walked toward the bathroom and turned
+around — the exact reported symptom); plus `bladderPerGameHour` 10→12 and
+`spawnMeterMin` 60→45 (time-to-seek ~4.5h→~3.1h). Post-fix: 128–169 visits
+per 5-day run (was 12–33), live-drive confirmed near-continuous stall
+occupancy. All three numbers in `BALANCE.needs` — one-line reverts each.
+(4) Room `broken: boolean` became `brokenSince: number | null` (one field
+serves the flag AND the instance-keyed breakdown toast — design MINOR 8).
+**State: M0–M4 + audit + save/load + V1 DoD + Expansion 1 + art pass + DEPLOY + Phase 2 (seed challenges) + HINTS + UI polish + build-UX + the FULL capacity & growth epic + Quit-to-Title + the FULL AMENITIES EPIC — **Stage 1** (needs/restroom/amenities, SAVE_VERSION 4), **Stage 2** (messes/EVS/job queue, SAVE_VERSION 5), **Stage 3** (use-based wear + breakdowns, repair jobs, Maintenance Tech, piping bursts, SAVE_VERSION 6). Live at https://hospital-sims.vercel.app (git push to `master` auto-deploys). **497 tests, all gates green.** Stage 3 ran the full workflow: S3 plan pre-impl-reviewed (3 MAJOR folded: structurally-workable repair anchors, guaranteed repair mints + burst exclusions, sell-occupancy semantics) → freeze → sim inline + parallel UI/render agent tracks → 2 adversarial reviews (code/contract: 1 MAJOR — a mess on a WALKABLE repair anchor suppressed its clean mint, a save-bricking class; fixed via addMess re-anchoring the repair job; live-drive: COMMIT, 0 MAJOR, 9/9 PASS, v5→v6 proven on a real production save) → ALL findings fixed + regressions. The Stage-3 session ALSO root-caused and fixed the owner's "bathrooms don't look used" report (see OWNER DECISIONS 3 — a watchdog/walk-speed arithmetic bug, not a Stage-3 defect). NEXT: quick passes — fun-name pool expansion (owner ask), patient click-highlight, capacity/contention hints; then scope the owner's new asks (family/visitors, wheelchairs, seated exams — see the design backlog). See Next.**
 
 ## What this project is
 
@@ -24,6 +36,7 @@ Both were hardened by independent adversarial reviews before any code was writte
 
 | Commit | Contents |
 |---|---|
+| *(amenities 3)* | **Amenities epic Stage 3 — failures & maintenance (SAVE_VERSION 6, EPIC COMPLETE)**: `RoomDef.failure` (mechanical: xray/ct/mri/nucMed/surgery/resp; piping: restroom/dialysis; ultrasound excluded — a cart) + `Room.wear`/`brokenSince` (the tick doubles as the instance-keyed hint — design MINOR 8); `applyRoomUse` = THE wear choke point (updateTreatment after BOTH branches incl. the missing-patient early-return; restroom completions in patientNeeds; no-op while broken ⇒ border pins broken ⇒ wear 0), rolling `formulas.breakdownChance` (wearFactor × wear, clamped); `breakRoom` = THE breakdown path (flag → rule-8 cancel of gatherings hint-free, actives finish → guaranteed repair mint on a STRUCTURALLY WORKABLE anchor (pre-impl MAJOR 1: the 2×3 west-door restroom's stalls are all door/stall/through-wall-neighbored) → piping burst (2–4 water messes, in-room + adjacent corridor only, pre-messed/job-held tiles excluded) → roomBroken + roomChanged); `capacityOf` = 0 while broken (one line gates ALL dispatch + stall claims; the reservation-slot border stays grid-derived so actives round-trip); repair jobs ride the FROZEN Stage-2 loop via a per-role kind map (evs: clean/empty; maintenance: repair); `addMess` re-anchors a repair job off a mess tile (post-impl MAJOR: walkable anchors + patients-drop-messes-at-their-feet = a suppressed clean mint = a save that refuses to load); sellRoom's orphan sweep extends to roomId-targeted jobs; expand rejected while broken; `debugBreakRoom` (real-path debug, challenge-dropped); SAVE_VERSION 6 (readRoom/readJob version params; repair legal from v6 with roomId⇔broken⇔exactly-one both-ways border; kind-aware ticks bound; v5 fixture-LOAD conversion) + the round-trip gate pins wear>0 + queued/working repairs + burst water at ONE tick; hints `broken:<id>:<since>` + `role:maintenance`; inspect OUT OF SERVICE pending/underway + phase-aware duty labels ("Heading to a repair"); greyed floors + hazard decals (in roomVisuals — leak-free); ROLE_DEFS.maintenance (orange, re-pin audit run — seed 1338 SURVIVED via the balance pass). PLUS the restroom-watchdog balance fix (OWNER DECISIONS 3). Reviews: code/contract 1 MAJOR/2 MINOR/2 NIT (all fixed); live-drive COMMIT 0 MAJOR 9/9 PASS. 58 net-new tests (497 total) |
 | *(amenities 2)* | **Amenities epic Stage 2 — EVS, messes & cleanliness (SAVE_VERSION 5)**: `world.messes` (vomit: per-tick Bernoulli over the frozen stage set at sub-critical health; litter: vending-use drops unless a non-full trashcan within Chebyshev radius absorbs — overflow at fill 8 mints the `empty` job FIRST then the overflow mess, no clean-job double-mint; accidents drop messes too) + `world.jobs` (the facility job queue — `Job` + the new `{kind:'job'}` StaffDuty; the FROZEN assignJobs loop: oldest = lowest id, held jobs skipped never blocking, per-job retry holds; work-tile derivation guarded by **`world.canApproach`** — the code-review MAJOR: Manhattan adjacency holds THROUGH edge-walls, so an in-room mess with a claimed tile was previously "worked" from the corridor; completion orders frozen non-reentrantly; fire/stall/orphan analogues of rules 7/8; workers step out of walled rooms unconditionally) + `ROLE_DEFS.evs` (landed WITH the fixed-seed re-pins — a new role's constructor candidates shift every seeded stream) + cleanliness (proximity ×1.25 once via revision-cached `hasMessNear`; `cleanlinessRepDelta(messTicks, arrivals)` at closeDay beside the wait bonus — clean-day +2 gated on arrivals>0, flagged design delta) + geometry sweeps (build/expand/sell/placeAmenity delete messes+jobs; sellAmenity takes the overflow mess WITH the can) + SAVE_VERSION 5 (messes/jobs after amenities — frozen positions; border: job↔target both ways, every-mess-has-a-job, working-worker adjacency, fill ≤ capacity, repair rejected/water accepted) + decals in a new `decalLayer` (per-change, tile-hashed variety; prop-tile decals spill toward the front edge — live-drive MINOR) + `role:evs` hint row + report Cleanliness row + duty labels. Reviews: code/contract 1 MAJOR/1 MINOR/2 NIT (all fixed, `canApproach` + border bounds + SSOT move); live-drive **COMMIT, 0 MAJOR, 12/12 PASS** (v4-compat proven on a real production save; 3 visual MINORs fixed). 62 net-new tests (439 total) |
 | *(amenities 1)* | **Amenities epic Stage 1 — needs, restroom, freestanding amenities (SAVE_VERSION 4)**: bladder+thirst meters (decay.ts, spawn rng-rolled 60–100) with the ×1.25-per-unmet patience multiplier; `needBreak` side-trips (`systems/patientNeeds.ts` — the `lost`-precedent sub-state: trigger gates incl. findPath reachability + failed-claim retry hold, frozen walking→using flip with stalled-arrival abandon, watchdog, accident-mid-break clear; dispatcher skips on-break patients); restroom room (2×3, stalls = Stage-A capacity, occupancy DERIVED from claims — never reservations); freestanding `AMENITY_DEFS` props via `placeAmenity`/`sellAmenity` (blocked-tile BFS + entrance rejection + at/next actor checks + `recomputePaths`; amenities are ALWAYS non-walkable — the room-build 'Blocked by an object' rejection depends on it); vending $5/use through `billFee` with `source: 'vending'` (checklist ignores it — live-drive MAJOR); plant Chebyshev comfort aura (deliberately ≠ Euclidean room auras); SAVE_VERSION 4 (readPatient version param, version-aware readTally, amenities after rooms, border: claim exclusivity + both-ways amenity↔grid + bounded use timers); restroom expand/sell gate 'Occupied' on live claims (walking counts). Reviews: code/contract (1 MAJOR: vending stand tile inside walled rooms — stand pick + flip now require the standing-zone rule; 2 MINOR: same-tick vending fallback when the restroom is full, Chebyshev comment) + live-drive (2 MAJOR: vending completing "Treat your first patient", blocked-panel unbounded growth click-blocking the inspect card — row cap 8 + "+N more" + CSS max-height; PASS on all 13 checklist items, zero console errors). 70 new tests (377 total) |
 | `3c2f3bd` | M0 (scaffold, iso world, loop) + M1 (rooms, A*, walking) + fixes from two code reviews |
@@ -157,6 +170,40 @@ Both were hardened by independent adversarial reviews before any code was writte
   metric** (closeDay applies it beside the wait bonus, before the snapshot;
   the report row displays it); the clean-day bonus requires arrivals > 0
   (flagged design delta — the wait-bonus "empty hospital" principle).
+- **`applyRoomUse` is THE wear choke point** (Stage 3): unconditional after
+  BOTH updateTreatment branches (incl. the missing-patient early-return —
+  one rng-order rule, no forks) and at restroom completions; zero-rng no-op
+  for no-failure rooms AND while broken (the border pins broken ⇒ wear 0,
+  and a finishing occupant can't double-break). `breakdownChance` in
+  formulas.ts is the ONE probability derivation.
+- **`breakRoom` is THE breakdown path** (roll + debugBreakRoom share it),
+  frozen order: flag → cancel gatherings (rule-8, hint:false; actives
+  finish — disable, never harm) → mint the repair job → piping burst →
+  events. `capacityOf` returns 0 while broken — that ONE line gates every
+  dispatch path and restroom claim; the save border's reservation-slot
+  bound stays GRID-derived and broken-blind (actives must round-trip).
+- **A repair anchor must be STRUCTURALLY WORKABLE and never job-held**
+  (Stage-3 pre-impl MAJOR 1 + 2a, post-impl MAJOR 1): eligible = no job
+  targets it AND ≥1 orthogonal neighbor passes isWalkable + standableTile
+  (same-room) + canApproach — claim-free, rng-free, at EVERY fallback
+  level. `addMess` on a repair-held tile RE-ANCHORS the repair job first
+  (releasing any bound tech to re-converge) so the clean mint is never
+  suppressed — a mess whose only cover is a repair job is a save that
+  refuses to load after the repair completes.
+- **broken ⇔ exactly one repair job** (v6 border, both ways; repair ⇒
+  roomId resolves to a broken failure-def room, anchor inside its rect;
+  clean/empty ⇒ roomId null; the mess-reverse-check requires CLEAN/EMPTY
+  cover — a repair job doesn't service messes). "Mint on load" was
+  rejected: breakRoom's guaranteed mint is the invariant's source.
+- **Broken-room geometry**: expand rejected ('Out of service — repair it
+  first'); sell legal SUBJECT TO the normal occupancy gates (a working
+  tech inside blocks 'Someone is inside' — fire-then-sell is the remedy;
+  validateRoomSell was NOT weakened); sellRoom deletes roomId-targeted
+  jobs and releases their workers.
+- **Job duty labels are phase-aware** (live-drive MINOR 2): en-route reads
+  "Heading to a mess/trashcan/repair", the kind label ("Cleaning" /
+  "Repairing") only while `working` — the room card's pending/underway
+  split and the staff card must never contradict.
 
 ## Working agreements (user-established)
 
@@ -173,36 +220,53 @@ Both were hardened by independent adversarial reviews before any code was writte
 - **Camera input polish: DONE** (2026-07-17, trackpad complaint). `renderer.ts` wheel handler: plain wheel / two-finger scroll → pan both axes (fixes trackpad up/down, which the old wheel-zoom binding ate); ctrl/meta+wheel (= trackpad pinch) → continuous cursor-anchored zoom (MIN_ZOOM 0.5 .. MAX_ZOOM 2, was 3 discrete steps). Known tradeoff: a classic mouse wheel now pans; mouse users zoom via ctrl+wheel.
 - **Input supported today = mouse + trackpad ONLY** (clarified 2026-07-17: an owner touchscreen report turned out to be finger-on-display, which the game doesn't handle — the fix above is wheel-based, i.e. mouse/trackpad). **Touchscreen / touch input is DEFERRED** — GDD §11 item 17: touch gestures emit *touch* pointer events the canvas ignores; adding one-finger pan/tap + two-finger pinch (via Pointer Events, coexisting with tap-select/drag-build) is a self-contained future pass that makes the game tablet-playable. Owner chose to build it later.
 - **View rotation: SCOPED, not built** — GDD §11 item 16 + `TECH_PLAN.md` §2.7. It's a rendering-architecture milestone (orientation-aware `iso.ts` projection+picking, `depthKey`, wall far/near, and character facings), NOT input polish — give it its own milestone + pre-implementation review. Do not conflate with the camera-input pass above.
-- **NEXT SESSION STARTS HERE → amenities epic Stage 3 (failures +
-  maintenance).** Stages 1–2 SHIPPED (commit table). The contract stack:
-  `docs/AMENITIES_PLAN.md` v2 RATIFIED (§5 is Stage 3: `RoomDef.failure`
-  kinds mechanical/piping, use-based `room.wear` rolled at completion —
-  restroom visits increment wear in `updatePatientNeeds`, treatments in
-  the treatment system — `broken` rooms via `capacityOf = 0` (disable,
-  never harm; gathering reservations rule-8-cancelled; actives finish),
-  repair jobs on the SHIPPED Stage-2 job machinery (`Job.kind 'repair'`
-  is already in the union + save schema — v5 border REJECTS it, v6 must
-  accept + validate a roomId-flavored target), piping bursts spawn 2–4
-  `water` messes (kind + decal texture already shipped) on in-room +
-  adjacent corridor tiles, `ROLE_DEFS.maintenance` (~$140/day, orange —
-  NOTE: a new role shifts every fixed-seed stream via constructor
-  candidates, land it WITH the re-pins like evs), broken-room geometry
-  rules (no expand while broken; sell allowed, orphan rule clears the
-  repair job), SAVE_VERSION 6 (`room.wear`/`broken`; wearFactor MTBFs
-  ≈31 uses mechanical / 45 piping — §5.1 numbers, HARNESS-TUNED before
-  ship), `broken:<roomId>` hint rows keyed per-instance + the `roomBroken`
-  event joining the blocked-panel invalidate list). Add the S3 section to
-  `docs/AMENITIES_IMPL_PLAN.md` per the proven per-stage workflow: plan →
-  pre-impl review → freeze → parallel tracks → 2 adversarial reviews →
-  gates → commit → push. Banked pre-existing NITs (fix opportunistically):
-  the trap-BFS doesn't re-check existing ATRIUM footprints; room/expand
-  ghost validity keys omit cash while paused (the AMENITY hover hint now
-  validates honestly — Stage-2 fix — rooms still don't); patients stand in
-  messes (V1 collision, accepted); wage-accrual float dust in cash
-  (pre-existing, HUD rounds it). Quick passes queued behind the epic:
-  patient click-highlight (thought log already pans; add a selection
-  pulse) and capacity/contention hints ("expand your ER or build another"
-  — the panel's `roomChanged` invalidation is pre-wired).
+- **Amenities epic: COMPLETE (2026-07-18)** — all three stages shipped
+  (commit table); `docs/AMENITIES_PLAN.md` + the impl plan's S1/S2/S3
+  sections all marked IMPLEMENTED. The owner's original ask ("trashcans,
+  vending, restrooms, EVS, maintenance, piping to go bad, people throwing
+  up") is playable end-to-end. Watch items: wearFactor MTBFs (≈31/≈45
+  uses) were harness-tuned but not yet felt over long real sessions; the
+  restroom-usage balance pass (OWNER DECISIONS 3) awaits the owner's feel
+  check on the live build.
+- **NEXT SESSION STARTS HERE → quick passes, in order:** (1) **fun-name
+  pool expansion** (owner ask 2026-07-18): grow FIRST_NAMES/LAST_NAMES in
+  `src/sim/data/names.ts` — the draw COUNT is unchanged (picks shift, so
+  re-pin any test that pins a literal name; grep first); keep the
+  warm/Theme-Hospital-silly register. (2) patient click-highlight (thought
+  log already pans; add a selection pulse). (3) capacity/contention hints
+  ("expand your ER or build another" — the panel's `roomChanged`
+  invalidation is pre-wired). Banked NITs (fix opportunistically): the
+  trap-BFS doesn't re-check existing ATRIUM footprints; room/expand ghost
+  validity keys omit cash while paused; patients stand in messes (V1
+  collision, accepted); wage-accrual float dust (HUD rounds it); Stage-3
+  live-drive: sparks decal reads subtle at default zoom (grey floor
+  carries it), restroom "In use" line lists "(on the way)" walkers under
+  an "In use" header, and REJECTED build/expand/sell modes stay armed
+  after the reason toast (pre-existing; Esc is the exit).
+- **Owner asks 2026-07-18 (answered + scoped, pending owner priorities):**
+  (a) *Do patients bring family?* Not yet — GDD §11 item 15 (family &
+  visitors) is designed at sketch level only; needs a milestone (non-patient
+  walkers, seating pressure, leave-together logic). (b) *Wheelchair
+  patients?* Not designed — would be a patient mobility variant (spawn mix
+  flag, slower speed, sprite variant, maybe wheelchair-accessible standing
+  spots); worth a small design doc before code; pairs naturally with
+  (c) *patients sitting during exams* — a render/animation pass (seated
+  pose on bed/chair while a reservation is active; the §2.6 art contract
+  supports new poses as texture variants, no atlas break). (d) **AUDIO**
+  (owner ask 2026-07-18): "overhead pages, critical patient arriving
+  alerts, stroke alerts in rooms, missing patients, just the business of a
+  hospital setting." The game has NO audio subsystem today, so this is a
+  MILESTONE, not a sprinkle: a WebAudio layer driven by the EXISTING
+  EventBus (the events are already there — patientSpawned by acuity/
+  condition for arrival + stroke alerts, patientLost for "missing patient"
+  pages, roomBroken, patientDied, dayEnded chimes), an ambient bed
+  (murmur/PA-crackle overhead pages — procedural or licensed samples is a
+  design choice), volume/mute settings persisted outside saves, and the
+  browser autoplay-gesture rule (audio can only start after a click —
+  title screen is the natural gate). Sim stays silent by design (audio is
+  a render-side EventBus consumer — determinism untouched). Needs its own
+  design pass (cue list, mixing, annoyance budget) before code. None
+  started — awaiting owner priority call vs the quick passes above.
 - **Capacity & growth epic: COMPLETE (2026-07-18)** — all three stages
   shipped same-day (see the `*(stage 0/A/B)*` commit-table rows);
   `docs/CAPACITY_PLAN.md` marked IMPLEMENTED with the shipped deltas. The

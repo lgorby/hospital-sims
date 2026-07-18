@@ -614,6 +614,419 @@ room over a mess (mess swept); daily report cleanliness row both ways
 messes and clears on hire — including while paused; console hygiene
 throughout.
 
+## S3 — Stage 3 implementation plan (failures + maintenance) — IMPLEMENTED (2026-07-18)
+
+**Shipped** through the full workflow: pre-impl review (3 MAJOR / 4 MINOR /
+3 NIT folded below) → freeze → 3 tracks (sim inline + parallel UI/render
+agents) → 2 adversarial reviews. Code/contract review: **1 MAJOR** (a mess
+on a WALKABLE repair anchor suppressed its clean-job mint via mintJob's
+one-per-tile check — a border-invalid world whose own save refused to load;
+fixed: `addMess` re-anchors the repair job off the tile, releasing any bound
+tech to re-converge) + 2 MINOR (the anchor's last-resort fallback now skips
+job-held tiles; three promised tests added) + 2 NIT (debugForce wear
+divergence documented; a vacuous fixture loop replaced) — all fixed with
+regression tests. Live-drive review: **COMMIT — 0 MAJOR, 9/9 checklist
+PASS** (v5→v6 compat proven on a REAL production save; restroom usage
+visibly fixed: near-continuous stall occupancy from a busy lobby). Its 2
+MINORs fixed: the lost-flicker pinned as ambient wayfinding (break-instant
+assertion added) and job duty labels are now phase-aware ("Heading to a
+repair" en-route vs "Repairing" at work). 3 NITs banked in HANDOFF (sparks
+decal subtlety; "In use (on the way)" wording; expand mode staying armed
+after a reject — pre-existing). Implementation deltas from this plan: none
+beyond the review fixes above. **497 tests, all gates green.**
+
+Contract: AMENITIES_PLAN §5 (ratified) + the Stage-2 SHIPPED job machinery
+(assignJobs/progressJobs/releaseJobWorker/mintJob — the repair `Job.kind`,
+the `water` mess kind + decal texture, and the 'Repairing' duty label all
+shipped in v5 as inert surface). Workflow: this section → pre-impl review →
+freeze → tracks → 2 adversarial reviews → gates → commit → push.
+**Pre-impl review of record (2026-07-18): 3 MAJOR / 4 MINOR / 3 NIT — all
+folded below.** The MAJORs, for the record: (M1) the repair anchor could be
+structurally unworkable (2×3 west-door restroom: every stall neighbor is a
+stall, the door tile, or through-wall — a permanently unrepairable room);
+(M2) `mintJob`'s silent one-per-tile no-op could suppress the repair mint
+(walkable-anchor fallback under a pre-existing clean job) or let a burst
+water mess outlive its job — both become BORDER-INVALID worlds whose own
+next save refuses to load; (M3) "sell a broken room mid-repair" collides
+with `validateRoomSell`'s 'Someone is inside' — the working tech stands
+inside by construction. Architecture verdict: READY-AFTER-FIXES, structure
+confirmed against master.
+
+### S3.0 Scope
+
+IN: use-based `room.wear` + breakdown (`RoomDef.failure`), broken rooms
+disable via `capacityOf = 0`, repair jobs on the Stage-2 machinery,
+`ROLE_DEFS.maintenance` (WITH the fixed-seed re-pins), piping bursts (2–4
+`water` messes), SAVE_VERSION 6, hints `broken:<roomId>` + `role:maintenance`,
+broken-room render + inspect OUT OF SERVICE, geometry rules (no expand while
+broken; sell clears the repair job), `debugBreakRoom` (live-drive + test
+affordance).
+OUT: preventive maintenance, staff needs, amenity (non-room) failures, any
+new tally/report row (no cash or rep channel changes in Stage 3), wear
+display in the inspect card (the player reasons from use, not a meter —
+deliberate; a future polish candidate).
+
+### S3.1 Frozen contract
+
+**`BALANCE.maintenance`** (new block): `wearFactor: { mechanical: 0.002,
+piping: 0.001 }` (per-use breakdown-probability slope — §5.1 MTBFs ≈31/≈45
+uses, **explicitly harness-tuned before ship**), `repairGameMinutes: 15`
+(skill-scaled via `treatmentDurationTicks(base, skill, 0)` — no new
+formula), `burstMessesMin: 2`, `burstMessesMax: 4`.
+
+**`src/sim/data/rooms.ts`**: `RoomDef` gains `readonly failure?: { readonly
+kind: 'mechanical' | 'piping' }`. Roster (§5.1 ratified): xray/ct/mri/nucMed
++ surgery + resp = `mechanical`; restroom + dialysis = `piping`. Ultrasound
+is EXCLUDED (the §5.1 list is explicit — a cart, not a gantry); reception/
+waiting/triage/exam/atrium don't break.
+
+**`src/sim/entities/room.ts`**: `Room` gains `wear: number` and
+`brokenSince: number | null`. **DESIGN DELTA (flagged): the doc's `broken:
+boolean` becomes `brokenSince`** — one field serves both the flag (`!==
+null`) and design MINOR 8's instance-keyed hint (`broken:<roomId>:<tick>`)
+without a second stored field. Every `Room` literal (buildRoom, tests)
+gains `wear: 0, brokenSince: null` — compile-enforced.
+
+**`src/sim/data/roles.ts`**: `ROLE_DEFS.maintenance` = label 'Maintenance
+Tech', `salaryPerDay: 140`, color `0xe07a3f` (orange family — far from
+teal/green AND from evs brown), `standingPost: false`. Lands WITH the
+re-pins (S3.7 — the S2.6b rule: constructor candidates shift every seeded
+stream from tick 0).
+
+**`src/sim/entities/staff.ts`**: `Job` gains `roomId: number | null`
+(null for clean/empty; the room a `repair` job fixes). `Job.tile` for a
+repair job is the ANCHOR, chosen by a STRUCTURAL workability scan
+(pre-impl MAJOR 1 — never assume a prop tile is workable: a 2×3
+west-door restroom's stalls have only stall/door/through-wall neighbors,
+which would leave the room broken FOREVER on a 5-minute re-hold loop).
+A tile is an eligible anchor iff (a) NO existing job targets it (all
+fallback levels — pre-impl MAJOR 2a) AND (b) it has ≥1 orthogonal
+neighbor with `isWalkable` + `standableTile(n, {sameRoomAs: tile})` +
+`canApproach(n, tile)` — a claim-FREE, rng-free pre-check (claims are
+transient; `jobWorkTile` still arbitrates them at assignment). Scan
+order: non-walkable prop tiles row-major, then walkable interior
+non-door tiles row-major (a propless room is border-legal), rect origin
+as the final defensive fallback. Deterministic and stable while broken
+(no expand while broken; props never move). The anchor then feeds the
+UNCHANGED `jobWorkTile` derivation: non-walkable target → first
+claim-aware standable orthogonal neighbor with `sameRoomAs: job.tile`,
+which lands INSIDE the room — the tech walks in through the door and
+works at the machine; `canApproach` keeps every wall rule.
+
+**`src/events.ts`**: `roomBroken: { roomId: number }` — joins the
+blocked-panel invalidate list AND the save-gate `EVENT_NAMES` record.
+Breakdown ALSO emits `roomChanged` (the renderer's full-room redraw picks
+up the broken state); repair completion emits `roomChanged` + `jobChanged`.
+
+**`src/sim/formulas.ts`**: `breakdownChance(kind: 'mechanical' | 'piping',
+wear: number): number` = `min(1, wearFactor[kind] × wear)` — the ONE
+probability derivation (sim rolls it; tests pin it).
+
+**`src/commands.ts`**: `{ type: 'debugBreakRoom'; roomId: number }` —
+handler calls the REAL `breakRoom` path (the `debugForce` precedent: debug
+must reproduce the same bug class the game can hit, bursts included);
+debugPanel gains a button; the `debug` prefix auto-drops it in challenge
+mode. Payload guarded at the border (audit #8): unknown/broken/no-failure
+rooms are inert no-ops.
+
+**`src/sim/world.ts`** (stubs at freeze):
+```ts
+applyRoomUse(room): void   // THE wear choke point: no failure def → no-op;
+                           // already broken → no-op (no wear while disabled —
+                           // keeps the broken ⇒ wear 0 border invariant);
+                           // else wear += 1, roll breakdownChance → breakRoom
+breakRoom(room): void      // THE breakdown path (roll + debug share it), frozen order:
+                           // 1. brokenSince = tick, wear = 0
+                           // 2. gathering reservations on the room → cancelReservation
+                           //    ({hint:false}) — rule-8 verbatim; actives finish (§5.2)
+                           // 3. mint the repair job (anchor derivation above; mintJob
+                           //    gains an optional roomId param AND now RETURNS
+                           //    Job | null — the repair path asserts non-null loudly
+                           //    (console.warn + stageViolations-style counter is
+                           //    overkill; a warn suffices), unreachable by
+                           //    construction since the anchor scan skips job-held
+                           //    tiles (pre-impl MAJOR 2a: a silent no-op here is a
+                           //    broken room with no job = a border-invalid world
+                           //    whose own save refuses to load)
+                           // 4. piping only: burst messes (S3.3)
+                           // 5. emit roomBroken + roomChanged
+```
+`capacityOf` gains ONE line: `if (room.brokenSince !== null) return 0` —
+`hasOpenSlot` then gates all dispatch; `freeStallIndex` returns null for
+restrooms (a broken restroom rejects NEW claims). **In-flight restroom
+claims are left intact** (walking claimants arrive and finish — "disable,
+never harm"; the doc's "occupants finish" is read to include them; flagged
+for the pre-impl review). Transiently negative `openSlots` while actives
+finish is the §5.2-verified safe case. NOTE: `applyRoomUse` no-ops while
+broken, so a finishing restroom occupant adds no wear.
+
+### S3.2 Wear hooks (Track S)
+
+- `treatment.ts` (`updateTreatment`): after EITHER completion branch
+  resolves, `world.rooms.get(reservation.roomId)` → `applyRoomUse(room)`.
+  Complications COUNT as a use (the machine ran — design says "completed
+  treatment"; delta noted: outcome-agnostic is the honest machine model and
+  avoids a success-only exploit read). Triage completions call it too —
+  a uniform choke point; triage rooms have no failure def, so it's a no-op
+  by construction. UNCONDITIONAL: it runs after `resolveTreatmentOutcome`'s
+  missing-patient defensive early-return too (pre-impl NIT 8 — one rng-order
+  rule with no branches; test-pinned).
+- `patientNeeds.ts` (`advanceBreak` restroom completion): before
+  `clearNeedBreak`, `applyRoomUse(restroom)` — restrooms have no
+  reservations, so their wear hook lives here (§5 probe).
+- RNG order is frozen by the existing tick order (needs before dispatcher
+  before treatment); within updateTreatment the wear roll comes AFTER the
+  outcome resolution of the SAME reservation, never between the success
+  roll and its resolution.
+- `breakRoom` mid-iteration safety: updateTreatment iterates a snapshot;
+  cancelled gathering reservations are phase-'gathering' and already
+  skipped; updatePatientNeeds iterates a patient snapshot and restrooms
+  hold no reservations.
+
+### S3.3 Piping bursts (Track S)
+
+On a `piping` breakRoom: candidates = walkable tiles inside the rect +
+tiles orthogonally adjacent to the rect that are corridor or open-plan
+(never a neighboring WALLED room's interior — §5.4/NIT 21; walkability
+excludes props/amenities), **EXCLUDING tiles that already hold a mess
+(pre-impl MINOR 5 — addMess would only refresh `since`, silently
+hollowing the "2–4 messes" claim) and tiles any job targets (pre-impl
+MAJOR 2b — `addMess` on the repair anchor would mint no clean job, and
+the water mess would OUTLIVE the repair job as a jobless mess = a
+border-invalid world; exclusion is a no-op for normal rooms whose anchor
+is non-walkable and never a candidate).** Frozen rng order: `count =
+intInRange(burstMessesMin, burstMessesMax)`, then `count` draws of
+`intBelow(remaining.length)` WITHOUT replacement (splice); fewer
+candidates than count → place them all. Each pick → `addMess('water',
+tile)` — the Stage-2 machinery mints clean jobs, bumps messRevision,
+emits messChanged; the `water` decal texture shipped in Stage 2. A burst
+restroom therefore needs BOTH trades (maintenance to fix, EVS to mop) —
+the §5.4 payoff. Water on door tiles is legal (the Stage-2 work-tile
+derivation handles door-tile messes from adjacent standable neighbors).
+
+### S3.4 Repair jobs (Track S — dispatcher)
+
+- `assignJobs` generalizes to a per-role kind map — `evs: clean|empty`,
+  `maintenance: repair` — running the SAME frozen loop per role pool
+  (oldest = lowest id, held jobs skipped never blocking, failed probe →
+  per-job `holdUntil`, probe = jobWorkTile + findPath). No semantic change
+  for EVS — the Stage-2 loop tests must stay green untouched.
+- `progressJobs` repair completion (frozen order): room =
+  `rooms.get(job.roomId)`; delete the job; `releaseJobWorker` (the
+  unconditional walled-room step-out — the tech never idles inside the
+  room they fixed, the M3/design-MAJOR-6 clause); THEN `brokenSince =
+  null` + emit `jobChanged` + `roomChanged`. Defensive: a missing room
+  (unreachable — sellRoom deletes the job) just deletes the job. Wear
+  stays 0 (reset at breakdown).
+- Fire-mid-repair: the existing generic `fireStaff` job branch requeues
+  (any phase, no hold) — no new code, but the regression test covers
+  repair explicitly.
+- Stall analogue: `atJobSite` re-derivation works unchanged (the anchor
+  is deterministic and claim-shift requeues converge, Stage-2 semantics).
+- **The orphan rule extends to rooms**: `sellRoom` deletes any job with
+  `roomId === roomId` OR tile inside the rect (repair + in-room clean
+  jobs — the latter already handled via removeMess sweeps; the repair
+  delete is NEW), releasing workers. `validateRoomExpand` rejects broken
+  rooms — reason 'Out of service — repair it first' (§5.2: no "Beds 2/0";
+  the ghost/hint machinery shows the reason like every reject).
+- **Sell of a broken room is legal SUBJECT TO the normal occupancy
+  gates** (pre-impl MAJOR 3 — the plan's original "sell stays legal" was
+  unconditional and collided with `validateRoomSell`'s 'Someone is
+  inside', which a `working` tech triggers by construction): the sale
+  goes through while the repair job is queued or assigned-with-the-tech-
+  still-outside (job deleted, tech released); while the tech is INSIDE
+  (working, or the final in-room steps of the walk) the sale blocks with
+  'Someone is inside' until completion — or fire the tech, which
+  requeues the job and removes them. `validateRoomSell` is NOT weakened
+  (the HANDOFF sell-validation invariant stands). Both directions
+  test-pinned.
+
+### S3.5 Save v6 (Track S)
+
+**SAVE_VERSION 6.** `SavedRoom` += `wear: number`, `brokenSince: number |
+null` — appended AFTER `quality` (FROZEN insertion position; new
+byte-identity fixtures pin it). `readRoom` gains the `saveVersion` param
+(the `readPatient` precedent); v<6 defaults wear 0, brokenSince null.
+`SavedJob` += `roomId: number | null` — written ALWAYS (null for
+clean/empty; stable key set), appended after `tile`. `readJob` gains
+`saveVersion`; **`repair` ACCEPTED at v6** (the v5 rejection stays for
+v5 payloads — version-aware, one reader); the `ticksRemaining` bound
+becomes KIND-AWARE (pre-impl MINOR 6 — one shared `max()` would loosen
+the clean/empty hostile-timer bound ~7.5×; borders get stricter, never
+looser): `repair` bounds by `repairGameMinutes`, clean/empty keep
+`max(clean, empty)`. Border (v6):
+- repair ⇒ `roomId` resolves to a saved room whose def HAS a failure
+  entry, `brokenSince !== null`, job.tile inside its rect, ≤1 repair job
+  per room; clean/empty ⇒ `roomId === null`.
+- broken ⇔ repair: every `brokenSince !== null` room has EXACTLY one
+  repair job and vice versa (breakRoom mints it; only repair completion
+  or sellRoom removes it — the doc's "or minted on load" alternative is
+  REJECTED: minting on load churns ids and diverges byte identity).
+- broken ⇒ `wear === 0` (applyRoomUse no-ops while broken); wear a
+  finite int ≥ 0; `brokenSince` ≤ the save tick; broken only on
+  failure-def room types.
+- The RESERVATION slot bound stays GRID-derived and broken-blind — an
+  active reservation finishing on a broken room is legal (§5.2), and a
+  capacityOf-aware bound would refuse that save.
+Migration v≤5: defaults above; `topUpCandidates` mints maintenance
+candidates on every v≤5 load → the v5 byte-identity fixture test converts
+to a fixture-LOAD test (the v4 precedent, verbatim) and a NEW v6
+round-trip byte-identity gate is pinned. **Round-trip pins (§5.5)**: at
+the save tick — a room with `wear > 0`, a broken room with a QUEUED
+repair job, a second broken room with a WORKING repair mid-timer, and a
+`water` mess with its clean job. Gate scenario: field-poke `wear` high on
+two failure rooms (the established border-valid poke pattern) + drive
+uses, or `debugBreakRoom` one of them; hire 1 maintenance tech so the
+working conjunction is reachable.
+
+### S3.6 Hints & UI (Tracks S/U)
+
+- `needs.ts`: `BlockedNeed.kind` += `'broken'`. Per broken room: key
+  **`broken:<roomId>:<brokenSince>`** (instance-keyed — `hintedOnce`
+  persists per save, so a stable key would toast only the FIRST breakdown
+  ever, design MINOR 8; the panel row key churning per instance is
+  correct dedupe), label `"<Room label> is broken — needs repair"`,
+  `urgent: true`, `patients: 0` (design: no patient count; sorts after
+  patient-backed urgent rows — acceptable, flagged). Design deltas
+  recorded (pre-impl NIT 10): the §6 sketch's `room type + roomId
+  payload` fields are DROPPED from `BlockedNeed` (verified: no consumer
+  needs them; no exhaustive kind-switches exist), and two broken rooms
+  of the same type render identical label rows (cosmetic, accepted).
+  `role:maintenance`: any room broken + none hired → urgent always,
+  label 'Hire a Maintenance Tech — a room needs repair', `patients` =
+  broken-room count (the role:evs mess-count precedent).
+- `blockedPanel.ts`: invalidate list += `roomBroken` (repair-completion
+  staleness is covered by `jobChanged`/`roomChanged`, already listed).
+- `inspect.ts` room card (frame-polled body — no events needed): when
+  broken, an `OUT OF SERVICE — repair pending` / `repair underway`
+  (working) line is **ADDED unconditionally** (pre-impl MINOR 4: six of
+  the eight failure rooms are capacity `single` and render NO capacity
+  line to replace); for perProp rooms (restroom/dialysis) it REPLACES
+  the Stalls/Machines line. The restroom's "In use" line keeps rendering
+  while broken — in-flight claimants legitimately finish (deliberate,
+  noted for the live-drive reviewer). Status resolved from `world.jobs`
+  by roomId, the jobKind-resolution pattern; Expand button disabled with
+  the reject reason; Sell subject to the normal gates (S3.4). Staff
+  card: 'Repairing' already flows (Stage-2 label + wiring).
+- `hirePanel`/build menu/characters: ZERO changes — roles are data
+  (verified: hirePanel iterates ROLE_DEFS; characters.ts auto-generates
+  from ROLE_IDS with generic hair; maintenance does NOT join
+  SCRUB_CAP_ROLES).
+
+### S3.7 Render (Track R)
+
+Broken-state visual rides the EXISTING per-change room redraw
+(`roomChanged` → removeRoom + drawRoom): when `room.brokenSince !== null`,
+`drawRoom` additionally (a) tints the floor sprites toward grey
+(tint-multiply — cheap, readable at a glance) and (b) drops a hazard decal
+(new init-time texture, the messDecal painter pattern — sparks for
+mechanical / a steam-and-drip motif for piping, variety hashed on the
+anchor tile) at the job anchor tile in `decalLayer`. **The hazard decal's
+sprite JOINS `roomVisuals[roomId]`** (pre-impl MINOR 7 — `removeRoom`
+destroys only that array; a decal parented in `decalLayer` but not
+registered there leaks one sprite per redraw/sell; never key it in
+`messSprites`, which `syncMess` owns). No per-frame work; no new layers;
+the aura overlay key untouched. Maintenance Tech character: automatic
+(ROLE_DEFS color pipeline); no scrub cap.
+
+### S3.7b Balance pass of record (2026-07-18 — ran DURING implementation)
+
+The §S3.8 seed audit did double duty: pre-pass, seed 1338 failed only
+appendicitis (arrival luck, 5-seed audit), but the same probe exposed a
+LATENT STAGE-1 DEFECT — the owner's 2026-07-18 "bathrooms don't look used"
+report, root-caused by a tick-level trace: **walking costs ~2.1 game-min
+per tile** (1.4 tiles/s real, 8-real-min days), so `breakWatchdogGameMinutes:
+30` covered only a ~14-tile walk — the watchdog aborted nearly every
+legitimate restroom trip MID-WALK (seed 1341: 373 claims → 23 completions,
+306 watchdog abandons; wedged stalls cascaded into ~1,100 failed probes and
+~155 accidents). Fixes (both ADOPT-UNLESS-VETOED, flagged in HANDOFF):
+1. `breakWatchdogGameMinutes` 30 → 120 (covers the map + wrong-turn slack;
+   genuinely lost claimants still abandon within 2 game-hours).
+2. `bladderPerGameHour` 10 → 12 and `spawnMeterMin` 60 → 45 (time-to-seek
+   ~4.5h → ~3.1h, inside real door-to-treatment times).
+Post-pass probe (all 5 audit seeds): restroom visits 12–33 → **128–169**
+per 5 days, abandons 306 → ~2, accidents ~150 → 57–97 (the remainder are
+check-in-queue captives — real pressure, not a defect), and the restroom's
+own piping now breaks organically (breakdowns 4–9/run — the Stage-3 layer
+is visibly alive). Seed 1338 re-validated GREEN post-pass — the fixture
+seed stands, no re-pin needed.
+
+### S3.8 Harness & fixed-seed gate (Track S — the Stage-3 EXIT GATE)
+
+RNG blast radius, honestly stated (the S2.6b precedent): (1)
+**`ROLE_DEFS.maintenance` constructor candidates are the dominant shift**
+— every seeded World diverges from tick 0 (~12 extra draws); (2) wear
+rolls at every treatment/restroom completion — every trajectory with
+treatments shifts; (3) burst draws on piping failures; (4) the reference
+build's maintenance hire. Policy unchanged: **re-pin, never weaken**;
+audit alternates before settling; record seed rationale in-file (the
+1337→1338 precedent). Reference build hires 1 Maintenance Tech; the
+operating envelope must stay green with breakdowns occurring organically
+over the 5-day run (MTBF ≈31 uses ⇒ expect a handful) — `wearFactor` is
+THE tuning lever if the envelope breaks, and the tuning gets recorded
+like the M4 pass. Challenge comparability shifts again — accepted
+honor-system stance (CHALLENGES_PLAN §10).
+
+### S3.9 Tests (~35 new)
+
+Wear: increments at treatment completion (success AND complication),
+restroom completion; no increment/roll while broken; no-op for
+no-failure rooms; `breakdownChance` boundaries (0 wear → 0; clamp at 1).
+Breakdown: `capacityOf` 0 (dispatch gated, `hasOpenSlot` false); gathering
+reservations cancelled with retry holds, actives FINISH and bill;
+broken restroom rejects new claims ('failed' probe → hold), in-flight
+claimants finish; wear reset + brokenSince set; repair job minted with
+correct anchor + roomId; one repair per room (double-break impossible —
+applyRoomUse no-ops); **the 2×3 west-door restroom anchors WORKABLY (the
+MAJOR-1 regression — the repair completes, never an eternal re-hold
+loop)**; **anchor under a pre-existing clean job is skipped and the
+repair mint is guaranteed (MAJOR-2a regression)**. Piping burst: candidate set exactness (in-room +
+adjacent corridor/open-plan; NEVER a neighboring walled interior; props
+excluded; pre-messed tiles excluded so every placement is a REAL new mess
+— the MINOR-5 honesty rule; job-held tiles excluded — the MAJOR-2b
+jobless-water regression: after repair completes, no mess without a
+job survives), count ∈ [2,4], without-replacement, messes get clean
+jobs, EVS cleans in-room water (Stage-2 sameRoomAs machinery). Repair lifecycle:
+maintenance-only assignment (EVS never takes repair, tech never takes
+clean); oldest-first among repairs; held repair skipped; stalled-arrival
+requeue+hold; fire-mid-repair requeues (all 3 phases); completion clears
+brokenSince + capacity restored + step-out (sale unpinned); sellRoom on a
+broken room deletes the job + releases the tech (queued AND
+assigned-outside phases) **and is REJECTED 'Someone is inside' while the
+tech works inside (the MAJOR-3 pair — validateRoomSell not weakened)**;
+expand rejected while broken (reason pinned); debugBreakRoom mirrors the real path (bursts
+included) + inert on invalid/no-failure/already-broken rooms + dropped in
+challenge mode. Save: v6 round-trip byte identity; v5 fixture LOAD
+(defaults + maintenance top-up); v4/v3 transitive; border suites (repair
+both-ways, broken ⇔ repair-job, clean/empty roomId null, wear/brokenSince
+bounds, repair-ticks bound, broken-only-failure-types, reservation slot
+bound stays broken-blind — an active-on-broken save LOADS); the S3.5
+gate-scenario pins. Hints: broken row instance keying (second breakdown
+of the same room toasts again), role:maintenance urgent/label, panel
+invalidation on roomBroken while paused (debugBreakRoom). Inspect DOM:
+OUT OF SERVICE pending/underway states; expand button disabled.
+
+### S3.10 Live-drive checklist (reviewer 2)
+
+Build imaging + restroom + dialysis; hire the crew incl. 1 Maintenance
+Tech; `debugBreakRoom` an X-Ray → grey floor + hazard decal + toast +
+panel row + OUT OF SERVICE (pending), dispatcher stops sending patients;
+tech walks in, 'Repairing' duty label, room restored (visual clears,
+dispatch resumes); break the restroom → water messes in-room AND corridor,
+EVS mops while the tech fixes (NOTE, pre-impl NIT 9: a tech may
+requeue/hold-churn briefly while an active treatment finishes inside —
+expected, converges); sell a broken room while the repair is QUEUED or
+the tech is still outside (tech released, job gone) AND confirm the sale
+is refused 'Someone is inside' while the tech works inside — fire-then-
+sell as the player remedy (the MAJOR-3 semantics); try to expand a broken
+room (reason shown); fire the tech mid-repair (job requeues, second tech
+or rehire finishes); a v5
+production save imports and plays (compat proven on real data);
+**restroom-usage observation (owner report 2026-07-18): count organic
+restroom trips over a fast-forwarded day in a busy hospital — if
+patients essentially never go, capture numbers for a balance follow-up**;
+console hygiene throughout.
+
 ## 4. Harness & fixed-seed gate (Track S — a Stage-1 EXIT GATE, pre-impl MAJOR 5)
 
 Design §7 requirement, previously dropped: `test/harness.test.ts`'s

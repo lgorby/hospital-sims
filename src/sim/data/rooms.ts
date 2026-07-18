@@ -101,6 +101,13 @@ export const WAITING_ROOM_BASE_CHAIRS = 6;
 /** Build-menu grouping (GDD §9 owner ruling: the catalog renders as category dropdowns). */
 export type RoomCategory = 'basics' | 'imaging' | 'treatment' | 'comfort';
 
+/** Amenities Stage 3 (AMENITIES_PLAN §5.1): rooms with a failure entry wear
+ *  out by USE and break down — `mechanical` just disables; `piping` also
+ *  bursts water messes. Rooms without one never break. */
+export interface RoomFailure {
+  readonly kind: 'mechanical' | 'piping';
+}
+
 interface RoomDef {
   readonly label: string;
   readonly kind: 'treatment' | 'open';
@@ -114,6 +121,8 @@ interface RoomDef {
   readonly floorColor: number;
   /** Concurrent-patient rule (Stage A) — see CapacityRule. */
   readonly capacity: CapacityRule;
+  /** Use-based failure model (Stage 3) — absent = this room never breaks. */
+  readonly failure?: RoomFailure;
   /** Auto-placed equipment (M3): placed on build, reverted if it would strand tiles. */
   readonly props: readonly PropSpec[];
 }
@@ -186,6 +195,10 @@ export const ROOM_DEFS = {
     floorColor: 0xb9b1c9,
     staffedBy: ['radTech'],
     capacity: { kind: 'single' },
+    // Stage-3 failure roster (§5.1 ratified): imaging gantries + OR + resp
+    // are `mechanical`; restroom + dialysis are `piping`; ultrasound (a
+    // cart) and the basics deliberately never break.
+    failure: { kind: 'mechanical' },
     props: [{ id: 'xrayMachine', walkable: false, density: { kind: 'fixed', count: 1 } }],
   },
   resp: {
@@ -198,6 +211,7 @@ export const ROOM_DEFS = {
     floorColor: 0xa9d9c9,
     staffedBy: ['respTherapist'],
     capacity: { kind: 'single' },
+    failure: { kind: 'mechanical' },
     props: [{ id: 'nebulizer', walkable: false, density: { kind: 'fixed', count: 1 } }],
   },
   er: {
@@ -246,6 +260,7 @@ export const ROOM_DEFS = {
     floorColor: 0xc4b5d6,
     staffedBy: ['radTech'],
     capacity: { kind: 'single' },
+    failure: { kind: 'mechanical' },
     props: [
       { id: 'ctGantry', walkable: false, density: { kind: 'fixed', count: 1 } },
       { id: 'desk', walkable: false, density: { kind: 'fixed', count: 1 } },
@@ -261,6 +276,7 @@ export const ROOM_DEFS = {
     floorColor: 0xa8aed6,
     staffedBy: ['radTech'],
     capacity: { kind: 'single' },
+    failure: { kind: 'mechanical' },
     props: [
       { id: 'mriBore', walkable: false, density: { kind: 'fixed', count: 1 } },
       { id: 'desk', walkable: false, density: { kind: 'fixed', count: 1 } },
@@ -277,6 +293,7 @@ export const ROOM_DEFS = {
     floorColor: 0xcfd9a0,
     staffedBy: ['radTech'],
     capacity: { kind: 'single' },
+    failure: { kind: 'mechanical' },
     props: [
       { id: 'gammaCamera', walkable: false, density: { kind: 'fixed', count: 1 } },
       { id: 'hotLabBench', walkable: false, density: { kind: 'fixed', count: 1 } },
@@ -294,6 +311,7 @@ export const ROOM_DEFS = {
     // RATIFIED retro jump (CAPACITY_PLAN §8 Q2): both min-size machines now
     // treat concurrently (1→2 at ship). Chairs mirror the machine density so
     // every new machine gets its companion seat.
+    failure: { kind: 'piping' },
     capacity: { kind: 'perProp', prop: 'dialysisMachine', noun: 'Machines' },
     props: [
       {
@@ -314,6 +332,7 @@ export const ROOM_DEFS = {
     floorColor: 0x9fd0b0,
     staffedBy: ['surgeon', 'nurse'],
     capacity: { kind: 'single' },
+    failure: { kind: 'mechanical' },
     props: [
       { id: 'orTable', walkable: false, density: { kind: 'fixed', count: 1 } },
       { id: 'anesthesiaCart', walkable: false, density: { kind: 'fixed', count: 1 } },
@@ -332,6 +351,7 @@ export const ROOM_DEFS = {
     cost: 2_500,
     floorColor: 0xcfe0e8,
     staffedBy: [],
+    failure: { kind: 'piping' },
     capacity: { kind: 'perProp', prop: 'toiletStall', noun: 'Stalls' },
     props: [
       {
@@ -357,3 +377,13 @@ export const ROOM_DEFS = {
 
 export type RoomType = keyof typeof ROOM_DEFS;
 export const ROOM_TYPES = Object.keys(ROOM_DEFS) as RoomType[];
+
+/**
+ * The one `failure` accessor (Stage 3): the `as const` table's union type
+ * only carries `failure` on entries that declare it, so property access
+ * doesn't compile — this widens through the RoomDef interface. Undefined =
+ * the room never breaks.
+ */
+export function roomFailure(type: RoomType): RoomFailure | undefined {
+  return (ROOM_DEFS[type] as RoomDef).failure;
+}

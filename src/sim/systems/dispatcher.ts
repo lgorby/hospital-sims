@@ -375,10 +375,22 @@ function requeueJob(world: World, job: Job, opts: { hold: boolean }): void {
  * expires). Probe SUCCESS → assign + walk.
  */
 function assignJobs(world: World): void {
-  const workers = idleStaff(world, (s) => s.role === 'evs');
+  // The trade split (§4.3 + §5.3): EVS clean/empty, Maintenance repairs.
+  // Each pool runs the SAME frozen loop — Stage 3 added the second call,
+  // not new semantics.
+  assignJobsForRole(world, 'evs', ['clean', 'empty']);
+  assignJobsForRole(world, 'maintenance', ['repair']);
+}
+
+function assignJobsForRole(
+  world: World,
+  role: 'evs' | 'maintenance',
+  kinds: readonly Job['kind'][],
+): void {
+  const workers = idleStaff(world, (s) => s.role === role);
   if (workers.length === 0 || world.jobs.size === 0) return;
   const queued = [...world.jobs.values()]
-    .filter((j) => j.phase === 'queued' && (j.kind === 'clean' || j.kind === 'empty'))
+    .filter((j) => j.phase === 'queued' && kinds.includes(j.kind))
     .sort((a, b) => a.id - b.id); // oldest = lowest job id
   for (const worker of workers) {
     for (const job of queued) {
@@ -434,7 +446,11 @@ function progressJobs(world: World): void {
       }
       job.phase = 'working';
       job.ticksRemaining = treatmentDurationTicks(
-        job.kind === 'empty' ? BALANCE.mess.emptyGameMinutes : BALANCE.mess.cleanGameMinutes,
+        job.kind === 'empty'
+          ? BALANCE.mess.emptyGameMinutes
+          : job.kind === 'repair'
+            ? BALANCE.maintenance.repairGameMinutes
+            : BALANCE.mess.cleanGameMinutes,
         worker.skill,
         0, // quality 0 — corridors have none (§S2.1: no new formula)
       );
@@ -451,6 +467,20 @@ function progressJobs(world: World): void {
       world.releaseJobWorker(job);
       world.events.emit('jobChanged', { jobId: job.id });
       world.removeMess(job.tile); // the overflow decal — finds no job now
+    } else if (job.kind === 'repair') {
+      // Stage 3 (§S3.4 frozen order): delete the job, release the tech
+      // (the unconditional walled-room step-out — never idling inside the
+      // room they fixed), THEN restore service. Wear stayed 0 since the
+      // breakdown. A missing room is unreachable (sellRoom deletes the
+      // job) — defensively just drop the job.
+      const room = job.roomId === null ? null : (world.rooms.get(job.roomId) ?? null);
+      world.jobs.delete(job.id);
+      world.releaseJobWorker(job);
+      world.events.emit('jobChanged', { jobId: job.id });
+      if (room) {
+        room.brokenSince = null;
+        world.events.emit('roomChanged', { roomId: room.id });
+      }
     } else {
       // clean (any mess kind): worker already detached, so removeMess's
       // orphan clause deletes the job without a double-release.

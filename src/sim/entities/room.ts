@@ -20,6 +20,21 @@ export interface Room {
   door: Door | null;
   /** Extra tiles above the minimum footprint (GDD §5 room quality). */
   quality: number;
+  /**
+   * Use count since the last breakdown/repair (amenities Stage 3, §5.1):
+   * incremented at each use completion for rooms with a failure def,
+   * rolled against formulas.breakdownChance. Always 0 while broken
+   * (applyRoomUse no-ops — the border pins broken ⇒ wear 0).
+   */
+  wear: number;
+  /**
+   * Tick of the current breakdown, null = in service. One field serves
+   * the flag AND the instance-keyed hint `broken:<roomId>:<brokenSince>`
+   * (design MINOR 8 — `hintedOnce` persists per save, so a room-keyed
+   * toast would announce only the first breakdown ever). DESIGN DELTA
+   * from §5.1's `broken: boolean`, recorded in the impl plan.
+   */
+  brokenSince: number | null;
 }
 
 export interface WallEdge {

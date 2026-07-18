@@ -207,11 +207,14 @@ export class InspectPanel {
           'Duty',
           // Stage 2: job duties resolve their kind from world.jobs so the line
           // reads "Cleaning" / "Emptying a trashcan"; the frozen format.ts
-          // fallback covers a job deleted mid-frame (S2.1 freeze).
+          // fallback covers a job deleted mid-frame (S2.1 freeze). Stage-3
+          // live-drive MINOR 2: the PHASE splits en-route from at-work, so a
+          // walking tech reads "Heading to a repair", not "Repairing".
           staffDutyLabel(
             s.duty,
             this.reservationPhase(s.duty),
             s.duty.kind === 'job' ? this.world.jobs.get(s.duty.jobId)?.kind : undefined,
+            s.duty.kind === 'job' ? this.world.jobs.get(s.duty.jobId)?.phase : undefined,
           ) + (s.firing ? ' (leaving after this patient)' : ''),
         );
       return;
@@ -273,9 +276,31 @@ export class InspectPanel {
     // differs by rule — waiting-room seats by seated waiters, restroom stalls
     // by live claims, treatment slots by reservations. capacityOf is the same
     // SSOT the dispatcher reads.
+    // Stage 3 (impl plan §S3.6): a broken room reads OUT OF SERVICE. The
+    // repair status resolves from world.jobs by roomId (the staff-card
+    // jobKind-resolution pattern) — frame-polled like every field, no event.
+    const broken = room.brokenSince !== null;
+    let repairUnderway = false;
+    if (broken) {
+      for (const job of this.world.jobs.values()) {
+        if (job.kind === 'repair' && job.roomId === room.id) {
+          repairUnderway = job.phase === 'working';
+          break;
+        }
+      }
+    }
+    const statusLine = broken
+      ? this.line('Status', `OUT OF SERVICE — repair ${repairUnderway ? 'underway' : 'pending'}`)
+      : '';
     const capRule = def.capacity;
     let capacityLine = '';
-    if (capRule.kind === 'perProp') {
+    // While broken the status line REPLACES the perProp capacity readout —
+    // capacityOf reads 0, and "Stalls 1/0" is exactly the confusion §5.2
+    // forbids. Single-capacity rooms render no capacity line to replace
+    // (pre-impl MINOR 4) — they just gain the status line. The restroom's
+    // "In use" line below keeps rendering while broken: in-flight claimants
+    // legitimately finish (deliberate, §S3.6).
+    if (capRule.kind === 'perProp' && !broken) {
       const total = this.world.capacityOf(room);
       const used = stallClaims
         ? stallClaims.size
@@ -301,6 +326,7 @@ export class InspectPanel {
       `<div class="inspect-name">${esc(def.label)}</div>` +
       this.line('Size', `${room.rect.cols}×${room.rect.rows}`) +
       this.line('Quality', `+${room.quality}`) +
+      statusLine +
       capacityLine +
       (runBy ? this.line('Run by', runBy) : '') +
       (hasPost ? this.line('Posted', posted.map((s) => s.name.short).join(', ') || '—') : '') +
@@ -313,5 +339,11 @@ export class InspectPanel {
       ? `Sell (+$${refund.toLocaleString()})`
       : `Sell — ${sellCheck.reason}`;
     this.actionButton.disabled = !sellCheck.ok;
+    // Stage 3: never invite a dead click — the sim rejects expanding a broken
+    // room (validateRoomExpand: 'Out of service — repair it first'); mirror
+    // the Sell reject idiom above. Re-set EVERY frame, not in wireAction —
+    // repair completion must re-enable the button without a re-selection.
+    this.expandButton.textContent = broken ? 'Expand — Out of service — repair it first' : 'Expand';
+    this.expandButton.disabled = broken;
   }
 }

@@ -7,7 +7,7 @@ import {
   type ChallengeGoal,
 } from './data/challenges';
 import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditions';
-import { ROOM_DEFS, type PropDensity, type RoomType } from './data/rooms';
+import { ROOM_DEFS, type PropDensity, type RoomFailure, type RoomType } from './data/rooms';
 import { dayNet } from './dailyStats';
 import { rectTiles, type GridPoint, type Rect } from './types';
 
@@ -205,6 +205,16 @@ export function cleanlinessRepDelta(messTicks: number, arrivals: number): number
   // `|| 0` normalizes IEEE −0 when the floor lands on zero (Track-U finding:
   // −0 renders as "+0" through signed formatting and fails Object.is pins).
   return -Math.min(m.dailyRepCap, Math.floor(messHours / m.messHoursPerRepPoint)) || 0;
+}
+
+/**
+ * Breakdown probability at a use completion (amenities Stage 3, §5.1) — the
+ * ONE derivation: `applyRoomUse` rolls it, tests pin it. Linear in wear so
+ * the player can reason from use ("that CT has run all week"); clamped —
+ * enough wear makes failure certain.
+ */
+export function breakdownChance(kind: RoomFailure['kind'], wear: number): number {
+  return Math.min(1, BALANCE.maintenance.wearFactor[kind] * wear);
 }
 
 /**

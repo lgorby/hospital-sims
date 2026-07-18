@@ -37,6 +37,7 @@ const EVENT_NAMES: Record<EventName, true> = {
   roomBuilt: true,
   roomChanged: true,
   roomSold: true,
+  roomBroken: true,
   amenityPlaced: true,
   amenitySold: true,
   messChanged: true,
@@ -117,7 +118,12 @@ function pipelineRich(world: World): boolean {
     jobs.some((j) => j.phase === 'assigned') &&
     jobs.some((j) => j.phase === 'working') &&
     (world.amenityAt(26, 36)?.fill ?? 0) > 0 &&
-    world.today.messTicks > 0
+    world.today.messTicks > 0 &&
+    // v6 (amenities Stage 3, §S3.5 pins): a WORKING repair mid-timer at the
+    // save tick (the xray/resp re-break rotation + 1 tech keeps one live);
+    // the queued repair + water messes are minted AT the save tick by
+    // breaking the restroom (commands apply synchronously).
+    jobs.some((j) => j.kind === 'repair' && j.phase === 'working')
   );
 }
 
@@ -193,6 +199,30 @@ function assertRichPremises(world: World): void {
   ).toBe(true);
   expect(world.amenityAt(26, 36)!.fill, 'a can mid-fill (fill > 0)').toBeGreaterThan(0);
   expect(world.today.messTicks, 'a nonzero mess tally at the save tick').toBeGreaterThan(0);
+  // v6 premises (amenities Stage 3, §S3.5 — asserted, never assumed):
+  const rooms = [...world.rooms.values()];
+  expect(
+    rooms.some((r) => r.brokenSince === null && r.wear > 0),
+    'an in-service room with nonzero wear',
+  ).toBe(true);
+  const repairs = jobs.filter((j) => j.kind === 'repair');
+  expect(
+    repairs.some((j) => j.phase === 'queued'),
+    'a broken room with a QUEUED repair (the just-broken restroom)',
+  ).toBe(true);
+  expect(
+    repairs.some((j) => j.phase === 'working'),
+    'a broken room with a WORKING repair mid-timer',
+  ).toBe(true);
+  for (const j of repairs) {
+    expect(world.rooms.get(j.roomId!)?.brokenSince, 'every repair targets a broken room').not.toBeNull();
+  }
+  expect(
+    [...world.messes.values()].some(
+      (m) => m.kind === 'water' && world.jobAt(m.tile)?.kind === 'clean',
+    ),
+    'a water mess with its clean job (the piping burst)',
+  ).toBe(true);
 }
 
 /**
@@ -218,6 +248,10 @@ function bootScenario(): { world: World; events: EventBus } {
   // working job conjunction needs two workers busy plus a backlog.
   world.addStaffMember('evs', 3, 90);
   world.addStaffMember('evs', 3, 90);
+  // v6 (amenities Stage 3, §S3.5 sketch): ONE tech — with the xray/resp
+  // re-break rotation, one repair is always working while the other (and
+  // the save-tick restroom break) queue behind it.
+  world.addStaffMember('maintenance', 3, 140);
   queue.push({
     type: 'buildRoom',
     roomType: 'triage',
@@ -251,6 +285,20 @@ function bootScenario(): { world: World; events: EventBus } {
   });
   queue.push({ type: 'placeAmenity', kind: 'vending', col: 25, row: 36 });
   queue.push({ type: 'placeAmenity', kind: 'trashcan', col: 26, row: 36 });
+  // v6 (Stage 3): two mechanical rooms in a quiet corner — the breakdown
+  // rotation's raw material (no staff for them: they exist to break).
+  queue.push({
+    type: 'buildRoom',
+    roomType: 'xray',
+    rect: { col: 32, row: 8, cols: 3, rows: 4 },
+    doorOutside: { col: 33, row: 12 },
+  });
+  queue.push({
+    type: 'buildRoom',
+    roomType: 'resp',
+    rect: { col: 32, row: 16, cols: 3, rows: 3 },
+    doorOutside: { col: 33, row: 19 },
+  });
   queue.push({ type: 'debugSpawnPatient', condition: 'flu' });
   queue.push({ type: 'debugSpawnPatient', condition: 'laceration' });
   world.applyCommands(queue);
@@ -274,6 +322,17 @@ function bootScenario(): { world: World; events: EventBus } {
   let guard = 0;
   const ENRICH_TICK_LIMIT = 30000;
   while (!pipelineRich(world) && guard < ENRICH_TICK_LIMIT) {
+    if (guard % 60 === 0) {
+      // v6 (Stage 3): keep the mechanical pair broken — the lone tech cycles
+      // repairs, so a WORKING repair job exists at most ticks (repairs run
+      // ~50 ticks at skill 3; the rotation re-breaks within 60).
+      for (const room of world.rooms.values()) {
+        if ((room.type === 'xray' || room.type === 'resp') && room.brokenSince === null) {
+          queue.push({ type: 'debugBreakRoom', roomId: room.id });
+        }
+      }
+      world.applyCommands(queue);
+    }
     if (guard % 60 === 0) {
       // Keep the check-in queue overflowing (capacity is queueDepthTiles + 1):
       // sustains queuedCheckIn, checkingIn, and atEntrance overflow — but only
@@ -348,6 +407,18 @@ function bootScenario(): { world: World; events: EventBus } {
   held.dispatchHoldUntil = world.clock.tick + 500;
   // A pending need-break retry hold (v4 §3.5 pin — same poke pattern).
   held.needBreakHoldUntil = world.clock.tick + 500;
+  // v6 (Stage 3, §S3.5 pins), same tick: break the RESTROOM — the piping
+  // burst mints water messes + their clean jobs and a QUEUED repair job
+  // (the tech is provably mid-repair — pipelineRich requires it) all
+  // synchronously, without advancing a tick. In-flight stall claims survive
+  // (occupants finish), so the v4 break pins above stay intact.
+  const restroom = [...world.rooms.values()].find((r) => r.type === 'restroom')!;
+  queue.push({ type: 'debugBreakRoom', roomId: restroom.id });
+  world.applyCommands(queue);
+  // An in-service room with nonzero wear (field poke — border-valid).
+  const dialysisRoom = [...world.rooms.values()].find((r) => r.type === 'dialysis')!;
+  dialysisRoom.wear = 3;
+
   // A queued job under a retry hold (v5 §S2.4 pin — the Stage-1 hold-pin
   // precedent: organic probe failures are rare in an open floor, so the
   // hold is poked at the save tick and must round-trip + be honored).
@@ -361,8 +432,9 @@ function bootScenario(): { world: World; events: EventBus } {
 describe('save/load round-trip (THE acceptance gate, plan rule 4)', () => {
   it('save → load → run N ticks: identical event logs and identical final state', () => {
     const a = bootScenario(); // asserts every schema-corner premise at the save tick
-    // reception, waiting, triage, exam, atrium, dialysis, restroom (v4)
-    expect(a.world.rooms.size).toBe(7);
+    // reception, waiting, triage, exam, atrium, dialysis, restroom (v4),
+    // xray + resp (v6 — the breakdown-rotation pair)
+    expect(a.world.rooms.size).toBe(9);
 
     const json = saveToString(a.world);
     const loadedEvents = new EventBus();
@@ -648,10 +720,26 @@ describe('load border referential integrity (review MAJOR 1)', () => {
 
 // ------------------------------------------------- v4 (amenities Stage 1)
 
-/** A REAL v4 payload: the current shape minus everything v5 added (messes,
+/** A REAL v5 payload: the current shape minus everything v6 added (room
+ *  wear/brokenSince, job roomId, and the maintenance candidate pool). */
+function v5Fixture(): Record<string, unknown> {
+  const save = JSON.parse(smallSave()) as Record<string, unknown>;
+  save.saveVersion = 5;
+  for (const r of save.rooms as Record<string, unknown>[]) {
+    delete r.wear;
+    delete r.brokenSince;
+  }
+  for (const j of save.jobs as Record<string, unknown>[]) delete j.roomId;
+  save.candidates = (save.candidates as { role: string }[]).filter(
+    (c) => c.role !== 'maintenance',
+  );
+  return save;
+}
+
+/** A REAL v4 payload: the v5 fixture minus everything v5 added (messes,
  *  jobs, the messTicks tally key, and the evs candidate pool). */
 function v4Fixture(): Record<string, unknown> {
-  const save = JSON.parse(smallSave()) as Record<string, unknown>;
+  const save = v5Fixture();
   save.saveVersion = 4;
   delete save.messes;
   delete save.jobs;
@@ -724,11 +812,12 @@ describe('v3 → v4 migration (amenities Stage 1, review MAJOR 3)', () => {
   });
 
   it('a current-version save with amenities round-trips byte-identically', () => {
-    // Stage-2 note (§S2.6b): this fixture is minted by CURRENT code, so it is
-    // a v5 save — same-version byte identity holds because topUpCandidates is
-    // a strict no-op on a complete pool. The former "v4 byte-identity" role
-    // is now the v4 fixture-LOAD test below (top-up mints evs candidates on
-    // v≤4 loads, deliberately diverging the migrated world).
+    // Stage-2/3 note (§S2.6b precedent): this fixture is minted by CURRENT
+    // code, so it is a current-version save — same-version byte identity
+    // holds because topUpCandidates is a strict no-op on a complete pool.
+    // The former per-version byte-identity roles live on as the v4/v5
+    // fixture-LOAD tests (top-up mints the newer roles' candidates on old
+    // loads, deliberately diverging the migrated world).
     const loaded = loadWorld(new EventBus(), amenitySave());
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
@@ -745,8 +834,8 @@ describe('v4 → v5 migration (amenities Stage 2, §S2.4)', () => {
     const fixture = v4Fixture();
     expect(
       (fixture.candidates as unknown[]).length,
-      'premise: the fixture genuinely lacks evs candidates',
-    ).toBe((ROLE_IDS.length - 1) * BALANCE.hiring.candidatesPerRole);
+      'premise: the fixture genuinely lacks evs AND maintenance candidates',
+    ).toBe((ROLE_IDS.length - 2) * BALANCE.hiring.candidatesPerRole);
     const result = loadOf(fixture);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -772,6 +861,55 @@ describe('v4 → v5 migration (amenities Stage 2, §S2.4)', () => {
     expect(result.world.messes.size).toBe(0);
     expect(result.world.jobs.size).toBe(0);
     expect(result.world.today.messTicks).toBe(0);
+  });
+});
+
+describe('v5 → v6 migration (amenities Stage 3, §S3.5)', () => {
+  it('a genuine v5 fixture LOADS: wear 0 / in service, job roomId null, maintenance pool topped up', () => {
+    const fixture = v5Fixture();
+    expect(
+      (fixture.candidates as unknown[]).length,
+      'premise: the fixture genuinely lacks maintenance candidates',
+    ).toBe((ROLE_IDS.length - 1) * BALANCE.hiring.candidatesPerRole);
+    const result = loadOf(fixture);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.world.rooms.size).toBeGreaterThan(0); // premise
+    for (const room of result.world.rooms.values()) {
+      expect(room.wear).toBe(0);
+      expect(room.brokenSince).toBeNull();
+    }
+    // (Job roomId defaulting is covered by the messSave-downgrade test below —
+    // this fixture serializes no jobs, so a loop here would be vacuous.)
+    const techs = result.world.candidates.filter((c) => c.role === 'maintenance');
+    expect(techs.length, 'maintenance candidates topped up on load (the evs precedent)').toBe(
+      BALANCE.hiring.candidatesPerRole,
+    );
+    // A re-save stamps v6 with the new surface present.
+    const resaved = JSON.parse(saveToString(result.world)) as SaveData;
+    expect(resaved.saveVersion).toBe(SAVE_VERSION);
+    expect(resaved.rooms.every((r) => r.wear === 0 && r.brokenSince === null)).toBe(true);
+  });
+
+  it('a genuine v3 fixture still loads through the v6 reader (transitive migration)', () => {
+    const result = loadOf(v3Fixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    for (const room of result.world.rooms.values()) {
+      expect(room.wear).toBe(0);
+      expect(room.brokenSince).toBeNull();
+    }
+  });
+
+  it('a v5 payload WITH a job restores roomId null (the messSave downgrade)', () => {
+    const save = parsedMessSave() as unknown as Record<string, unknown>;
+    save.saveVersion = 5;
+    for (const j of save.jobs as Record<string, unknown>[]) delete j.roomId;
+    const result = loadOf(save);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.world.jobs.size).toBeGreaterThan(0); // premise — non-vacuous
+    for (const job of result.world.jobs.values()) expect(job.roomId).toBeNull();
   });
 });
 
@@ -809,9 +947,10 @@ describe('load border: messes & jobs (v5, §S2.4)', () => {
     expect(loadOf(save).ok).toBe(true);
   });
 
-  it("rejects a 'repair' job (reserved union value with no legal v5 target)", () => {
-    const save = parsedMessSave();
-    save.jobs[0]!.kind = 'repair';
+  it("rejects a 'repair' job in a v5 PAYLOAD (version-aware — the v5 union value had no legal target)", () => {
+    const save = parsedMessSave() as unknown as Record<string, unknown>;
+    save.saveVersion = 5; // downgrade: v5 readers ignore the v6-only keys
+    (save.jobs as { kind: string }[])[0]!.kind = 'repair';
     const result = loadOf(save);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toContain('repair');
@@ -935,6 +1074,186 @@ describe('load border: messes & jobs (v5, §S2.4)', () => {
     const result = loadOf(save);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toContain('twice');
+  });
+});
+
+/** A save carrying a broken X-Ray with its queued repair job + an idle tech
+ *  (the v6 border tamper base). Built via the REAL breakdown path. */
+let cachedBrokenSave: string | null = null;
+function brokenSave(): string {
+  if (cachedBrokenSave === null) {
+    const world = new World(new EventBus(), 21);
+    setupNewGame(world);
+    world.buildRoom('xray', { col: 10, row: 10, cols: 3, rows: 4 }, { col: 11, row: 14 }, true);
+    world.addStaffMember('maintenance', 3, 140);
+    world.breakRoom(world.roomsOfType('xray')[0]!);
+    cachedBrokenSave = saveToString(world);
+  }
+  return cachedBrokenSave;
+}
+
+function parsedBrokenSave(): SaveData {
+  return JSON.parse(brokenSave()) as SaveData;
+}
+
+describe('load border: failures & repair (v6, §S3.5)', () => {
+  const brokenRoom = (save: SaveData): SaveData['rooms'][number] =>
+    save.rooms.find((r) => r.brokenSince !== null)!;
+  const repairJob = (save: SaveData): SaveData['jobs'][number] =>
+    save.jobs.find((j) => j.kind === 'repair')!;
+
+  it('accepts the control fixture (a broken room + its queued repair job)', () => {
+    const save = parsedBrokenSave();
+    expect(brokenRoom(save)).toBeDefined(); // premise
+    expect(repairJob(save)).toBeDefined();
+    expect(repairJob(save).roomId).toBe(brokenRoom(save).id);
+    expect(loadOf(save).ok).toBe(true);
+  });
+
+  it('rejects a repair job with no roomId', () => {
+    const save = parsedBrokenSave();
+    repairJob(save).roomId = null;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('repair');
+  });
+
+  it('rejects a repair job targeting an IN-SERVICE room', () => {
+    const save = parsedBrokenSave();
+    brokenRoom(save).brokenSince = null;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('BROKEN');
+  });
+
+  it('rejects a broken room with NO repair job (nothing would ever fix it)', () => {
+    const save = parsedBrokenSave();
+    save.jobs = [];
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('repair job for broken room');
+  });
+
+  it('rejects TWO repair jobs for one room', () => {
+    const save = parsedBrokenSave();
+    const dup = { ...repairJob(save), id: save.nextEntityId, tile: { col: 10, row: 12 } };
+    save.jobs.push(dup);
+    save.nextEntityId += 1;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('one repair job per room');
+  });
+
+  it('rejects a repair anchor outside the room footprint', () => {
+    const save = parsedBrokenSave();
+    repairJob(save).tile = { col: 30, row: 30 };
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('footprint');
+  });
+
+  it('rejects nonzero wear on a broken room (applyRoomUse no-ops while broken)', () => {
+    const save = parsedBrokenSave();
+    brokenRoom(save).wear = 2;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('0 while broken');
+  });
+
+  it('rejects a brokenSince beyond the played timeline, and a negative one', () => {
+    const future = parsedBrokenSave();
+    brokenRoom(future).brokenSince = future.tick + 100;
+    expect(loadOf(future).ok).toBe(false);
+    const negative = parsedBrokenSave();
+    brokenRoom(negative).brokenSince = -1;
+    expect(loadOf(negative).ok).toBe(false);
+  });
+
+  it('rejects a broken flag on a room type that never breaks', () => {
+    const save = parsedBrokenSave();
+    const reception = save.rooms.find((r) => r.type === 'reception')!;
+    reception.brokenSince = 0;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('never breaks');
+  });
+
+  it('rejects negative wear (readRoom bound)', () => {
+    const save = parsedBrokenSave();
+    save.rooms.find((r) => r.brokenSince === null)!.wear = -1;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('non-negative use count');
+  });
+
+  it('rejects a clean job carrying a roomId', () => {
+    const save = parsedMessSave();
+    save.jobs[0]!.roomId = save.rooms[0]!.id;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("'clean' job");
+  });
+
+  it('bounds a repair timer KIND-AWARELY (pre-impl MINOR 6 — clean stays tight)', () => {
+    const save = parsedBrokenSave();
+    const tech = save.staff.find((s) => s.role === 'maintenance')!;
+    const job = repairJob(save);
+    job.phase = 'working';
+    job.staffId = tech.id;
+    tech.duty = { kind: 'job', jobId: job.id };
+    // A working worker stands at/beside the anchor, INSIDE the room.
+    tech.at = { col: job.tile.col, row: job.tile.row + 1 };
+    tech.next = null;
+    tech.path = [];
+    tech.target = null;
+    const repairBound = treatmentDurationTicks(
+      BALANCE.maintenance.repairGameMinutes,
+      BALANCE.stats.min,
+      0,
+    );
+    job.ticksRemaining = repairBound;
+    expect(loadOf(save).ok).toBe(true); // the exact repair bound is legal…
+    job.ticksRemaining = repairBound + 1;
+    expect(loadOf(save).ok).toBe(false); // …and one past it is not
+    // The clean/empty bound did NOT widen to the repair bound:
+    const cleanSave = parsedMessSave();
+    cleanSave.jobs[0]!.ticksRemaining = repairBound;
+    expect(loadOf(cleanSave).ok).toBe(false);
+  });
+
+  it('the reservation slot bound stays GRID-derived and broken-blind (§5.2: actives finish)', () => {
+    // An ACTIVE reservation holding slot 1 of a BROKEN dialysis room is a
+    // legal world — a capacityOf-aware bound (0 while broken) would refuse
+    // the game's own save while a treatment finishes.
+    const world = new World(new EventBus(), 23);
+    setupNewGame(world);
+    world.buildRoom('dialysis', { col: 10, row: 10, cols: 3, rows: 4 }, { col: 11, row: 14 }, true);
+    const dialysis = world.roomsOfType('dialysis')[0]!;
+    const nurse = world.addStaffMember('nurse', 3, 150);
+    const patient = world.spawnPatient('kidneyFailure');
+    patient.acuity = 3;
+    const reservation = {
+      id: world.takeId(),
+      kind: 'treatment' as const,
+      patientId: patient.id,
+      roomId: dialysis.id,
+      staffIds: [nurse.id],
+      stepIndex: 0,
+      slotIndex: 1, // the CONCURRENT slot — grid capacity 2, capacityOf 0
+      phase: 'active' as const,
+      ticksRemaining: 50,
+      patientWaitingSince: null,
+    };
+    world.reservations.set(reservation.id, reservation);
+    patient.stage = { kind: 'reserved', reservationId: reservation.id };
+    nurse.duty = { kind: 'reserved', reservationId: reservation.id };
+    world.breakRoom(dialysis); // actives survive; the repair job mints
+    expect(world.reservations.size).toBe(1); // premise
+    const result = loadWorld(new EventBus(), saveToString(world));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.world.reservations.size).toBe(1);
+    expect(result.world.roomsOfType('dialysis')[0]!.brokenSince).not.toBeNull();
   });
 });
 

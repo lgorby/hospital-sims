@@ -53,6 +53,10 @@ export class BlockedPanel {
     // the same invalidation list.
     events.on('messChanged', invalidate);
     events.on('jobChanged', invalidate);
+    // Amenities Stage 3 (impl plan §S3.6): a breakdown (debugBreakRoom fires
+    // while paused) must surface the broken:<roomId> row without a tick.
+    // Repair-completion staleness is covered by jobChanged/roomChanged above.
+    events.on('roomBroken', invalidate);
   }
 
   mount(parent: HTMLElement): void {

@@ -17,6 +17,7 @@ export type Command =
   | { type: 'hireStaff'; candidateId: number }
   | { type: 'fireStaff'; staffId: number }
   | { type: 'debugSpawnPatient'; condition?: ConditionId }
+  | { type: 'debugBreakRoom'; roomId: number }
   | { type: 'debugForce'; patientId: number; outcome: 'death' | 'ama' | 'complication' }
   | { type: 'debugFastForward'; ticks: number }
   | { type: 'debugSetCash'; amount: number }

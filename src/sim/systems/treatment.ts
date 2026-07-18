@@ -19,6 +19,14 @@ export function updateTreatment(world: World): void {
       const success = world.rng.chance(successChance(averageSkill, patient?.health ?? 0));
       resolveTreatmentOutcome(world, reservation, success);
     }
+    // Stage-3 wear hook (§5.1 / impl plan §S3.2) — UNCONDITIONAL after
+    // either branch (incl. resolveTreatmentOutcome's missing-patient
+    // early-return: one rng-order rule, no forks). Complications count as
+    // a use — the machine ran. Triage rooms have no failure def → no-op.
+    // The room is fetched by id AFTER resolution (a discharge deleted the
+    // reservation, never the room — rooms die only via sellRoom commands).
+    const room = world.rooms.get(reservation.roomId);
+    if (room) world.applyRoomUse(room);
   }
 }
 

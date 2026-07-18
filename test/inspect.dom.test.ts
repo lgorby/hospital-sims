@@ -113,6 +113,7 @@ describe('InspectPanel (amenities Stage 1)', () => {
       id: 77,
       kind: 'clean',
       tile: { col: 4, row: 4 },
+      roomId: null,
       staffId: member.id,
       phase: 'assigned',
       ticksRemaining: 0,
@@ -120,6 +121,11 @@ describe('InspectPanel (amenities Stage 1)', () => {
     });
     member.duty = { kind: 'job', jobId: 77 };
     renderer.selected = { kind: 'staff', id: member.id };
+    panel.update();
+    // Stage-3 live-drive MINOR 2: an ASSIGNED (en-route) job reads as
+    // walking, not working — "Cleaning" only once the timer runs.
+    expect(bodyText(root)).toContain('Heading to a mess');
+    world.jobs.get(77)!.phase = 'working';
     panel.update();
     expect(bodyText(root)).toContain('Cleaning');
 
@@ -165,5 +171,110 @@ describe('InspectPanel (amenities Stage 1)', () => {
     expect(thirstIdx).toBeGreaterThan(bladderIdx);
     expect(rows[bladderIdx]).toContain('40');
     expect(rows[thirstIdx]).toContain('20');
+  });
+});
+
+/**
+ * Amenities Stage 3 — broken rooms on the inspect card (impl plan §S3.6):
+ * the OUT OF SERVICE status line (pending/underway resolved from world.jobs
+ * by roomId), the perProp capacity-line replacement, and the Expand button
+ * disable. Fixtures poke `brokenSince` directly and insert Job objects into
+ * the frozen world.jobs map — Track S's systems produce both in-game.
+ */
+describe('InspectPanel (amenities Stage 3 — broken rooms)', () => {
+  function expandButton(root: HTMLElement): HTMLButtonElement {
+    const expand = [...root.querySelectorAll<HTMLButtonElement>('.inspect-action')].find((b) =>
+      (b.textContent ?? '').startsWith('Expand'),
+    );
+    expect(expand).toBeDefined();
+    return expand!;
+  }
+
+  function buildXray(world: World) {
+    world.buildRoom('xray', { col: 5, row: 20, cols: 3, rows: 4 }, { col: 8, row: 20 }, true);
+    const room = [...world.rooms.values()].find((r) => r.type === 'xray');
+    expect(room).toBeDefined();
+    return room!;
+  }
+
+  it('broken single-capacity room shows OUT OF SERVICE — repair pending (no-job edge)', () => {
+    const { world, renderer, root, panel } = fixture();
+    const room = buildXray(world);
+    room.brokenSince = 5;
+    renderer.selected = { kind: 'room', id: room.id };
+    panel.update();
+
+    const text = bodyText(root);
+    expect(text).toContain('OUT OF SERVICE — repair pending');
+    expect(text).not.toContain('repair underway');
+  });
+
+  it('a working repair job in world.jobs flips the line to repair underway', () => {
+    const { world, renderer, root, panel } = fixture();
+    const room = buildXray(world);
+    room.brokenSince = 5;
+    world.jobs.set(91, {
+      id: 91,
+      kind: 'repair',
+      tile: { col: 5, row: 20 },
+      roomId: room.id,
+      staffId: 1,
+      phase: 'working',
+      ticksRemaining: 10,
+      holdUntil: 0,
+    });
+    renderer.selected = { kind: 'room', id: room.id };
+    panel.update();
+    expect(bodyText(root)).toContain('OUT OF SERVICE — repair underway');
+
+    // queued/assigned phases still read pending — only 'working' is underway.
+    world.jobs.get(91)!.phase = 'assigned';
+    panel.update();
+    expect(bodyText(root)).toContain('OUT OF SERVICE — repair pending');
+  });
+
+  it('broken restroom: OUT OF SERVICE REPLACES the Stalls line; In use keeps rendering', () => {
+    const { world, renderer, root, panel } = fixture();
+    world.buildRoom('restroom', { col: 5, row: 20, cols: 2, rows: 3 }, { col: 7, row: 20 }, true);
+    const room = [...world.rooms.values()].find((r) => r.type === 'restroom')!;
+    const patient = world.spawnPatient('flu');
+    // An in-flight claimant legitimately finishes while broken (§S3.6).
+    vi.spyOn(world, 'stallClaims').mockImplementation((roomId: number) =>
+      roomId === room.id ? new Map([[0, patient.id]]) : new Map(),
+    );
+    renderer.selected = { kind: 'room', id: room.id };
+    panel.update();
+    expect(bodyText(root)).toContain('Stalls'); // healthy baseline
+
+    room.brokenSince = 5;
+    panel.update();
+    const text = bodyText(root);
+    expect(text).toContain('OUT OF SERVICE — repair pending');
+    expect(text).not.toContain('Stalls');
+    expect(text).toContain('In use');
+    expect(text).toContain(patient.name.short);
+  });
+
+  it('Expand button disabled with the reason while broken, re-enabled on repair (frame-polled)', () => {
+    const { world, renderer, root, panel } = fixture();
+    const room = buildXray(world);
+    renderer.selected = { kind: 'room', id: room.id };
+    panel.update();
+    expect(expandButton(root).disabled).toBe(false);
+    expect(expandButton(root).textContent).toBe('Expand');
+
+    room.brokenSince = 5;
+    panel.update();
+    const button = expandButton(root);
+    expect(button.disabled).toBe(true);
+    // The reason mirrors validateRoomExpand's reject string.
+    expect(button.textContent).toContain('Out of service — repair it first');
+
+    // Repair completion clears brokenSince — the button must recover WITHOUT
+    // a selection change (per-frame re-set, not wireAction-only).
+    room.brokenSince = null;
+    panel.update();
+    expect(expandButton(root).disabled).toBe(false);
+    expect(expandButton(root).textContent).toBe('Expand');
   });
 });

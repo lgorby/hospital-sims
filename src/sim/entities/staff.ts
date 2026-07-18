@@ -23,7 +23,12 @@ export type StaffDuty =
 export interface Job {
   id: number;
   kind: 'clean' | 'empty' | 'repair';
+  /** clean/empty: the mess/can tile. repair (Stage 3): the ANCHOR — a
+   *  structurally workable tile of the broken room (impl plan §S3.1,
+   *  pre-impl MAJOR 1), stable while broken. */
   tile: GridPoint;
+  /** Stage 3: the room a `repair` job fixes; null for clean/empty. */
+  roomId: number | null;
   /** null = queued (unassigned). */
   staffId: number | null;
   phase: 'queued' | 'assigned' | 'working';
