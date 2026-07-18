@@ -10,6 +10,7 @@ import { ChallengeResultCard } from './ui/challengeResultCard';
 import { Checklist } from './ui/checklist';
 import { DailyReportModal } from './ui/dailyReport';
 import { DebugPanel } from './ui/debugPanel';
+import { DirectoryPanel } from './ui/directory';
 import { GameOverScreen } from './ui/gameOver';
 import { HirePanel } from './ui/hirePanel';
 import { Hud } from './ui/hud';
@@ -102,6 +103,7 @@ async function bootstrap(boot: Boot): Promise<void> {
     hud.update();
     inspect.update();
     blockedPanel.update();
+    directory.update();
   });
 
   const hud = new Hud(world, loop, renderer, events);
@@ -117,6 +119,10 @@ async function bootstrap(boot: Boot): Promise<void> {
   new Toasts(events, world, jump).mount(uiRoot);
   new HirePanel(world, commands, events, bottomBar).mount(uiRoot, buildMenu.staffButton);
   new ThoughtLog(events, jump, bottomBar).mount(uiRoot, document.getElementById('buildbar')!);
+  // The hospital directory (owner ask 2026-07-18): the right-side inventory
+  // pullout — rows jump the camera AND select, so the inspect card opens.
+  const directory = new DirectoryPanel(world, events, jump, renderer);
+  directory.mount(uiRoot, document.getElementById('buildbar')!, bottomBar);
   const inspect = new InspectPanel(world, commands, renderer);
   inspect.mount(uiRoot);
   // A challenge run is provably debug-free (plan §7): the World rejects debug*

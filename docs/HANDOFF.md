@@ -232,6 +232,21 @@ Both were hardened by independent adversarial reviews before any code was writte
   40→72, LAST_NAMES 30→54 (~3,900 combos), same register; draw count
   unchanged, zero test fallout (no literal name was pinned anywhere —
   grepped and suite-verified).
+- **Hospital Directory pullout: DONE (2026-07-18, owner ask "an inventory
+  list — hard to see what areas are purchased")** — `src/ui/directory.ts`:
+  a 🏥 bottom-bar toggle opens a right-side pullout (the thought-log slot;
+  BottomBarDropdowns keeps all right-slot panels mutually exclusive)
+  listing every room by build-menu category (CATEGORY_LABELS now EXPORTED
+  from buildMenu — one source) with floor-color swatch, size, and live
+  status (Out of service / used-capacity mirroring the inspect card's
+  used-count semantics / In use), every amenity (trashcan fill, vending
+  claims), and a staff head-count line. **Rows click-to-jump AND select**
+  (camera centers + the inspect card opens). Rebuilds via the blockedPanel
+  idiom (tick-gate + renderKey + the paused-command event invalidation
+  list; O(1) while closed). `cssHexColor` extracted to ui/dom.ts (shared
+  with buildMenu swatches). Reviewed (combined code + live-drive: COMMIT,
+  0 MAJOR, 1 MINOR + 2 NIT all fixed; 12/12 drive items PASS, zero console
+  errors). 6 DOM tests (503 total).
 - **NEXT SESSION STARTS HERE → quick passes, in order:** (1) patient
   click-highlight (thought log already pans; add a selection pulse).
   (2) capacity/contention hints

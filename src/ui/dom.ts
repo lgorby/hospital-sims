@@ -12,3 +12,12 @@ export function isTextEditable(target: EventTarget | null): boolean {
 export function isModalOpen(): boolean {
   return document.querySelector('.modal-overlay:not(.hidden)') !== null;
 }
+
+const HEX_RADIX = 16;
+const CSS_HEX_DIGITS = 6;
+
+/** 0xRRGGBB → '#rrggbb' — the one palette-number-to-CSS conversion (build
+ *  menu swatches, directory swatches). */
+export function cssHexColor(color: number): string {
+  return `#${color.toString(HEX_RADIX).padStart(CSS_HEX_DIGITS, '0')}`;
+}

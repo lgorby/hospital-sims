@@ -6,18 +6,17 @@ import { ROOM_DEFS, ROOM_TYPES, type RoomCategory, type RoomType } from '../sim/
 import type { World } from '../sim/world';
 import type { UiMode, WorldRenderer } from '../render/renderer';
 import type { BottomBarDropdowns } from './bottomBar';
-
-const HEX_RADIX = 16;
-const CSS_HEX_DIGITS = 6;
+import { cssHexColor } from './dom';
 
 /**
  * GDD §9 owner ruling: category groups render in exactly this order —
  * insertion order here IS the display order. The Record is the single
  * compile-checked source: a new RoomCategory fails to compile until it gets a
  * label, and the render loop iterates these keys, so nothing can be labeled
- * yet silently missing from the bar.
+ * yet silently missing from the bar. Exported: the hospital directory groups
+ * its room inventory by the SAME labels in the SAME order (one source).
  */
-const CATEGORY_LABELS: Record<RoomCategory, string> = {
+export const CATEGORY_LABELS: Record<RoomCategory, string> = {
   basics: 'Basics',
   imaging: 'Imaging',
   treatment: 'Treatment',
@@ -145,7 +144,7 @@ export class BuildMenu {
       });
       const swatch = document.createElement('span');
       swatch.className = 'swatch';
-      swatch.style.background = `#${def.floorColor.toString(HEX_RADIX).padStart(CSS_HEX_DIGITS, '0')}`;
+      swatch.style.background = cssHexColor(def.floorColor);
       const label = document.createElement('span');
       label.className = 'room-label';
       label.textContent = def.label;
