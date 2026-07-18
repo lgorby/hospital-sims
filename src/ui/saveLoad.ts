@@ -113,7 +113,16 @@ export class SaveLoadModal {
       quit.textContent = 'Quit to Title';
       quit.className = 'title-alt saveload-quit';
       quit.setAttribute('data-ui', '');
+      // Two-step arm (pre-push review MINOR): the ONLY autosave is midnight's,
+      // so one stray click could discard most of a day — same guard pattern as
+      // the slot Delete button beside it.
+      let armed = false;
       quit.addEventListener('click', () => {
+        if (!armed) {
+          armed = true;
+          quit.textContent = 'Really quit? Unsaved progress is lost';
+          return;
+        }
         window.location.assign(window.location.pathname);
       });
       this.card.appendChild(quit);

@@ -31,6 +31,8 @@ export class BlockedPanel {
       this.lastTick = -1;
     };
     events.on('roomBuilt', invalidate);
+    events.on('roomChanged', invalidate); // expansions (pre-push review: the
+    // moment needs read capacityOf, a missing listener = paused staleness)
     events.on('roomSold', invalidate);
     events.on('staffHired', invalidate);
     events.on('staffFired', invalidate);
