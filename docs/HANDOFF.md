@@ -247,9 +247,20 @@ Both were hardened by independent adversarial reviews before any code was writte
   with buildMenu swatches). Reviewed (combined code + live-drive: COMMIT,
   0 MAJOR, 1 MINOR + 2 NIT all fixed; 12/12 drive items PASS, zero console
   errors). 6 DOM tests (503 total).
-- **NEXT SESSION STARTS HERE → quick passes, in order:** (1) patient
-  click-highlight (thought log already pans; add a selection pulse).
-  (2) capacity/contention hints
+- **Jump-target pulse: DONE (2026-07-18, owner ask "can it somehow glow or
+  pulse to show the area")** — `renderer.pulseRect/pulseTile` + `drawPulse`
+  (a dedicated topmost `pulseGfx` in the camera): every click-to-jump
+  (toasts, thought-log entries, directory rows) throbs an amber footprint
+  outline at the destination — 3 floored cosine cycles fading over 1.6s
+  (the floor is a review NIT: a bare cosine blacked out 3×/pulse). Single
+  slot; directory room rows upgrade the tile pulse to the full rect. Pure
+  presentation (performance.now; zero rng/sim contact; bare null-check per
+  frame at rest — the hot-path budget untouched). Reviewed (code +
+  live-drive: COMMIT, 0 MAJOR/MINOR, 2 NIT — throb floor fixed, the
+  deliberate amber-palette share noted). This CLOSES the banked "patient
+  click-highlight" backlog item (thought-log jumps now pan AND pulse).
+- **NEXT SESSION STARTS HERE → quick passes, in order:** (1)
+  capacity/contention hints
   ("expand your ER or build another" — the panel's `roomChanged`
   invalidation is pre-wired). Banked NITs (fix opportunistically): the
   trap-BFS doesn't re-check existing ATRIUM footprints; room/expand ghost

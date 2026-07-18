@@ -115,7 +115,15 @@ async function bootstrap(boot: Boot): Promise<void> {
   const bottomBar = new BottomBarDropdowns();
   const buildMenu = new BuildMenu(renderer, commands, events, bottomBar, world, world.challengeMode);
   buildMenu.mount(uiRoot);
-  const jump = (col: number, row: number): void => renderer.jumpTo(col, row);
+  // Every click-to-jump also PULSES its destination (owner ask 2026-07-18:
+  // "can it somehow glow or pulse to show the area") — toasts, thought-log
+  // entries, and directory rows all land with a visible glow. Directory room
+  // rows upgrade the tile pulse to the full footprint (single slot — the
+  // later pulseRect replaces this one).
+  const jump = (col: number, row: number): void => {
+    renderer.jumpTo(col, row);
+    renderer.pulseTile(col, row);
+  };
   new Toasts(events, world, jump).mount(uiRoot);
   new HirePanel(world, commands, events, bottomBar).mount(uiRoot, buildMenu.staffButton);
   new ThoughtLog(events, jump, bottomBar).mount(uiRoot, document.getElementById('buildbar')!);

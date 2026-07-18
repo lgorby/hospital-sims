@@ -195,6 +195,9 @@ export class DirectoryPanel {
                 room.rect.row + Math.floor(room.rect.rows / 2),
               );
               this.renderer.selected = { kind: 'room', id: room.id };
+              // The glow covers the WHOLE footprint, not just the center
+              // tile the jump pulsed (owner ask — single slot, this wins).
+              this.renderer.pulseRect(room.rect);
             },
           ),
         );

@@ -17,14 +17,19 @@ function fixture() {
   const events = new EventBus();
   const world = new World(events, 42);
   const jumps: { col: number; row: number }[] = [];
-  const renderer = { selected: null as Selection | null } as unknown as WorldRenderer;
+  const pulses: { col: number; row: number; cols: number; rows: number }[] = [];
+  const renderer = {
+    selected: null as Selection | null,
+    pulseRect: (rect: { col: number; row: number; cols: number; rows: number }) =>
+      pulses.push({ ...rect }),
+  } as unknown as WorldRenderer;
   const root = document.createElement('div');
   const bar = document.createElement('div');
   const bottomBar = new BottomBarDropdowns();
   const panel = new DirectoryPanel(world, events, (col, row) => jumps.push({ col, row }), renderer);
   panel.mount(root, bar, bottomBar);
   const toggle = bar.querySelector('button')!;
-  return { world, events, jumps, renderer, root, bar, panel, toggle };
+  return { world, events, jumps, pulses, renderer, root, bar, panel, toggle };
 }
 
 function rows(root: HTMLElement): HTMLElement[] {
@@ -53,8 +58,8 @@ describe('DirectoryPanel (hospital inventory pullout)', () => {
     expect(rows(root).length).toBe(2);
   });
 
-  it('clicking a room row jumps to its center and selects it (inspect opens)', () => {
-    const { world, root, jumps, renderer, toggle } = fixture();
+  it('clicking a room row jumps to its center, selects it, and pulses the footprint', () => {
+    const { world, root, jumps, pulses, renderer, toggle } = fixture();
     world.buildRoom('exam', { col: 10, row: 10, cols: 3, rows: 3 }, { col: 11, row: 13 }, true);
     const room = world.roomsOfType('exam')[0]!;
     toggle.click();
@@ -62,6 +67,8 @@ describe('DirectoryPanel (hospital inventory pullout)', () => {
     rows(root)[0]!.click();
     expect(jumps).toEqual([{ col: 11, row: 11 }]); // rect center
     expect(renderer.selected).toEqual({ kind: 'room', id: room.id });
+    // The glow covers the whole footprint (owner ask 2026-07-18).
+    expect(pulses).toEqual([{ col: 10, row: 10, cols: 3, rows: 3 }]);
   });
 
   it('shows live capacity, broken, and amenity statuses', () => {

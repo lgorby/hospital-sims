@@ -52,6 +52,21 @@ const ZOOM_WHEEL_SENSITIVITY = 0.0015;
 /** Px per wheel-delta unit when a browser reports line/page deltaMode (Firefox mouse wheel). */
 const WHEEL_LINE_PX = 16;
 const PAN_SPEED_PX_PER_SEC = 700; // dt-scaled so pan speed is refresh-rate independent
+
+/** Jump-target pulse (owner ask 2026-07-18: "can it somehow glow or pulse
+ *  to show the area"): a throbbing outline over the destination of every
+ *  click-to-jump. Pure presentation — performance.now timing, the sim never
+ *  sees it. Amber = the ghost-valid "look here" color already in the language. */
+const PULSE_DURATION_MS = 1600;
+const PULSE_THROBS = 3;
+/** The throb never fully blacks out mid-pulse (review NIT: a bare cosine hit
+ *  alpha 0 three times per pulse — a quarter-second after the click the glow
+ *  momentarily vanished). */
+const PULSE_THROB_FLOOR = 0.3;
+const PULSE_COLOR = 0xffe066;
+const PULSE_GLOW_WIDTH = 8;
+const PULSE_LINE_WIDTH = 2.5;
+const PULSE_GLOW_ALPHA = 0.35;
 const EDGE_SCROLL_MARGIN_PX = 24;
 const MAX_DRAW_DT_SEC = 0.1;
 const WALL_HEIGHT = 34;
@@ -157,6 +172,9 @@ export class WorldRenderer {
   private amenitySprites = new Map<string, Sprite>();
   /** Mess decal sprites, keyed `${col},${row}` — messes are one-per-tile. */
   private messSprites = new Map<string, Sprite>();
+  /** Jump-target pulse: single slot (a new jump replaces the old glow). */
+  private pulseGfx = new Graphics();
+  private pulseTarget: { rect: Rect; startedAt: number } | null = null;
 
   /** Current hovered tile, if in bounds — HUD readout polls this. */
   hoveredTile: TilePoint | null = null;
@@ -185,6 +203,17 @@ export class WorldRenderer {
     );
   }
 
+  /** Pulse a footprint outline at the jump destination (owner ask) —
+   *  single slot, a new pulse replaces any active one. */
+  pulseRect(rect: Rect): void {
+    this.pulseTarget = { rect: { ...rect }, startedAt: performance.now() };
+  }
+
+  /** Tile-sized pulse — toasts/thought-log jumps and amenity rows. */
+  pulseTile(col: number, row: number): void {
+    this.pulseRect({ col, row, cols: 1, rows: 1 });
+  }
+
   async init(mount: HTMLElement): Promise<void> {
     await this.app.init({
       background: 0x9aa38f,
@@ -205,7 +234,7 @@ export class WorldRenderer {
 
     this.highlight = new Sprite(this.textures.highlight);
     this.highlight.visible = false;
-    this.camera.addChild(this.overlay, this.highlight, this.ghost);
+    this.camera.addChild(this.overlay, this.highlight, this.ghost, this.pulseGfx);
 
     this.centerCamera();
     this.bindInput();
@@ -1149,6 +1178,44 @@ export class WorldRenderer {
     this.updateActors(alpha);
     this.drawGhost();
     this.drawOverlay();
+    this.drawPulse(now);
+  }
+
+  /**
+   * The jump pulse: an iso outline throbbing over the destination footprint
+   * — PULSE_THROBS cosine cycles fading out over PULSE_DURATION_MS. O(1)
+   * and allocation-light: one small Graphics, rebuilt only while a pulse is
+   * live (≤1.6s per jump), a bare null-check otherwise — the draw() hot
+   * path's per-frame budget is untouched at rest.
+   */
+  private drawPulse(now: number): void {
+    if (!this.pulseTarget) return;
+    const t = (now - this.pulseTarget.startedAt) / PULSE_DURATION_MS;
+    if (t >= 1) {
+      this.pulseTarget = null;
+      this.pulseGfx.clear();
+      return;
+    }
+    const { rect } = this.pulseTarget;
+    const wave = 0.5 + 0.5 * Math.cos(2 * Math.PI * PULSE_THROBS * t);
+    const throb = PULSE_THROB_FLOOR + (1 - PULSE_THROB_FLOOR) * wave;
+    const alpha = (1 - t) * throb;
+    const north = toScreen(rect.col, rect.row);
+    const east = toScreen(rect.col + rect.cols - 1, rect.row);
+    const south = toScreen(rect.col + rect.cols - 1, rect.row + rect.rows - 1);
+    const west = toScreen(rect.col, rect.row + rect.rows - 1);
+    const points = [
+      north.x, north.y,
+      east.x + TILE_W / 2, east.y + TILE_H / 2,
+      south.x, south.y + TILE_H,
+      west.x - TILE_W / 2, west.y + TILE_H / 2,
+    ];
+    this.pulseGfx
+      .clear()
+      .poly(points)
+      .stroke({ color: PULSE_COLOR, width: PULSE_GLOW_WIDTH, alpha: alpha * PULSE_GLOW_ALPHA })
+      .poly(points)
+      .stroke({ color: PULSE_COLOR, width: PULSE_LINE_WIDTH, alpha });
   }
 
   private tintTile(col: number, row: number, color: number, alpha: number): void {
