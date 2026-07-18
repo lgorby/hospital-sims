@@ -60,6 +60,10 @@ Design rules:
 
 ## Phase 2 — Async multiplayer without a backend (cheap, high fun-per-effort)
 
+> **Detailed scope in review: `docs/CHALLENGES_PLAN.md`** (Draft v2, adversarial
+> review in progress). It proposes narrowing Phase 2 to **seed challenges only**
+> and deferring save-file challenges to Phase 3 — pending owner sign-off.
+
 - **Seed challenges:** same seed + same scenario ruleset → compare day-N
   reputation/cash. Shareable as a URL (`?seed=N&challenge=day5`). Zero
   netcode; only needs the Phase-1 determinism guarantees.
