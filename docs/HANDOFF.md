@@ -1,7 +1,7 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-18 (capacity epic complete + Quit-to-Title)
-**State: M0–M4 + audit + save/load + V1 DoD + Expansion 1 + art pass + DEPLOY + Phase 2 (seed challenges) + HINTS + UI polish + build-UX + the FULL capacity & growth epic (Stage 0 size-based pricing, Stage A multi-slot rooms, Stage B expand tool) + mid-game Quit-to-Title. Live at https://hospital-sims.vercel.app (auto-deploy on push to `master`; commits since `9cf62a5` NOT yet pushed — push deploys). 307 tests. Next: owner design backlog (patient click-highlight; amenities/EVS/facility-failure layer — needs scoping). See Next.**
+**Last updated:** 2026-07-18 (pre-push batch review PASSED; pushing the 2026-07-17/18 batch)
+**State: M0–M4 + audit + save/load + V1 DoD + Expansion 1 + art pass + DEPLOY + Phase 2 (seed challenges) + HINTS + UI polish + build-UX + the FULL capacity & growth epic (Stage 0 size-based pricing, Stage A multi-slot rooms + SAVE_VERSION 3, Stage B expand tool) + mid-game Quit-to-Title (two-step armed). Live at https://hospital-sims.vercel.app (git push to `master` auto-deploys). 307 tests, all gates green. The whole batch passed a final CROSS-FEATURE adversarial review (verdict PUSH, 0 MAJOR — feature-pair interactions, old-save compat v1/v2/v3, old-URL compat, driver-skill compat all traced clean; its 2 small findings swept in `0e8ee3b`). NEXT: the amenities/EVS/facility-failure epic — warm-start brief in `docs/AMENITIES_PLAN.md` (DRAFT v0: owner ask, design surface, ratification questions, staging sketch). Then: patient click-highlight (small), capacity/contention hints (small). See Next.**
 
 ## What this project is
 
@@ -109,16 +109,28 @@ Both were hardened by independent adversarial reviews before any code was writte
 - **Camera input polish: DONE** (2026-07-17, trackpad complaint). `renderer.ts` wheel handler: plain wheel / two-finger scroll → pan both axes (fixes trackpad up/down, which the old wheel-zoom binding ate); ctrl/meta+wheel (= trackpad pinch) → continuous cursor-anchored zoom (MIN_ZOOM 0.5 .. MAX_ZOOM 2, was 3 discrete steps). Known tradeoff: a classic mouse wheel now pans; mouse users zoom via ctrl+wheel.
 - **Input supported today = mouse + trackpad ONLY** (clarified 2026-07-17: an owner touchscreen report turned out to be finger-on-display, which the game doesn't handle — the fix above is wheel-based, i.e. mouse/trackpad). **Touchscreen / touch input is DEFERRED** — GDD §11 item 17: touch gestures emit *touch* pointer events the canvas ignores; adding one-finger pan/tap + two-finger pinch (via Pointer Events, coexisting with tap-select/drag-build) is a self-contained future pass that makes the game tablet-playable. Owner chose to build it later.
 - **View rotation: SCOPED, not built** — GDD §11 item 16 + `TECH_PLAN.md` §2.7. It's a rendering-architecture milestone (orientation-aware `iso.ts` projection+picking, `depthKey`, wall far/near, and character facings), NOT input polish — give it its own milestone + pre-implementation review. Do not conflate with the camera-input pass above.
+- **NEXT SESSION STARTS HERE → the amenities/EVS/facility-failure epic.**
+  `docs/AMENITIES_PLAN.md` (DRAFT v0) is the warm-start brief: the owner's
+  verbatim ask (trashcans/vending/restrooms; janitors/EVS/maintenance;
+  piping failures, bathrooms, vomiting), the six design surfaces it touches
+  (amenity props, NEW non-reservation staff duty kind, patient needs meters,
+  mess/cleanliness, rng failures + capacity-0 rooms, hints integration), six
+  owner questions to ratify, engineering implications (SAVE_VERSION 4,
+  determinism, harness, render invariants), and a 3-stage staging sketch.
+  Process: flesh out the design → adversarial design review → owner
+  ratification → staged build with per-stage reviews (the Phase-2/HINTS/
+  capacity workflow, unchanged). Quick passes queued behind it: patient
+  click-highlight (thought log already pans; add a selection pulse) and
+  capacity/contention hints ("expand your ER or build another" — the panel's
+  `roomChanged` invalidation is pre-wired).
 - **Capacity & growth epic: COMPLETE (2026-07-18)** — all three stages
   shipped same-day (see the `*(stage 0/A/B)*` commit-table rows);
   `docs/CAPACITY_PLAN.md` marked IMPLEMENTED with the shipped deltas. The
   owner's original ask ("the ER may need to get larger to handle more
   patients and doctors at once with more beds") is playable end-to-end:
-  build min, earn, Expand, staff up, treat concurrently. Follow-ups: "Quit to Title"
-  SHIPPED in the in-game Save/Load modal (mid-run → title → New Game /
-  Continue / Challenges; the modal nudges a save on the way out). Parked:
-  capacity/contention hints
-  ("expand your ER"), the mega-room dominance watch (§8 Q5 cap lever).
+  build min, earn, Expand, staff up, treat concurrently. "Quit to Title"
+  SHIPPED in the in-game Save/Load modal (two-step armed — the only autosave
+  is midnight's). Parked: the mega-room dominance watch (§8 Q5 cap lever).
 - **Capacity & growth epic: RATIFIED (2026-07-18)** —
   `docs/CAPACITY_PLAN.md` v2 (design-reviewed: 5 MAJORs folded — flat-cost
   drag-big exploit, dialysis 1→2 retro jump, slotIndex save field,
