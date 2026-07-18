@@ -259,8 +259,42 @@ Both were hardened by independent adversarial reviews before any code was writte
   live-drive: COMMIT, 0 MAJOR/MINOR, 2 NIT — throb floor fixed, the
   deliberate amber-palette share noted). This CLOSES the banked "patient
   click-highlight" backlog item (thought-log jumps now pan AND pulse).
-- **NEXT SESSION STARTS HERE → quick passes, in order:** (1)
-  capacity/contention hints
+- **NEXT SESSION STARTS HERE → the FINANCES epic (owner ask 2026-07-18:
+  "show the profit and loss for each department and totals… mimic
+  RollerCoaster Tycoon"). The plan is FROZEN and twice-reviewed: build it.**
+  Read `docs/FINANCE_PLAN.md` v3 — it is BOTH the design and the
+  implementation plan, self-contained for a cold start. Two adversarial
+  pre-impl review rounds are already folded (round 1: 8 MAJOR / 8 MINOR / 6
+  NIT; round 2 verified all eight closed against real code and found 2 new
+  MAJOR / 7 MINOR / 7 NIT — also folded), so the contract in §9 is
+  freeze-ready; do NOT re-litigate it, implement it. Shape:
+  - **Scope**: a pausing Finances modal (RCT finances window — categories ×
+    last 7 days + Today + Total, hospital value, average bill, an inline-SVG
+    cash graph), per-room income on the inspect card (the RCT ride-window
+    analog), per-machine vending revenue, and a departmental ledger by
+    `RoomCategory` (income + capital invested + an explicit
+    `Payroll (not allocated)` line — §6's ruling: payroll is hospital
+    overhead in v1 because staff are dispatched hospital-wide; per-room
+    running costs are §7 Q2, deferred as a balance pass).
+  - **SSOT/DRY spine** (the owner asked for this explicitly): ONE
+    `FINANCE_CATEGORIES` table drives the grid, the daily report's Money
+    section, and `dayNet`; ONE `tallyCash` increment feeds today AND
+    lifetime; the history reader delegates to the version-aware `readTally`;
+    `roomEarns` is DERIVED from `CONDITION_DEFS`, never a hand-kept flag.
+  - **Workflow**: freeze §9.1–§9.4 + typed stubs → 3 parallel tracks with
+    disjoint ownership (S: sim/save/tests · U1: the modal + pausingOverlay +
+    main.ts wiring + its ui.css marker block · U2: inspect/directory/
+    dailyReport + its ui.css block; NO render track) → 2 parallel adversarial
+    reviewers (code/contract + live-drive via `/run-hospital-simms`) → fix
+    ALL findings + a regression test per MAJOR → gates → **orchestrator**
+    writes the HANDOFF entry and commits → push.
+  - **SAVE_VERSION 7** (`Room.revenueToday/revenueTotal/visitsTotal`,
+    `amenity.revenueTotal`, `world.lifetime`/`lifetimeTreatedBase`/`history`).
+    First save bump with NO new role ⇒ **no fixed-seed re-pin** — harness
+    seed 1338 must stay green (assert it; don't weaken it).
+  - **Owner decisions still open** (§7): payroll allocation (v1 = overhead),
+    per-room running costs (deferred), loans (out), 7-shown/30-stored history.
+- **Then, quick passes:** (1) capacity/contention hints
   ("expand your ER or build another" — the panel's `roomChanged`
   invalidation is pre-wired). Banked NITs (fix opportunistically): the
   trap-BFS doesn't re-check existing ATRIUM footprints; room/expand ghost
