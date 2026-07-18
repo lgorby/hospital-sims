@@ -18,7 +18,7 @@ import { ROLE_DEFS, ROLE_IDS, type RoleId } from './data/roles';
 import { PROP_STYLE, ROOM_DEFS, type PropId, type PropSpec, type RoomType } from './data/rooms';
 import type { Door, Room } from './entities/room';
 import { LEGAL_STAGE_TRANSITIONS, type Patient, type PatientStage } from './entities/patient';
-import type { Candidate, Reservation, Staff } from './entities/staff';
+import type { Candidate, Job, Reservation, Staff } from './entities/staff';
 import {
   amenitySellback,
   auraCoversTile,
@@ -62,6 +62,19 @@ export interface Tile {
   marker: boolean;
 }
 
+/**
+ * A floor mess (amenities Stage 2, AMENITIES_PLAN §4.1): a walkable decal —
+ * NOT a Tile field (the grid RLE stays untouched; messes serialize
+ * explicitly). At most one per tile; a second event refreshes `since`.
+ * `water` is Stage-3 surface (piping bursts) — the kind ships now so the
+ * v5 save schema is stable; a clean job cleans any kind.
+ */
+export interface Mess {
+  kind: 'vomit' | 'litter' | 'water';
+  tile: GridPoint;
+  since: number;
+}
+
 /** Shared walker shape — patients and staff both satisfy it. */
 export interface Walker {
   /** Entity id — also the A* variety seed (equal-length path spreading). */
@@ -97,6 +110,13 @@ export class World implements PathGrid {
    * so Stage 2 needs no map migration.
    */
   readonly amenities = new Map<string, { kind: AmenityId; tile: GridPoint; fill: number }>();
+  /** Floor messes (Stage 2, §4.1), keyed `${col},${row}`. */
+  readonly messes = new Map<string, Mess>();
+  /** Facility job queue (Stage 2, §4.3) — clean/empty (+repair in Stage 3). */
+  readonly jobs = new Map<number, Job>();
+  /** Bumped on every mess add/remove — the sim-side proximity cache's
+   *  invalidation counter (the auraRevision pattern). */
+  messRevision = 0;
   cash: number = BALANCE.economy.startingCash;
   reputation: number = BALANCE.reputation.starting;
   /** Running tally for the current day; snapshotted + reset at midnight (M4). */
@@ -925,6 +945,48 @@ export class World implements PathGrid {
   }
 
   // -------------------------------------------------------- patient routing
+
+  // ------------------------------------------------- messes & jobs (Stage 2)
+  // CONTRACT STUBS (impl plan §S2.1 freeze): typed, inert until Track S
+  // lands the real bodies. UI/render tracks compile against these.
+
+  /** One mess per tile (refresh `since` on repeat); mints a `clean` job iff
+   *  none targets the tile; emits `messChanged`; bumps `messRevision`. */
+  addMess(_kind: Mess['kind'], _tile: GridPoint): void {
+    // Track S: implement per impl plan §S2.2 (overflow order: empty job FIRST).
+  }
+
+  /** Delete + orphan-job delete/worker-release + `messChanged` + revision. */
+  removeMess(_tile: GridPoint): void {
+    // Track S: implement per impl plan §S2.2/§S2.3 (the general orphan rule).
+  }
+
+  /** Mess within BALANCE.mess.patienceRadius (Chebyshev) — signature-cached
+   *  per tick (the auraCheckedTick pattern; messRevision invalidates). */
+  hasMessNear(_p: GridPoint): boolean {
+    return false;
+  }
+
+  /**
+   * A legal standing zone (impl plan §S2.1, promoted from patientNeeds):
+   * corridor/open-plan OR inside the room containing `opts.sameRoomAs`, and
+   * never any room's door tile. Vending stand picks call it with NO opts
+   * (corridor-only — the same-room exception cannot leak); assignJobs
+   * passes `sameRoomAs: job.tile`. Claim-awareness stays at call sites.
+   */
+  standableTile(p: GridPoint, opts: { sameRoomAs?: GridPoint } = {}): boolean {
+    const room = this.roomAt(p);
+    const zoneOk =
+      room === null ||
+      ROOM_DEFS[room.type].kind === 'open' ||
+      (opts.sameRoomAs !== undefined && this.roomAt(opts.sameRoomAs)?.id === room.id);
+    if (!zoneOk) return false;
+    for (const r of this.rooms.values()) {
+      if (!r.door) continue;
+      if (samePoint(r.door.inside, p) || samePoint(r.door.outside, p)) return false;
+    }
+    return true;
+  }
 
   // ------------------------------------------------- amenities (Stage 1)
 

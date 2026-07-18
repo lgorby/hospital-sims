@@ -1,5 +1,5 @@
 import type { PatientStage } from '../sim/entities/patient';
-import type { Reservation, StaffDuty } from '../sim/entities/staff';
+import type { Job, Reservation, StaffDuty } from '../sim/entities/staff';
 
 /** The one typographic minus — every signed number in the UI shares it. */
 const MINUS = '−';
@@ -58,12 +58,26 @@ const STAFF_DUTY_LABELS: Record<StaffDuty['kind'], string> = {
   idle: 'Idle',
   post: 'At their post',
   reserved: 'With a patient', // refined by reservation phase below
+  job: 'On a facilities job', // refined by jobKind below (Stage 2 freeze)
+};
+
+/** Per-job-kind duty wording (Stage 2 freeze — the inspect caller resolves
+ *  the kind from world.jobs; the record fallback covers a missing job). */
+const JOB_KIND_LABELS: Record<Job['kind'], string> = {
+  clean: 'Cleaning',
+  empty: 'Emptying a trashcan',
+  repair: 'Repairing',
 };
 
 /** Player-facing staff duty; phase splits walking-to-patient from treating. */
-export function staffDutyLabel(duty: StaffDuty, reservationPhase?: Reservation['phase']): string {
+export function staffDutyLabel(
+  duty: StaffDuty,
+  reservationPhase?: Reservation['phase'],
+  jobKind?: Job['kind'],
+): string {
   if (duty.kind === 'reserved') {
     return reservationPhase === 'active' ? 'Treating a patient' : 'Walking to a patient';
   }
+  if (duty.kind === 'job' && jobKind !== undefined) return JOB_KIND_LABELS[jobKind];
   return STAFF_DUTY_LABELS[duty.kind];
 }

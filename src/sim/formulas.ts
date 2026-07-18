@@ -191,6 +191,21 @@ export function amenitySellback(kind: AmenityId): number {
 }
 
 /**
+ * Day-close cleanliness reputation (Stage 2, AMENITIES_PLAN §4.2) — the ONE
+ * metric: closeDay applies it, the daily-report row displays it. A spotless
+ * day earns the bonus only when patients actually came (an empty hospital
+ * isn't clean, it's closed — the wait-bonus principle; Stage-2 pre-impl
+ * MINOR 15, design delta flagged to owner); otherwise −1 per
+ * `messHoursPerRepPoint` mess-hours, capped per day.
+ */
+export function cleanlinessRepDelta(messTicks: number, arrivals: number): number {
+  const m = BALANCE.mess;
+  if (messTicks === 0) return arrivals > 0 ? m.cleanDayRepBonus : 0;
+  const messHours = messTicks / (GAME_MINUTES_PER_HOUR / GAME_MINUTES_PER_TICK);
+  return -Math.min(m.dailyRepCap, Math.floor(messHours / m.messHoursPerRepPoint));
+}
+
+/**
  * Room quality from footprint (GDD §5): every tile beyond the minimum adds
  * quality. Moved out of `buildRoom` (design-review NIT) so Stage B's
  * expansion recompute calls the same derivation.

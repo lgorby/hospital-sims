@@ -7,7 +7,31 @@ export type StaffDuty =
   /** Standing post (receptionist at a reception desk; greeter in M3). */
   | { kind: 'post'; roomId: number }
   /** Bound to a reservation — walking there or working it. */
-  | { kind: 'reserved'; reservationId: number };
+  | { kind: 'reserved'; reservationId: number }
+  /** Amenities Stage 2: bound to a facility job (clean/empty; repair in
+   *  Stage 3) — the non-patient work queue (AMENITIES_PLAN §4.3). */
+  | { kind: 'job'; jobId: number };
+
+/**
+ * A facility work item (amenities Stage 2, impl plan §S2.1): the job queue
+ * mirrors the reservation lifecycle — queued → assigned (worker walking) →
+ * working (timer) → done — with the rule-7/8 analogues (fire → requeue;
+ * stall → requeue + hold; orphaned target → job deleted, worker released).
+ * `repair` is reserved for Stage 3 (no producer; v5 border REJECTS it).
+ * Ids come from `takeId()` (global uniqueness; oldest = lowest id).
+ */
+export interface Job {
+  id: number;
+  kind: 'clean' | 'empty' | 'repair';
+  tile: GridPoint;
+  /** null = queued (unassigned). */
+  staffId: number | null;
+  phase: 'queued' | 'assigned' | 'working';
+  /** Set when `working` begins (skill-scaled via treatmentDurationTicks). */
+  ticksRemaining: number;
+  /** Failed-probe retry hold (the dispatchHoldUntil analogue). */
+  holdUntil: number;
+}
 
 export interface Staff {
   id: number;

@@ -46,6 +46,11 @@ export interface EventMap {
    *  per-change (roomless props have no roomBuilt to piggyback on). */
   amenityPlaced: { col: number; row: number; kind: AmenityId };
   amenitySold: { col: number; row: number; kind: AmenityId };
+  /** Amenities Stage 2: a mess appeared OR vanished on this tile — renderer
+   *  re-syncs the decal; panels invalidate (paused-staleness rule). */
+  messChanged: { col: number; row: number };
+  /** Stage 2: a job was created/assigned/requeued/completed/deleted. */
+  jobChanged: { jobId: number };
   /** A build/sell command failed sim-side validation (UI shows the reason). */
   buildRejected: { reason: string };
   patientSpawned: { patientId: number };

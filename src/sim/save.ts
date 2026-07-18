@@ -144,7 +144,9 @@ export interface SavedPatient {
 export type SavedStaffDuty =
   | { kind: 'idle' }
   | { kind: 'post'; roomId: number }
-  | { kind: 'reserved'; reservationId: number };
+  | { kind: 'reserved'; reservationId: number }
+  /** v5 (amenities Stage 2): bound to a facility job. */
+  | { kind: 'job'; jobId: number };
 
 export interface SavedStaff {
   id: number;
@@ -360,6 +362,7 @@ const TALLY_KEYS = Object.keys(emptyDayTally()) as (keyof DayTally)[];
  */
 const TALLY_KEY_VERSIONS: Partial<Record<keyof DayTally, number>> = {
   vendingRevenue: 4,
+  messTicks: 5,
 };
 
 function writeTally(tally: DayTally): DayTally {
@@ -564,6 +567,8 @@ function writeStaffDuty(duty: StaffDuty): SavedStaffDuty {
       return { kind: 'post', roomId: duty.roomId };
     case 'reserved':
       return { kind: 'reserved', reservationId: duty.reservationId };
+    case 'job':
+      return { kind: 'job', jobId: duty.jobId };
   }
 }
 
@@ -577,6 +582,8 @@ function readStaffDuty(value: unknown, label: string): StaffDuty {
       return { kind, roomId: asInt(o.roomId, `${label}.roomId`) };
     case 'reserved':
       return { kind, reservationId: asInt(o.reservationId, `${label}.reservationId`) };
+    case 'job':
+      return { kind, jobId: asInt(o.jobId, `${label}.jobId`) };
     default:
       return fail(`${label}.kind`, 'a known staff duty kind');
   }

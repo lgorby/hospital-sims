@@ -160,10 +160,37 @@ export const BALANCE = {
      */
     cancelRetryGameMinutes: 5,
   },
-  /** Mood-bubble thresholds (GDD §10); formulas.ts `moodOf` is the only reader. */
+  /** Mood-bubble thresholds (GDD §10). `criticalHealthBelow` is shared by
+   *  `moodOf` AND the Stage-2 vomit-eligibility gate (one threshold SSOT). */
   mood: {
     criticalHealthBelow: 30,
     impatientPatienceBelow: 30,
+  },
+  /** Messes & cleanliness (amenities Stage 2, AMENITIES_PLAN §4). */
+  mess: {
+    /** Per-tick Bernoulli mass for sub-critical-health patients in the
+     *  frozen eligibility stage set (impl plan §S2.1). */
+    vomitPerGameHour: 1.2,
+    /** One-time hit on the vomiter (same clamp rule as accidents). */
+    vomitSelfPatienceHit: 5,
+    /** A vending user's litter goes into a non-full can within this
+     *  Chebyshev radius; otherwise it hits the floor. */
+    litterTrashcanRadius: 4,
+    /** Uses until a trashcan overflows (empty job + overflow mess). */
+    trashcanCapacity: 8,
+    /** Patience decay multiplier near a mess (once, not per mess). */
+    patienceMultiplier: 1.25,
+    patienceRadius: 3,
+    /** Day-close reputation: spotless day (with arrivals) bonus… */
+    cleanDayRepBonus: 2,
+    /** …else −1 rep per this many mess-hours, capped per day. */
+    messHoursPerRepPoint: 4,
+    dailyRepCap: 15,
+    /** Job base durations (skill-scaled via treatmentDurationTicks). */
+    cleanGameMinutes: 2,
+    emptyGameMinutes: 1,
+    /** Failed-probe retry hold (the dispatchHoldUntil analogue). */
+    jobRetryGameMinutes: 5,
   },
   rooms: {
     /** Quality bonus per tile above minimum footprint (GDD §5). */

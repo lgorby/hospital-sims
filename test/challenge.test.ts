@@ -193,6 +193,7 @@ function makeReport(overrides: Partial<DayReport>): DayReport {
     construction: 0,
     sellIncome: 0,
     vendingRevenue: 0,
+    messTicks: 0,
     repDelta: 0,
     waitSumTicks: 0,
     waitCount: 0,
