@@ -1,3 +1,4 @@
+import type { AmenityId } from './sim/data/amenities';
 import type { ChallengeContext, ChallengeSpec } from './sim/data/challenges';
 import type { DayReport } from './sim/dailyStats';
 
@@ -41,6 +42,10 @@ export interface EventMap {
   /** Stage B: a built room's footprint grew (expand tool) — re-render it. */
   roomChanged: { roomId: number };
   roomSold: { roomId: number };
+  /** Amenities Stage 1: roomless prop placed/sold — render + panels react
+   *  per-change (roomless props have no roomBuilt to piggyback on). */
+  amenityPlaced: { col: number; row: number; kind: AmenityId };
+  amenitySold: { col: number; row: number; kind: AmenityId };
   /** A build/sell command failed sim-side validation (UI shows the reason). */
   buildRejected: { reason: string };
   patientSpawned: { patientId: number };

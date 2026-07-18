@@ -61,18 +61,24 @@ const WALK_FRAME_TICKS = 3;
 /** Bubble height above the feet anchor. */
 const BUBBLE_RISE = 46;
 
+import type { AmenityId } from '../sim/data/amenities';
+
 /** UI interaction mode — the build menu drives it; Esc/right-click cancel it. */
 export type UiMode =
   | { kind: 'idle' }
   | { kind: 'build'; type: RoomType }
   /** Stage B: grow a built room — hover previews the superset, click buys. */
   | { kind: 'expand'; roomId: number }
+  /** Amenities Stage 1: 1-tile roomless prop placement (Track R implements the ghost). */
+  | { kind: 'placeAmenity'; amenity: AmenityId }
   | { kind: 'sell' };
 
-/** Idle-click selection: patient beats staff beats room (M3 inspection panels). */
+/** Idle-click selection: patient beats staff beats amenity beats room (M3 +
+ *  amenities Stage 1 — amenities have no entity id; the tile IS the identity). */
 export type Selection =
   | { kind: 'patient'; id: number }
   | { kind: 'staff'; id: number }
+  | { kind: 'amenity'; col: number; row: number }
   | { kind: 'room'; id: number };
 
 interface BuildState {

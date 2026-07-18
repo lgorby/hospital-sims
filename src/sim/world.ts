@@ -3,6 +3,7 @@ import type { EventBus } from '../events';
 import { doorFromOutsideTile, validateRoomBuild, validateRoomExpand, validateRoomSell } from './build';
 import { GameClock, gameMinutesToTicks, TICKS_PER_DAY, ticksToGameMinutes } from './clock';
 import { emptyDayTally, type DayReport, type DayTally } from './dailyStats';
+import type { AmenityId } from './data/amenities';
 import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, type ConditionId } from './data/conditions';
 import { generateAge, generateName, generateStaffAge } from './data/names';
@@ -79,6 +80,13 @@ export class World implements PathGrid {
   readonly candidates: Candidate[] = [];
   /** receptionRoomId → ordered patientIds (slot index = queue position). */
   readonly checkInQueues = new Map<number, number[]>();
+  /**
+   * Freestanding amenity state (Stage 1, AMENITIES_PLAN §3.4), keyed
+   * `${col},${row}` — the tile IS the identity. `fill` is Stage-2 surface
+   * (trashcan contents) and stays 0 in Stage 1; it ships in SAVE_VERSION 4
+   * so Stage 2 needs no map migration.
+   */
+  readonly amenities = new Map<string, { kind: AmenityId; tile: GridPoint; fill: number }>();
   cash: number = BALANCE.economy.startingCash;
   reputation: number = BALANCE.reputation.starting;
   /** Running tally for the current day; snapshotted + reset at midnight (M4). */
@@ -537,6 +545,12 @@ export class World implements PathGrid {
       case 'sellRoom':
         this.sellRoom(command.roomId);
         return;
+      case 'placeAmenity':
+        this.placeAmenity(command.kind, { col: command.col, row: command.row });
+        return;
+      case 'sellAmenity':
+        this.sellAmenity({ col: command.col, row: command.row });
+        return;
       case 'hireStaff':
         this.hireStaff(command.candidateId);
         return;
@@ -880,6 +894,49 @@ export class World implements PathGrid {
 
   // -------------------------------------------------------- patient routing
 
+  // ------------------------------------------------- amenities (Stage 1)
+  // CONTRACT STUBS (AMENITIES_IMPL_PLAN §1.7/§2 freeze): typed, inert until
+  // Track S lands the real bodies. UI/render tracks compile against these.
+
+  amenityAt(col: number, row: number): { kind: AmenityId; tile: GridPoint; fill: number } | null {
+    return this.amenities.get(`${col},${row}`) ?? null;
+  }
+
+  /** slot → patientId, derived from live needBreak claims (§3.3). */
+  stallClaims(_roomId: number): Map<number, number> {
+    return new Map();
+  }
+
+  /** Lowest unclaimed stall slot, or null when full (claim-aware). */
+  freeStallIndex(_room: Room): number | null {
+    return null;
+  }
+
+  /** patientId of the live vending claim on this machine tile, or null. */
+  vendingClaimedBy(_tileKey: string): number | null {
+    return null;
+  }
+
+  /** Validate → mutate → emit `amenityPlaced` → recomputePaths (§1.7). */
+  placeAmenity(_kind: AmenityId, _tile: GridPoint): void {
+    // Track S: implement per AMENITIES_IMPL_PLAN §1.7/§1.8.
+  }
+
+  /** Validate → clear claims/jobs → emit `amenitySold` → recomputePaths. */
+  sellAmenity(_tile: GridPoint): void {
+    // Track S: implement per AMENITIES_IMPL_PLAN §1.7.
+  }
+
+  /**
+   * THE one abandon/clear path for need side-trips (§3.2): clears the
+   * sub-state (+ target/path per the lost/non-lost rule), optionally sets
+   * the retry hold. Terminal choke points call it with {hold:false}.
+   */
+  clearNeedBreak(patient: Patient, _opts: { hold: boolean }): void {
+    patient.needBreak = null;
+    // Track S: target/path nulling, hold, assignWaitingSpot per §1.9.
+  }
+
   spawnPatient(condition: ConditionId): Patient {
     const patient: Patient = {
       id: this.takeId(),
@@ -900,6 +957,13 @@ export class World implements PathGrid {
       waitingSince: null,
       dispatchHoldUntil: 0,
       waitingRoomId: null,
+      // Freeze defaults (compile-green, stream-neutral); Track S switches
+      // these to the §1.5 rng rolls [spawnMeterMin, vitalsMax] and re-pins
+      // every fixed-seed expectation in the same change.
+      bladder: BALANCE.stats.vitalsMax,
+      thirst: BALANCE.stats.vitalsMax,
+      needBreak: null,
+      needBreakHoldUntil: 0,
       at: { ...BALANCE.map.entrance },
       next: null,
       path: [],

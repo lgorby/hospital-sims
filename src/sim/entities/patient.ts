@@ -43,6 +43,29 @@ export const LEGAL_STAGE_TRANSITIONS: Record<
   dead: [],
 };
 
+/**
+ * Need side-trip sub-state (amenities epic Stage 1, AMENITIES_PLAN §3.2):
+ * NOT a lifecycle stage — the `lost` precedent. Stage stays waiting/
+ * waitingTriage; the dispatcher skips on-break patients like lost ones.
+ * Stall/machine claims are DERIVED from these (a stall is taken iff some
+ * live patient's needBreak references it), so terminal clears release
+ * everything by construction (rule-7 analogue).
+ */
+export type NeedBreak = {
+  kind: 'restroom' | 'vending';
+  /** Restroom claims: the room + the claimed stall slot. */
+  roomId?: number;
+  slot?: number;
+  /** Vending claims: the MACHINE's tile (the walk goal is an adjacent
+   *  tile picked once at claim time). */
+  tile?: GridPoint;
+  phase: 'walking' | 'using';
+  /** Set when `using` begins. */
+  ticksRemaining: number;
+  /** Claim tick — the watchdog abandons breaks that never reach `using`. */
+  startedAt: number;
+};
+
 export interface Patient {
   id: number;
   name: PersonName;
@@ -77,6 +100,13 @@ export interface Patient {
   dispatchHoldUntil: number;
   /** Waiting room whose capacity this patient occupies; null = standing (1.5× patience). */
   waitingRoomId: number | null;
+  /** Need meters (amenities Stage 1, §3.1) — vitals 0–100 scale, decay like patience. */
+  bladder: number;
+  thirst: number;
+  /** In-flight need side-trip; null = none. See NeedBreak. */
+  needBreak: NeedBreak | null;
+  /** No side-trip triggers before this tick (failed/abandoned-break retry hold). */
+  needBreakHoldUntil: number;
 
   // Walker fields (movement system)
   at: GridPoint;

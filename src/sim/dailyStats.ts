@@ -19,6 +19,9 @@ export interface DayTally {
   construction: number;
   /** Room sell-back income. */
   sellIncome: number;
+  /** Vending fees (amenities Stage 1) — a BREAKDOWN of `revenue`, billed
+   *  through billFee at the same choke point; never added to dayNet again. */
+  vendingRevenue: number;
   /** Net reputation change, clamp-aware (sums what was actually applied). */
   repDelta: number;
   /** Door-to-first-treatment waits (ticks), summed over patients whose FIRST
@@ -39,6 +42,7 @@ export function emptyDayTally(): DayTally {
     hireFees: 0,
     construction: 0,
     sellIncome: 0,
+    vendingRevenue: 0,
     repDelta: 0,
     waitSumTicks: 0,
     waitCount: 0,

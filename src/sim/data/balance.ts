@@ -169,4 +169,33 @@ export const BALANCE = {
     /** Quality bonus per tile above minimum footprint (GDD §5). */
     qualityPerExtraTile: 1,
   },
+  /** Patient need meters + side-trips (amenities epic Stage 1,
+   *  AMENITIES_PLAN §3.1–3.2). Meters share the vitals 0–100 scale. */
+  needs: {
+    bladderPerGameHour: 10,
+    thirstPerGameHour: 8,
+    /** Below this a waiting patient seeks the matching amenity. */
+    seekThreshold: 35,
+    /** Patience decay multiplier PER unmet need (multiplies into the
+     *  standing/quality/comfort stack — M3-gate composition ruling). */
+    unmetPatienceMultiplier: 1.25,
+    /** Bladder-0 accident: one-time patience hit; clamped to the floor in
+     *  non-AMA-eligible stages (checkingIn/reserved) so accidents never
+     *  mint a new fail state (design principle 3). */
+    accidentPatienceHit: 20,
+    accidentPatienceFloor: 1,
+    restroomUseGameMinutes: 3,
+    vendingUseGameMinutes: 1,
+    /** A break that never reached `using` is abandoned after this long. */
+    breakWatchdogGameMinutes: 30,
+    /** Retry hold after ANY failed/abandoned break (the dispatchHoldUntil
+     *  analogue — a doomed side-trip must not rearm every tick). */
+    breakRetryGameMinutes: 15,
+    /** Charged per vending use through billFee (revenue). */
+    vendingPrice: 5,
+    /** Spawn meter roll floor (max = stats.vitalsMax). */
+    spawnMeterMin: 60,
+    /** Plant comfort-aura radius (Chebyshev, like room auras). */
+    plantAuraRadius: 2,
+  },
 } as const;

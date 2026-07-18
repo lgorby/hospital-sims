@@ -429,6 +429,13 @@ function readPatient(value: unknown, label: string): Patient {
     waitingSince: asNumberOrNull(o.waitingSince, `${label}.waitingSince`),
     dispatchHoldUntil: asNumber(o.dispatchHoldUntil, `${label}.dispatchHoldUntil`),
     waitingRoomId: asIntOrNull(o.waitingRoomId, `${label}.waitingRoomId`),
+    // Amenities Stage 1 freeze defaults (v≤3 semantics — full meters, no
+    // break). Track S threads `saveVersion` through readPatient (the
+    // readReservation slotIndex precedent) and serializes these at v4.
+    bladder: BALANCE.stats.vitalsMax,
+    thirst: BALANCE.stats.vitalsMax,
+    needBreak: null,
+    needBreakHoldUntil: 0,
     at: readPoint(o.at, `${label}.at`),
     next: readPointOrNull(o.next, `${label}.next`),
     path: readPath(o.path, `${label}.path`),

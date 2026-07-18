@@ -1,3 +1,4 @@
+import type { AmenityId } from './sim/data/amenities';
 import type { ConditionId } from './sim/data/conditions';
 import type { RoomType } from './sim/data/rooms';
 import type { GridPoint, Rect } from './sim/types';
@@ -11,6 +12,8 @@ export type Command =
   | { type: 'buildRoom'; roomType: RoomType; rect: Rect; doorOutside: GridPoint | null }
   | { type: 'expandRoom'; roomId: number; rect: Rect }
   | { type: 'sellRoom'; roomId: number }
+  | { type: 'placeAmenity'; kind: AmenityId; col: number; row: number }
+  | { type: 'sellAmenity'; col: number; row: number }
   | { type: 'hireStaff'; candidateId: number }
   | { type: 'fireStaff'; staffId: number }
   | { type: 'debugSpawnPatient'; condition?: ConditionId }

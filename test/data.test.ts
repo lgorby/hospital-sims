@@ -11,7 +11,15 @@ import { PROP_STYLE, ROOM_DEFS, ROOM_TYPES, type RoomType } from '../src/sim/dat
  * type without either a condition path or an entry here fails the roster
  * integrity test below — that's the point.
  */
-const CONDITION_STEP_EXEMPT_ROOMS: readonly RoomType[] = ['waiting', 'reception', 'triage', 'atrium'];
+// restroom: self-service amenity infrastructure (amenities Stage 1) — visited
+// via needBreak side-trips, never a treatment step (AMENITIES_PLAN §3.3).
+const CONDITION_STEP_EXEMPT_ROOMS: readonly RoomType[] = [
+  'waiting',
+  'reception',
+  'triage',
+  'atrium',
+  'restroom',
+];
 
 describe('SSOT data integrity', () => {
   it('every condition step references a real room and real roles', () => {

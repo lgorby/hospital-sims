@@ -84,7 +84,11 @@ export class InspectPanel {
       return;
     }
     this.panel.classList.remove('hidden');
-    const key = `${selection.kind}:${selection.id}`;
+    // Amenities carry no entity id — the tile is the identity (Stage 1 freeze).
+    const key =
+      selection.kind === 'amenity'
+        ? `amenity:${selection.col},${selection.row}`
+        : `${selection.kind}:${selection.id}`;
     if (key !== this.shownKey) {
       this.shownKey = key;
       this.wireAction(selection);
@@ -95,6 +99,8 @@ export class InspectPanel {
   private stillExists(selection: Selection): boolean {
     if (selection.kind === 'patient') return this.world.patients.has(selection.id);
     if (selection.kind === 'staff') return this.world.staff.has(selection.id);
+    if (selection.kind === 'amenity')
+      return this.world.amenityAt(selection.col, selection.row) !== null;
     return this.world.rooms.has(selection.id);
   }
 
@@ -190,6 +196,11 @@ export class InspectPanel {
           staffDutyLabel(s.duty, this.reservationPhase(s.duty)) +
             (s.firing ? ' (leaving after this patient)' : ''),
         );
+      return;
+    }
+    if (selection.kind === 'amenity') {
+      // Stage 1 freeze stub — Track U builds the real card (label + Sell).
+      this.body.innerHTML = '';
       return;
     }
     const room = this.world.rooms.get(selection.id)!;

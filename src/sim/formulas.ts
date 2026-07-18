@@ -1,4 +1,5 @@
 import { GAME_MINUTES_PER_HOUR, GAME_MINUTES_PER_TICK, gameMinutesToTicks } from './clock';
+import { AMENITY_DEFS, type AmenityId } from './data/amenities';
 import { BALANCE } from './data/balance';
 import {
   SCORE_METRICS,
@@ -175,6 +176,12 @@ export function expandPrice(roomType: RoomType, oldRect: Rect, newRect: Rect): n
  */
 export function sellbackAmount(roomType: RoomType, rect: Rect): number {
   return Math.floor(priceOf(roomType, rect) * BALANCE.economy.roomSellbackRatio);
+}
+
+/** Amenity sell-back (Stage 1, AMENITIES_PLAN §3.4) — the sellbackAmount
+ *  pattern: sim payout AND inspect button label read this one derivation. */
+export function amenitySellback(kind: AmenityId): number {
+  return Math.floor(AMENITY_DEFS[kind].cost * BALANCE.economy.roomSellbackRatio);
 }
 
 /**

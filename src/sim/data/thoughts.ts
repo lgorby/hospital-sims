@@ -35,6 +35,22 @@ export const THOUGHTS = {
     'Why does it hurt MORE now?',
     'I want a second opinion.',
   ],
+  // Amenities epic Stage 1 (AMENITIES_PLAN §3.1–3.2).
+  needsRestroom: [
+    'I really need the restroom…',
+    'Where is the bathroom in this place?',
+    "I can't hold it much longer!",
+  ],
+  needsVending: [
+    'So thirsty…',
+    'Is there a vending machine around?',
+    'I could really use a drink.',
+  ],
+  accident: [
+    'Oh no. Oh no no no.',
+    "…I couldn't hold it.",
+    'This is the worst day of my life.',
+  ],
 } as const;
 
 export type ThoughtKey = keyof typeof THOUGHTS;

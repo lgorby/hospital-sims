@@ -19,7 +19,14 @@ export type PropId =
   | 'dialysisMachine'
   | 'orTable'
   | 'anesthesiaCart'
-  | 'scrubSink';
+  | 'scrubSink'
+  // Amenities epic Stage 1: restroom fixture + the freestanding amenities
+  // (AMENITY_DEFS carries their costs; ids join PropId so Tile.object and
+  // the save grid RLE accept them — AMENITIES_PLAN §3.4).
+  | 'toiletStall'
+  | 'trashcan'
+  | 'vending'
+  | 'plant';
 
 /**
  * How many of a prop a room's footprint carries (capacity epic Stage A):
@@ -81,6 +88,11 @@ export const PROP_STYLE: Record<PropId, { color: number; rise: number; tiles: nu
   orTable: { color: 0xd9dde2, rise: 12, tiles: 2 },
   anesthesiaCart: { color: 0x6a7fa8, rise: 14, tiles: 1 },
   scrubSink: { color: 0xc2d4dd, rise: 12, tiles: 1 },
+  // Amenities epic Stage 1 (colors at Track-R art discretion; all 1-tile).
+  toiletStall: { color: 0xdce8ee, rise: 14, tiles: 1 },
+  trashcan: { color: 0x707a70, rise: 10, tiles: 1 },
+  vending: { color: 0xc44b4b, rise: 22, tiles: 1 },
+  plant: { color: 0x4f9a5e, rise: 16, tiles: 1 },
 };
 
 /** Waiting room chair count included in the base build (GDD §5). */
@@ -306,6 +318,27 @@ export const ROOM_DEFS = {
       { id: 'orTable', walkable: false, density: { kind: 'fixed', count: 1 } },
       { id: 'anesthesiaCart', walkable: false, density: { kind: 'fixed', count: 1 } },
       { id: 'scrubSink', walkable: false, density: { kind: 'fixed', count: 1 } },
+    ],
+  },
+  // Amenities epic Stage 1 (AMENITIES_PLAN §3.3): unstaffed, self-service —
+  // occupancy is DERIVED from patients' needBreak claims, never reservations.
+  // 2×3 min (6 tiles) derives exactly 2 stalls (perTiles 3, min 2).
+  restroom: {
+    label: 'Restroom',
+    kind: 'treatment',
+    category: 'comfort',
+    minCols: 2,
+    minRows: 3,
+    cost: 2_500,
+    floorColor: 0xcfe0e8,
+    staffedBy: [],
+    capacity: { kind: 'perProp', prop: 'toiletStall', noun: 'Stalls' },
+    props: [
+      {
+        id: 'toiletStall',
+        walkable: false,
+        density: { kind: 'perTiles', tilesPerProp: 3, min: 2 },
+      },
     ],
   },
   atrium: {
