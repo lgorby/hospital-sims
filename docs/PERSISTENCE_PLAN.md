@@ -60,16 +60,20 @@ Design rules:
 
 ## Phase 2 — Async multiplayer without a backend (cheap, high fun-per-effort)
 
-> **Detailed scope in review: `docs/CHALLENGES_PLAN.md`** (Draft v2, adversarial
-> review in progress). It proposes narrowing Phase 2 to **seed challenges only**
-> and deferring save-file challenges to Phase 3 — pending owner sign-off.
+> **Detailed scope RATIFIED: `docs/CHALLENGES_PLAN.md`** (Draft v4, hardened by
+> 3 review rounds; owner decisions ratified 2026-07-17). Phase 2 is **narrowed to
+> seed challenges only**; save-file challenges are **deferred to Phase 3**.
 
-- **Seed challenges:** same seed + same scenario ruleset → compare day-N
-  reputation/cash. Shareable as a URL (`?seed=N&challenge=day5`). Zero
-  netcode; only needs the Phase-1 determinism guarantees.
-- **Save-file challenges:** "here's my hospital at day 10 — survive the
-  chest-pain wave." A save file IS the scenario format (GDD §11's unlockable
-  maps fall out of this for free).
+- **Seed challenges (Phase 2):** same seed + same rules → compare day-N score
+  (default: reputation, leaderboard-style). Shareable as a URL
+  (`?challenge=<id>` or `?seed=N&goal=rep:5`). Zero netcode; only needs the
+  Phase-1 determinism guarantees + an automatic `RULES_HASH` (CHALLENGES_PLAN
+  §2.1). Debug commands disabled in challenge mode; honor-system (no backend).
+- **Save-file challenges (DEFERRED to Phase 3):** "here's my hospital at day 10
+  — survive the chest-pain wave." A save file IS the scenario format (GDD §11's
+  unlockable maps fall out of this for free). Deferred because a Phase-1 save has
+  no home for a goal/rules stamp and can't ride in a URL — Phase 3's command-log
+  replay gives it both (CHALLENGES_PLAN §3.1).
 
 ## Phase 3 — Real-time multiplayer (needs the determinism we already have)
 

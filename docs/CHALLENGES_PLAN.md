@@ -1,23 +1,23 @@
 # Phase 2 — Seed Challenges (scoping draft)
 
-**Status: SCOPING (2026-07-17). Not implemented.** Detailed scope for
-`docs/PERSISTENCE_PLAN.md` §Phase 2 ("async multiplayer without a backend").
-This document is the design contract; it will be hardened by adversarial review
-before any code is written (per the milestone workflow). The V1 stance holds:
-**no backend, no accounts, no database.**
+**Status: SCOPED & OWNER-RATIFIED (2026-07-17). Ready for implementation; not
+yet built.** Detailed scope for `docs/PERSISTENCE_PLAN.md` §Phase 2 ("async
+multiplayer without a backend"). Hardened by 3 adversarial review rounds; the
+six owner decisions are ratified in §10. Implementation begins with the standard
+pre-implementation review of the *code* plan (this doc is the design contract).
+The V1 stance holds: **no backend, no accounts, no database.**
 
 Companion to `PERSISTENCE_PLAN.md` (persistence roadmap) and `TECH_PLAN.md`
 (architecture / SSOT §3.1). Where they disagree with this doc, they win until
 this doc is ratified.
 
-**Revision:** Draft v3 — incorporates adversarial review rounds 1 (4 major, 5
-minor, 3 nit) and 2 (2 new major, 4 minor, 2 nit). Round 1 independently verified
-the core determinism premise (the `src/sim/` tree is free of `Math.random`/
-`Date.now`/`performance.now`/`new Date` and of non-IEEE-safe float ops, so
-identical inputs yield identical streams cross-machine); round 2 confirmed all
-round-1 majors resolved and caught two gaps the v2 edits introduced (the
-scoring-context data shape and the midnight-modal suppression owner), fixed
-below.
+**Revision:** Draft v4 — v1→v3 incorporated adversarial review rounds 1 (4
+major, 5 minor, 3 nit) and 2 (2 new major, 4 minor, 2 nit); round 3 verified v3
+sign-off-ready. v4 folds in the ratified owner decisions (§10) — notably the
+automatic `RULES_HASH` (§2.1) replacing manual versioning. Round 1 independently
+verified the core determinism premise (the `src/sim/` tree is free of
+`Math.random`/`Date.now`/`performance.now`/`new Date` and of non-IEEE-safe float
+ops, so identical inputs yield identical streams cross-machine).
 
 ---
 
@@ -77,9 +77,29 @@ lint/test**, not just a Phase-3 aspiration — a future `formulas.ts` that adds
 `Math.pow` would silently break cross-machine comparability under an unchanged
 `RULES_VERSION`. Grep is clean today; the guard keeps it clean.
 
-### 2.1 Rules identity — proposed: a single manual `RULES_VERSION` (SSOT)
+### 2.1 Rules identity — OWNER RULING: automatic build-time sim-source hash
 
-Options considered:
+**OWNER RULING (2026-07-17): use an automatic `RULES_HASH`, not a manual
+version.** Directive was "the less the user needs to do, the better." A Vite
+build step hashes the contents of the entire **`src/sim/**` source tree** into a
+short `RULES_HASH`, injected as a build-time `define` — **zero ongoing
+maintenance**, and complete (any sim change, data OR logic, changes the hash;
+non-sim changes — render/UI/docs — do not). This supersedes the manual
+`RULES_VERSION` proposed below; wherever this doc says "`RULES_VERSION`", read
+"the automatic `RULES_HASH`."
+
+- A **built-in** challenge always resolves from the *current* table, so it
+  carries the current build's hash — always comparable on the live deploy.
+- An **ad-hoc share URL** embeds the sharer's hash as `&r=<hash>` (§4); on open,
+  a mismatch vs the opener's build shows the non-blocking notice.
+- Tradeoff (accepted): a comment-only edit inside `src/sim/` changes the hash,
+  so the notice can fire when scores *are* comparable — benign, and it is NEVER
+  wrong in the unsafe direction (it never calls incomparable runs comparable).
+  This is strictly better than the manual scheme's signal-erosion risk because
+  no human ever forgets to bump it.
+
+The `RULES_HASH` note is derived, never saved into a Phase-1 save (like
+`auraRevision`). Options originally considered (superseded by the ruling):
 - **(a) Manual `RULES_VERSION` integer**, bumped on ANY behavior-changing edit
   **anywhere in `src/sim/`**. Simple, honest about logic changes, one SSOT
   constant. Cost: discipline (same failure class as the "new World field → save
@@ -93,28 +113,18 @@ Options considered:
 - **(c) Hybrid**: data-hash + manual `SIM_LOGIC_VERSION`. Most precise, most
   moving parts.
 
-**Proposed: (a).** A single `RULES_VERSION` in SSOT (`src/sim/data/`), bumped
-deliberately, is the most honest and the least machinery; (b) automates only the
-easy-to-remember half and misses the easy-to-forget half. A challenge records
-the `RULES_VERSION` it was authored under; on boot, a mismatch shows a
-**non-blocking notice** ("authored under rules v3, you're on v4 — scores may not
-be comparable"), never a refusal.
+The ruling's automatic hash makes the manual-guard discussion moot: there is no
+number to forget, so no "did you bump it?" CI guard is needed. On a hash
+mismatch the game shows a **non-blocking notice** ("this challenge was set on a
+different game version — scores may not be directly comparable"), never a
+refusal. The one guard that DOES remain (unchanged) is the float-determinism
+lint (§2): the hash proves two builds' sim *source* matches, but only the lint
+keeps that source cross-machine-deterministic in the first place.
 
-**Guard (must cover the whole surface):** a test/CI check that flags any commit
-touching **`src/sim/**` (excluding pure test files)** without changing
-`RULES_VERSION`, and a checklist entry in HANDOFF's invariant ledger. Scoping the
-guard to `sim/data` + `sim/systems` (as v1 proposed) is exactly the MAJOR-2 hole
-— `formulas.ts`, `clock.ts`, `world.ts`, `rng.ts`, `build.ts`, `path/` all live
-outside those two folders and all change sim output.
-
-*Flagged for review (round-2): the guard can't tell a behavioral edit from a
-comment/type-only one, so bumping `RULES_VERSION` on cosmetic changes fires the
-§2.1 "scores may not be comparable" notice when scores ARE comparable — training
-players to dismiss it, so it goes unheeded exactly when a real logic change makes
-scores incomparable. Mitigation: treat the guard as a REMINDER and make the bump
-a **reviewed decision** (bump only when the diff changes behavior), not an
-automatic per-commit increment. Net: the guard protects against forgetting; the
-human protects the notice's signal value.*
+*Implementation note for the pre-build review: confirm the Vite hash `define`
+covers exactly `src/sim/**` (not `render/`/`ui/`/`loop.ts`, which don't affect
+fresh-run determinism), is stable across OSes (normalize line endings before
+hashing — this repo is CRLF-on-Windows), and excludes pure test files.*
 
 ---
 
@@ -124,14 +134,14 @@ One internal shape, produced by two sources (DRY — one validator, one resolver
 
 ```ts
 // src/sim/data/challenges.ts  (SSOT — as const table + derived types)
-// A curated, named, built-in challenge.
+// A curated, named, built-in challenge. No rules field: a built-in resolves
+// from the CURRENT table, so it always carries the current build's RULES_HASH.
 interface ChallengeDef {
   id: string;             // stable slug, used in the URL
   label: string;          // display name
   blurb: string;          // one-line pitch
   seed: number;           // pins the arrival stream (canonicalized [0, 2^31))
   goal: ChallengeGoal;    // §5
-  rulesVersion: number;   // RULES_VERSION at authoring time (§2.1)
 }
 
 // Resolved, validated form the game actually runs on. BOTH the built-in table
@@ -141,7 +151,10 @@ interface ChallengeSpec {
   id: string | null;               // builtin id, or null for ad-hoc
   scenario: { kind: 'default'; seed: number }; // seed lives WITH the scenario
   goal: ChallengeGoal;             // §5
-  rulesVersion: number | null;     // null for ad-hoc → mismatch notice suppressed
+  authoredHash: string | null;     // builtin → current build hash; url → the
+                                   // embedded &r= value, or null if absent.
+                                   // Compared to the live RULES_HASH for the
+                                   // non-blocking mismatch notice (§2.1).
 }
 ```
 
@@ -198,7 +211,9 @@ New precedence, all parsing in `src/sim/challenge.ts`:
      artifact can't produce a conflicting or different-looking-but-same run
      (round-2 nit).
    - `?seed=N&goal=<metric>:<day>` — ad-hoc: `seed` required, resolves to
-     `source:'url'`, `rulesVersion:null`.
+     `source:'url'`. The share UI appends `&r=<RULES_HASH>` (the sharer's build
+     fingerprint) so the opener can flag a version mismatch; a hand-typed URL
+     without `&r=` just resolves `authoredHash:null` (notice suppressed).
    - **A malformed challenge (unknown id, bad `goal`, `goal` without `seed`,
      out-of-range seed) is a readable boot-failure card (`showBootFailure`),
      NEVER a fresh random roll.** This is the MAJOR-3 fix: presence of
@@ -383,24 +398,26 @@ The renderer/UI reads challenge state; it never owns it.
 
 ---
 
-## 10. Open questions for the owner (decide before implementation)
+## 10. Owner decisions — RATIFIED (2026-07-17)
 
-1. **Scoring:** which metrics ship, the default, fixed-day vs per-challenge day,
-   and target-based (pass/fail) vs compare-raw? Available today without new work:
-   snapshot cash/reputation, daily-flow treated/died/`dayNet`, cumulative
-   treated/died only — **any other cumulative metric is a new `World` counter +
-   save-field + `SAVE_VERSION` bump** (round-2 cap).
-2. **Rules identity:** accept manual `RULES_VERSION` (§2.1 option a), or invest
-   in data-hashing (b)/hybrid (c)? And is a whole-`src/sim/` bump-guard's
-   false-positive rate acceptable?
-3. **Debug commands in challenge mode:** disable every `debug*` at the
-   CommandQueue, or taint the result? (§7)
-4. **Verification:** confirm honor-system is acceptable for Phase 2, deferring
-   verifiable command-log replay to Phase 3?
-5. **Launch roster:** ship a few curated built-in challenges, or launch with
-   ad-hoc `?seed=…&goal=…` URLs only and add curated ones later?
-6. **Save-file challenges:** confirm deferral to Phase 3 (§3.1) — this narrows
-   PERSISTENCE_PLAN §Phase 2.
+1. **Scoring default = reputation, compare-raw** (leaderboard-style: highest
+   reputation by the challenge's day wins). The `SCORE_METRICS` registry still
+   supports cash / treated / died for other challenges; day is per-challenge.
+2. **Rules identity = automatic `RULES_HASH`** (§2.1 ruling — build-time hash of
+   `src/sim/**`, zero maintenance). Not manual versioning.
+3. **Debug commands in challenge mode = disabled** — every `debug*` is blocked at
+   the CommandQueue boundary while a challenge is active (§7); a challenge run is
+   provably debug-free.
+4. **Verification = honor-system for Phase 2** (owner default) — verifiable
+   command-log replay is deferred to Phase 3.
+5. **Launch roster = a few curated built-in challenges + ad-hoc `?seed=…&goal=…`
+   URLs** (owner default).
+6. **Save-file challenges = deferred to Phase 3** (confirmed, §3.1) — this
+   narrows PERSISTENCE_PLAN §Phase 2 to seed challenges.
+
+**Residual, non-blocking (decide during implementation):** the exact metric set
+beyond reputation; the content of the curated built-in roster; the flagship
+challenge's day-N. None gate starting the build.
 
 ## 11. Explicitly OUT of Phase 2 (stays Phase 3)
 
