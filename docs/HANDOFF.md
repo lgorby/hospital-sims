@@ -1,7 +1,7 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-18 (after the capacity-epic ratification)
-**State: M0–M4 + audit + save/load + V1 DoD + Expansion 1 + art pass + DEPLOY + Phase 2 (seed challenges + round-5 fixes) + HINTS + UI polish + build-UX complete. Live at https://hospital-sims.vercel.app (auto-deploy on push to `master`; commits since `9cf62a5` NOT yet pushed — push deploys). 255 tests. NEXT UP: the ratified capacity & growth epic — `docs/CAPACITY_PLAN.md` (Stage 0 size-based pricing → Stage A multi-slot capacity → Stage B expand tool). Then: owner design backlog (patient click-highlight; amenities/EVS/facility-failure layer). See Next.**
+**Last updated:** 2026-07-18 (capacity epic complete + Quit-to-Title)
+**State: M0–M4 + audit + save/load + V1 DoD + Expansion 1 + art pass + DEPLOY + Phase 2 (seed challenges) + HINTS + UI polish + build-UX + the FULL capacity & growth epic (Stage 0 size-based pricing, Stage A multi-slot rooms, Stage B expand tool) + mid-game Quit-to-Title. Live at https://hospital-sims.vercel.app (auto-deploy on push to `master`; commits since `9cf62a5` NOT yet pushed — push deploys). 307 tests. Next: owner design backlog (patient click-highlight; amenities/EVS/facility-failure layer — needs scoping). See Next.**
 
 ## What this project is
 
