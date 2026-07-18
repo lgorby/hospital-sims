@@ -114,9 +114,10 @@ Both were hardened by independent adversarial reviews before any code was writte
   `docs/CAPACITY_PLAN.md` marked IMPLEMENTED with the shipped deltas. The
   owner's original ask ("the ER may need to get larger to handle more
   patients and doctors at once with more beds") is playable end-to-end:
-  build min, earn, Expand, staff up, treat concurrently. Follow-ups parked:
-  a "Quit to Title / New Game" entry in the Save/Load modal (owner asked how
-  to start a new game mid-run — TODO next), capacity/contention hints
+  build min, earn, Expand, staff up, treat concurrently. Follow-ups: "Quit to Title"
+  SHIPPED in the in-game Save/Load modal (mid-run → title → New Game /
+  Continue / Challenges; the modal nudges a save on the way out). Parked:
+  capacity/contention hints
   ("expand your ER"), the mega-room dominance watch (§8 Q5 cap lever).
 - **Capacity & growth epic: RATIFIED (2026-07-18)** —
   `docs/CAPACITY_PLAN.md` v2 (design-reviewed: 5 MAJORs folded — flat-cost

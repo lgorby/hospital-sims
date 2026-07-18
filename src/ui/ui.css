@@ -873,3 +873,8 @@ body {
 .share-copy:hover {
   background: rgba(255, 255, 255, 0.12);
 }
+
+/* Mid-game exit (in-game Save/Load modal only): sits above Close. */
+.saveload-quit {
+  margin-top: 12px;
+}

@@ -102,6 +102,23 @@ export class SaveLoadModal {
     dropHint.textContent = 'or drop a hospital-simms-save.json here';
     this.card.appendChild(dropHint);
 
+    // Mid-game exit path (owner ask: "once a game is started, how does the
+    // user start a new game?" — there was NO in-game route to the title).
+    // Only in the in-game modal (`this.game`); the title's load-only modal
+    // doesn't need it. Passing through this modal nudges a save on the way
+    // out; the bare-origin navigation lands on the title screen (New Game /
+    // Continue / Challenges live there).
+    if (this.game) {
+      const quit = document.createElement('button');
+      quit.textContent = 'Quit to Title';
+      quit.className = 'title-alt saveload-quit';
+      quit.setAttribute('data-ui', '');
+      quit.addEventListener('click', () => {
+        window.location.assign(window.location.pathname);
+      });
+      this.card.appendChild(quit);
+    }
+
     const closeButton = document.createElement('button');
     closeButton.textContent = 'Close';
     closeButton.className = 'modal-continue';
