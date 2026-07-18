@@ -295,6 +295,314 @@ green, HANDOFF, commit.
 19. Restroom `perTiles` derivation: 2×3 → exactly 2 stalls (harness-safe
     construction rule).
 
+## S2 — Stage 2 implementation plan (EVS + messes) — v2, pre-impl review FOLDED
+
+Contract: AMENITIES_PLAN §4 (ratified) + the banked Stage-1 review notes
+(HANDOFF Next): geometry sweeps (design MAJOR 4), worker step-out via the
+`releaseReservation` clause (design MAJOR 6), `messChanged`/`jobChanged` in
+the panel invalidation list (MINOR 18), `amenities.fill` already in v4.
+Pre-impl review (7 MAJOR / 8 MINOR / 4 NIT) folded throughout; the MAJORs:
+sold-can orphaned mess, overflow double-mint + re-entrant removeMess,
+unimplementable `standableTile` shape, `STAFF_DUTY_LABELS` compile surface,
+understated rng blast radius (the evs CONSTRUCTOR candidates dominate),
+assignment-loop hold semantics, contradictory vomit stage set. **Design
+deltas flagged for owner** (erratum-style, adopt-unless-vetoed): (1) the
+clean-day +2 applies only when `today.arrivals > 0` — the ratified §4.2
+didn't contemplate empty days, and the wait bonus already excludes them
+("an empty hospital isn't fast"); (2) idle EVS stand where released (like
+all released staff) — §4.4's "wander" overstated what released staff do.
+
+### S2.0 Scope
+
+IN: `world.messes` + vomit/litter/accident-mess sources, trashcan
+fill/overflow, the job queue + `{kind:'job'}` duty (clean/empty; `repair`
+reserved in the unions for Stage 3, no producer), EVS role, cleanliness
+(proximity patience + daily rep), SAVE_VERSION 5, hints `role:evs`,
+mess decals + EVS render, report cleanliness row.
+OUT (Stage 3): wear/broken, repair jobs, piping bursts, `water` messes
+(the KIND ships in the union/save schema; no producer).
+
+### S2.1 Frozen contract
+
+**`BALANCE.mess`** (new block): `vomitPerGameHour: 1.2` (per-tick Bernoulli;
+threshold reuses `BALANCE.mood.criticalHealthBelow` — no new number; fix the
+stale "`moodOf` is the only reader" comment beside it, pre-impl NIT 16),
+`vomitSelfPatienceHit: 5` (same clamp rule as accidents),
+`litterTrashcanRadius: 4` (Chebyshev, like the plant aura),
+`trashcanCapacity: 8`, `patienceMultiplier: 1.25`, `patienceRadius: 3`
+(Chebyshev), `cleanDayRepBonus: 2`, `messHoursPerRepPoint: 4`,
+`dailyRepCap: 15`, `cleanGameMinutes: 2`, `emptyGameMinutes: 1`,
+`jobRetryGameMinutes: 5`.
+
+**Vomit eligibility (FROZEN stage set — pre-impl MAJOR 7):** patients in
+`atEntrance | queuedCheckIn | checkingIn | waitingTriage | waiting` (the
+pre-terminal, non-reserved set) with `health <
+BALANCE.mood.criticalHealthBelow` roll; **needBreak holders DO roll** (their
+stage stays waiting — being en route to the restroom doesn't settle a
+stomach). Design delta recorded: §4.1 said "waiting/queued"; `atEntrance`
+is included deliberately (a critical patient stuck outside an unstaffed
+hospital vomiting at the door is exactly the pressure this layer sells).
+
+**Types** — `world.ts`: `Mess = { kind: 'vomit'|'litter'|'water'; tile:
+GridPoint; since: number }`; `entities/staff.ts`: `Job = { id: number;
+kind: 'clean'|'empty'|'repair'; tile: GridPoint; staffId: number | null;
+phase: 'queued'|'assigned'|'working'; ticksRemaining: number; holdUntil:
+number }` (repair's `roomId` variant is Stage 3 — tile-only now; job ids
+come from `takeId()` — they join the border's global-uniqueness register
+and the `nextEntityId` bound, pre-impl MINOR 8); `StaffDuty` +=
+`{ kind: 'job'; jobId: number }`. `ROLE_DEFS.evs`: label 'EVS Worker',
+`salaryPerDay: 90`, color 0x9b7653, `standingPost: false`.
+
+**`format.ts` (FREEZE — pre-impl MAJOR 4, the cross-track compile
+surface):** `STAFF_DUTY_LABELS` gains the `job` key, and `staffDutyLabel`
+gains an optional third param: `staffDutyLabel(duty, reservationPhase?,
+jobKind?: 'clean' | 'empty' | 'repair')` → 'Cleaning' / 'Emptying a
+trashcan' / 'Repairing' when duty.kind === 'job' (falls back to the record
+label without jobKind). The inspect caller resolves jobKind from
+`world.jobs` (Track U wiring only).
+
+**Events**: `messChanged: { col; row }` (add OR remove — renderer re-syncs
+the tile), `jobChanged: { jobId }`. Both join the blocked-panel invalidate
+list AND the save-gate `EVENT_NAMES` record.
+
+**Formulas**: `cleanlinessRepDelta(messTicks, arrivals): number` — the ONE
+formula: 0 mess-ticks AND `arrivals > 0` → `+cleanDayRepBonus` (an empty
+hospital isn't clean, it's closed — the wait-bonus principle; design delta
+flagged, pre-impl MINOR 15); 0 mess-ticks with no arrivals → 0; else
+`−min(dailyRepCap, floor(messHours / messHoursPerRepPoint))` — called by
+`closeDay` AND the report row. Job durations reuse
+`treatmentDurationTicks(base, skill, 0)` (quality 0 — no new formula).
+
+**World surface** (stubs at freeze): `messes: Map<tileKey, Mess>`,
+`jobs: Map<number, Job>`, `addMess(kind, tile)` (one-per-tile — a second
+event refreshes `since`; mints a `clean` job iff none targets the tile;
+`messChanged` + `messRevision++`), `removeMess(tile)` (delete + orphan-job
+delete/worker-release + `messChanged` + `messRevision++`),
+`hasMessNear(p)` (signature-cached per tick — the `auraCheckedTick`
+pattern, `messRevision` its invalidation counter).
+
+**`standableTile(p, opts?: { sameRoomAs?: GridPoint })`** (pre-impl MAJOR
+3 — the frozen signature must express the same-room exception):
+corridor/open-plan OR inside the room containing `opts.sameRoomAs`, AND
+never any room's door.inside/outside. Call-site declarations, frozen: the
+vending stand PICK calls it with NO opts (vending stays corridor-only —
+the exception cannot leak); `assignJobs` passes `sameRoomAs: job.tile`
+(an accident inside a treatment room is worked from that room's interior);
+the Stage-1 walking→using FLIP is **untouched** (zone-only, its frozen
+contract — no door-rule bolt-on). Claim-awareness (`isTileClaimed`) stays
+a separate check at each call site, as today. patientNeeds' local
+`standingZoneOk`/`onDoorTile` refactor onto this without behavior change.
+
+`writeStaffDuty`/`readStaffDuty` gain the 'job' case at freeze (exhaustive
+switch — compile requires it), as do `SavedStaffDuty` and the border duty
+checks.
+
+### S2.2 Mess sources & sinks (Track S)
+
+- New `systems/mess.ts` → `updateMess(world)`, tick slot AFTER treatment,
+  BEFORE economy (design §7 order): (1) vomit rolls — per-tick Bernoulli
+  over waiting/queued/at-entrance patients below the critical-health
+  threshold, fixed map order; on vomit: `addMess('vomit', patient.at)` +
+  self patience hit (accident clamp rule); (2) the tally:
+  `today.messTicks += messes.size`.
+- Bladder accidents (decay.ts) now also `addMess('vomit', at)` — the §3.1
+  Stage-2 upgrade. (Accident mess kind is vomit — one decal family.)
+- Vending completion (patientNeeds.ts): nearest non-full trashcan within
+  `litterTrashcanRadius` (Chebyshev) → `fill += 1` silently (no event —
+  the inspect card is frame-polled); tie-break: FIRST minimal-distance can
+  in `world.amenities` insertion order (placement order, save-stable —
+  `restoreInto` preserves it; pre-impl MINOR 11); none → `addMess('litter',
+  patient.at)`. **Overflow order (FROZEN — pre-impl MAJOR 2):** a can
+  REACHING `trashcanCapacity` mints the `empty` job FIRST, then
+  `addMess('litter', can.tile)` — the one-job-per-target check then
+  suppresses addMess's clean-job mint (no double-mint; the overflow decal
+  on a non-walkable tile is fine, decals aren't collision).
+- **decay.ts** (pre-impl MINOR 9 — the dropped-work-item): the proximity
+  patience channel lives here: `hasMessNear(patient.at)` → ×
+  `BALANCE.mess.patienceMultiplier`, ONCE (not per mess), inside the
+  waiting-in-place block, composing multiplicatively with the Stage-1
+  stack (standing × waiting-quality × comfort × unmet-needs).
+- `closeDay`: `applyReputation(cleanlinessRepDelta(today.messTicks,
+  today.arrivals))` beside the wait bonus, BEFORE the snapshot (order is
+  load-bearing).
+- **Geometry sweeps** (design MAJOR 4 / principle 7): `buildRoom`,
+  `expandRoom`, `sellRoom`, AND `placeAmenity` delete messes (+ their
+  jobs, releasing workers) on affected tiles via `removeMess`. Jobs never
+  block builds. **`sellAmenity` on an overflowed can (pre-impl MAJOR 1 —
+  the orphaned-mess rep-leak):** delete the `empty` job, then
+  `removeMess(can.tile)` — the overflow litter leaves WITH the can (the
+  can's contents were the mess; the tile underneath is clean). Never a
+  mess with no job and no minter left behind.
+
+### S2.3 The job queue (Track S — dispatcher)
+
+- **`assignJobs(world)` (FROZEN loop — pre-impl MAJOR 6, the hot-loop/
+  starvation class):** inside `updateDispatcher` after `assignTreatment`.
+  Per idle EVS (not firing): scan queued clean/empty jobs **oldest-first =
+  lowest job id** (ids from `takeId()`, monotonic), SKIPPING jobs with
+  `holdUntil > tick`; per candidate job, probe = derive the work tile
+  (the mess tile itself if walkable + `standableTile(tile, {sameRoomAs:
+  tile})` + unclaimed, else the first claim-aware standable orthogonal
+  neighbor via `standableTile(p, {sameRoomAs: job.tile})` — this
+  adjacent-neighbor rule is what keeps a mess under a seated patient
+  workable, so long claims starve nothing) + `findPath`; probe FAILURE →
+  `job.holdUntil = tick + gameMinutesToTicks(jobRetryGameMinutes)` and
+  **continue to the next job** (a held/unworkable oldest job never blocks
+  younger workable ones; a failed probe is not re-run until its window
+  expires). Probe SUCCESS → assign: `staffId`, phase 'assigned', duty
+  `{kind:'job', jobId}`, `setWalkerTarget(worker, workTile)`,
+  `staffUpdated` + `jobChanged`.
+- `progressJobs(world)` (same system; **iterates `[...world.jobs.values()]`
+  — completion mutates the map, pre-impl MAJOR 2**): `assigned` + arrived
+  at the work tile → `working` + `ticksRemaining =
+  treatmentDurationTicks(base, skill, 0)`; arrived ANYWHERE else (dead
+  path) → requeue + hold (the rule-8 stalled analogue, immediate).
+  `working` counts down → **completion order (FROZEN):** clean →
+  `removeMess` (the job is deleted by removeMess's orphan clause with the
+  worker already detached — see below); empty → `fill = 0` → delete the
+  empty job + release the worker → `removeMess(can.tile)` (which then
+  finds no job — never a re-entrant delete of the completing job). Either
+  way the worker STEPS OUT of any walled room unconditionally
+  (`releaseReservation` clause verbatim — design MAJOR 6), duty idle,
+  `staffUpdated` + `jobChanged`.
+- `fireStaff` mid-job (any phase): job requeued (`staffId` null, phase
+  queued, hold NOT set — the job didn't fail); the worker follows the
+  existing firing release path. Rule-7 analogue. (Consumer inventory note:
+  today's `fireStaff` would fall through to instant `removeStaff` leaving
+  a dangling `staffId` — the 'job' branch is REQUIRED, not optional.)
+- **The general orphan rule** (design MINOR 12): `removeMess` deletes the
+  job targeting that tile in every phase, releasing its worker (idle +
+  step-out). Idle EVS between jobs stand where released, like all released
+  staff (design §4.4's "wander" overstated — delta noted; live-drive
+  reviewers: an EVS standing at the entrance post-hire is correct).
+- Accepted V1-collision looseness (pre-impl NIT 17): a working EVS near a
+  reception queue line can transiently share a tile with a re-slotted
+  queue patient — `queueSlotTile` re-slotting ignores claims today for
+  ALL staff; not a Stage-2 regression, not fixed here.
+
+### S2.4 Save v5 (Track S)
+
+**SAVE_VERSION 5.** `SavedMess`/`SavedJob`; staff duty 'job';
+`today.messTicks` (`TALLY_KEY_VERSIONS: 5`). **Serializer positions
+(FROZEN — byte-identity fixtures pin insertion order forever, pre-impl
+MINOR 8): `messes` then `jobs` immediately after `amenities`.** Job ids
+join the global-uniqueness register and the `nextEntityId` bound. Border:
+mess tiles in bounds, ≤1 per tile, kind valid (`water` ACCEPTED — a clean
+job cleans any mess); **`kind: 'repair'` jobs REJECTED in v5** (reserved
+union value with no legal target — a shape-valid repair job would sit
+queued forever, pre-impl MINOR 10); job↔target both ways (clean → a mess
+on the tile; empty → a trashcan amenity on the tile; ≤1 job per tile),
+`duty.jobId` resolves AND `job.staffId` back-references (queued ⇔ staffId
+null; assigned/working ⇒ an `evs` staff whose duty is that job),
+`ticksRemaining` bounded by the longest job duration × the slowest skill
+factor, `holdUntil` finite (the `readNeedBreak` bounding precedent).
+Migration v≤4: empty maps, messTicks 0. NOTE: `topUpCandidates` mints evs
+candidates on every v≤4 load — the v4 byte-identity fixture test becomes a
+fixture-LOAD test (see the harness section). **Round-trip pins**: a live
+mess with a `queued` job, an `assigned` job (worker mid-walk), a `working`
+job mid-timer, a queued job with `holdUntil > tick` (the Stage-1 hold-pin
+precedent), a can at `fill > 0`, and `today.messTicks > 0` at the save
+tick. **Gate-scenario sketch (pre-impl MINOR 14, so this isn't
+renegotiated mid-build):** hire 2 EVS; poke `health = 20` on a few waiters
+(the established field-poke pattern — border-valid, self-consistent) so
+vomits occur organically; `fill > 0` comes from the scenario's existing
+adjacent vending/trashcan pair; `working` lasts only ~7–9 ticks, so the
+pipelineRich-style poll must catch the queued+assigned+working conjunction
+(≥3 standing messes makes it reachable).
+
+### S2.5 UI (Track U)
+
+`format.ts` is FROZEN (S2.1) — Track U only wires the inspect staff card
+to pass `jobKind` from `world.jobs` and shows the duty line; daily report
+Cleanliness row (reads `cleanlinessRepDelta(report.messTicks,
+report.arrivals)` — "spotless +2" / "−N (X mess-hours)" / absent on an
+empty day); blockedPanel invalidate list += `messChanged`/`jobChanged`;
+`role:evs` need row (needs.ts is Track S: urgent at ≥`3` standing messes
+with no EVS hired, upcoming when any mess exists; label 'Hire an EVS
+Worker — messes need cleaning'; **`patients` field = the standing-mess
+count** — pre-impl MINOR 13, it drives the sort tie-break and messes
+aren't patients; the >8-urgent-rows panel-cap occlusion edge is accepted:
+urgent rows sort strictly first); trashcan inspect card gains a
+"Fill N/8" line (frame-polled — no event needed). DOM tests for each.
+
+### S2.6 Render (Track R)
+
+Mess decal textures at init (vomit splat / litter scraps / water puddle —
+water unused until Stage 3), variety hashed on tile coords; drawn
+per-change on `messChanged`, sprites keyed by tile in a Map, in a **new
+`decalLayer` Container inserted between `roomFloorLayer` and `sortedLayer`
+in the camera child order** (pre-impl MINOR 12 — `sortedLayer` has no
+"actor band" to slot under; a dedicated layer above floors, below the
+depth-sorted world is the implementable home). EVS character — the
+role-color pipeline covers a new RoleId automatically (verified:
+characters.ts iterates ROLE_IDS with a generic-hair fallback); decide
+whether evs joins SCRUB_CAP_ROLES (recommend no — cap-free distinguishes
+from nurse teal at a glance); a working EVS gets no special animation in
+v1 (noted, not built).
+
+### S2.6b Harness & fixed-seed gate (Track S — a Stage-2 EXIT GATE, pre-impl
+MAJOR 5: the rng blast radius, honestly stated)
+
+THREE stream-shift sources, in blast-radius order: (1) **`ROLE_DEFS.evs`
+itself is the dominant shift** — the World CONSTRUCTOR mints
+`candidatesPerRole` candidates per role (~12 extra seeded draws before
+tick 0), so EVERY seeded World in the suite diverges from construction,
+strictly more invasive than Stage 1's per-spawn meter rolls; (2) vomit
+Bernoulli draws (run-length-dependent — only when sub-critical-health
+patients exist in eligible stages; short unit fixtures mostly untouched,
+the harness and gate-enrichment loops are not); (3) the reference build's
+EVS hire. Policy unchanged: **re-pin, never weaken** — the seed is the
+fixture; audit alternates before settling on one, and record the rationale
+in-file (the Stage-1 1337→1338 precedent). `topUpCandidates` mints evs
+candidates on every v≤4 load, so the v4 byte-identity fixture test
+converts to a fixture-LOAD test. Per-patient Bernoulli is the RIGHT
+determinism call (the wrong-turn per-tile precedent; an aggregate roll
+can't attribute the mess tile + self hit without extra draws) — do not
+"optimize" it mid-build. Reference build hires 1 EVS; the operating
+envelope must stay green with messes occurring organically.
+
+### S2.7 Tests (Track S + U; ~35 new)
+
+Vomit Bernoulli (rate conversion + the FROZEN stage set exactly — including
+needBreak holders roll, `reserved` doesn't + fixed rng order); accident
+drops a mess; litter vs trashcan radius (in/out/full + the
+insertion-order tie-break); **overflow mints empty-job-BEFORE-addMess (no
+clean-job double-mint — ≤1 job per tile holds at the overflow instant,
+pre-impl MAJOR 2)**; one-job-per-target; tally + `cleanlinessRepDelta`
+boundaries (0+arrivals → +2; **0 arrivals → 0, the empty-day gate**; cap;
+the 4-mess-hour step) + closeDay order (delta inside repDelta AND the
+snapshot); proximity multiplier stacks with the Stage-1 stack (× standing
+× unmet × comfort, once not per mess); **assignJobs: oldest = lowest id;
+a HELD job is skipped, not blocking (a younger workable job assigns the
+same tick); a failed probe is not re-probed until its window expires
+(pre-impl MAJOR 6)**; the same-room work rule (mess inside a treatment
+room IS workable from inside; vending stands stay corridor-only — the
+opts cannot leak, pre-impl MAJOR 3); mess under a seated patient →
+adjacent work tile (no starvation); stalled-arrival requeue;
+fire-mid-job requeue (all 3 phases — the dangling-staffId branch);
+**empty-completion order: fill=0 → job deleted → removeMess finds no job
+(no re-entrant delete)**; completion step-out (worker never idles inside
+a walled room — the sell gate stays clear); geometry sweeps
+(build/expand/sell/placeAmenity over a mess: mess + job gone, worker
+released); **sellAmenity on an overflowed can: empty job deleted AND the
+overflow mess leaves with the can — no orphaned rep-leak (pre-impl MAJOR
+1)**; save v5 round-trip byte identity + border suites (incl. repair-job
+rejection, water-mess acceptance, holdUntil bound) + v4-fixture LOAD
+(messTicks default + evs candidate top-up) + the S2.4 pins; needs
+`role:evs` urgent/upcoming + the `patients`=mess-count sort; harness per
+S2.6b.
+
+### S2.8 Live-drive checklist (reviewer 2)
+
+Drive a busy hospital until someone vomits (or force low health via debug);
+see the decal; hire an EVS; watch them walk, clean, decal clears; duty line
+reads "Cleaning"; fill a trashcan to overflow via vending uses; watch the
+empty job; sell the can mid-job (job vanishes, worker released); build a
+room over a mess (mess swept); daily report cleanliness row both ways
+(spotless +2 / penalized); blocked panel "Hire an EVS Worker" appears at 3
+messes and clears on hire — including while paused; console hygiene
+throughout.
+
 ## 4. Harness & fixed-seed gate (Track S — a Stage-1 EXIT GATE, pre-impl MAJOR 5)
 
 Design §7 requirement, previously dropped: `test/harness.test.ts`'s
