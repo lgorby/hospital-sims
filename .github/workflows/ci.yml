@@ -1,0 +1,47 @@
+name: CI
+
+# Runs the full local gate (lint + tests + typecheck + build) automatically on
+# every push to master and every PR, so a regression can't silently land or
+# deploy. Vercel already builds on push; this adds the test + lint coverage
+# Vercel does not run. See docs/HANDOFF.md "Commands".
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# A newer push to the same branch cancels the older in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: lint · test · build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install (clean, from lockfile)
+        run: npm ci
+
+      # Each gate is its own step so a red check names the exact failure.
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      # `npm run build` is `tsc --noEmit && vite build` — typecheck + bundle.
+      - name: Typecheck + build
+        run: npm run build
