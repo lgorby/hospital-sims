@@ -177,6 +177,12 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Who runs the room (data-driven from ROOM_DEFS.staffedBy). */
+.dropdown-panel .room-roles {
+  color: #9fb0c5;
+  font-size: 11px;
+}
+
 #hint {
   position: fixed;
   bottom: 52px;

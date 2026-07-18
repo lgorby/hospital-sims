@@ -29,7 +29,11 @@ export class DebugPanel {
     title.textContent = 'Debug';
     this.panel.appendChild(title);
 
-    for (const condition of CONDITION_IDS) {
+    // Alphabetized by label (owner request) — presentation only.
+    const conditions = [...CONDITION_IDS].sort((a, b) =>
+      CONDITION_DEFS[a].label.localeCompare(CONDITION_DEFS[b].label, 'en'),
+    );
+    for (const condition of conditions) {
       this.button(`Spawn ${CONDITION_DEFS[condition].label}`, () =>
         this.commands.push({ type: 'debugSpawnPatient', condition }),
       );

@@ -1,5 +1,6 @@
 import type { CommandQueue } from '../commands';
 import type { EventBus } from '../events';
+import { ROLE_DEFS } from '../sim/data/roles';
 import { ROOM_DEFS, ROOM_TYPES, type RoomCategory, type RoomType } from '../sim/data/rooms';
 import type { UiMode, WorldRenderer } from '../render/renderer';
 import type { BottomBarDropdowns } from './bottomBar';
@@ -52,8 +53,14 @@ export class BuildMenu {
     bar.setAttribute('data-ui', '');
 
     for (const category of CATEGORIES) {
-      // Table order within a category (§9); an empty category renders nothing.
-      const types = ROOM_TYPES.filter((type) => ROOM_DEFS[type].category === category);
+      // Rooms alphabetized by label within a category (owner request —
+      // presentation only; the table stays the data SSOT). Category ORDER
+      // still derives from CATEGORY_LABELS (§9 invariant). Empty categories
+      // render nothing.
+      // 'en' pinned: bare localeCompare collates per OS locale (review MINOR).
+      const types = ROOM_TYPES.filter((type) => ROOM_DEFS[type].category === category).sort(
+        (a, b) => ROOM_DEFS[a].label.localeCompare(ROOM_DEFS[b].label, 'en'),
+      );
       if (types.length === 0) continue;
       bar.appendChild(this.categoryDropdown(category, types));
     }
@@ -109,7 +116,19 @@ export class BuildMenu {
       const size = document.createElement('span');
       size.className = 'room-size';
       size.textContent = `${def.minCols}×${def.minRows}`;
-      button.append(swatch, label, size, `$${def.cost.toLocaleString()}`);
+      button.append(swatch, label);
+      // Who runs the room (owner request: dialysis "hire a dialysis member"
+      // confusion — the roles were invisible). Data-driven from staffedBy.
+      if (def.staffedBy.length > 0) {
+        const roles = document.createElement('span');
+        roles.className = 'room-roles';
+        // Neutral separator: staffedBy = "roles that can staff this room" —
+        // some steps need all of them at once (surgery), others either-or
+        // (exam), so neither '+' nor '/' would be honest for every room.
+        roles.textContent = def.staffedBy.map((role) => ROLE_DEFS[role].label).join(', ');
+        button.appendChild(roles);
+      }
+      button.append(size, `$${def.cost.toLocaleString()}`);
       panel.appendChild(button);
       this.roomButtons.set(type, button);
     }

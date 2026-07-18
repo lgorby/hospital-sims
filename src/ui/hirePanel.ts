@@ -55,7 +55,14 @@ export class HirePanel {
       none.textContent = 'No staff hired.';
       this.panel.appendChild(none);
     }
-    for (const member of this.world.staff.values()) {
+    // Roster sorted by role label, then name (owner request — presentation
+    // only; hire order stays authoritative in the world's Map).
+    const roster = [...this.world.staff.values()].sort(
+      (a, b) =>
+        ROLE_DEFS[a.role].label.localeCompare(ROLE_DEFS[b.role].label, 'en') ||
+        a.name.full.localeCompare(b.name.full, 'en'),
+    );
+    for (const member of roster) {
       const row = document.createElement('div');
       row.className = 'person-row';
       const label = document.createElement('span');
@@ -73,10 +80,18 @@ export class HirePanel {
     const candidatesTitle = document.createElement('h3');
     candidatesTitle.textContent = 'Candidates';
     this.panel.appendChild(candidatesTitle);
-    // Grouped by role, in ROLE_IDS (table) order — data-driven: new roles in
-    // the table appear here with zero UI changes. Empty pools render nothing.
-    for (const role of ROLE_IDS) {
-      const pool = this.world.candidates.filter((candidate) => candidate.role === role);
+    // Grouped by role, alphabetized by label (owner request) — still
+    // data-driven: new roles in the table appear here with zero UI changes.
+    // Display order is presentation, so the sort lives HERE, not in the table.
+    // Empty pools render nothing.
+    const rolesAlphabetical = [...ROLE_IDS].sort((a, b) =>
+      ROLE_DEFS[a].label.localeCompare(ROLE_DEFS[b].label, 'en'),
+    );
+    for (const role of rolesAlphabetical) {
+      // Candidates alphabetized within the group too (completes the ask).
+      const pool = this.world.candidates
+        .filter((candidate) => candidate.role === role)
+        .sort((a, b) => a.name.full.localeCompare(b.name.full, 'en'));
       if (pool.length === 0) continue;
       const head = document.createElement('div');
       head.className = 'role-head';

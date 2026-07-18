@@ -174,19 +174,30 @@ export class InspectPanel {
     const room = this.world.rooms.get(selection.id)!;
     const def = ROOM_DEFS[room.type];
     const sellCheck = validateRoomSell(this.world, room.id);
-    const posted = [...this.world.staff.values()].filter(
-      (s) => s.duty.kind === 'post' && s.duty.roomId === room.id,
-    );
     const reservation = [...this.world.reservations.values()].find((r) => r.roomId === room.id);
     const occupant =
       reservation === undefined
         ? '—'
         : (this.world.patients.get(reservation.patientId)?.name.short ?? '—');
+    // Who RUNS the room (role SSOT — the dialysis "hire a dialysis member"
+    // confusion: roles were invisible in the UI). The posted-names line only
+    // makes sense for standing-post rooms (reception/atrium); on treatment
+    // rooms it was a misleading permanent "—" (staff arrive per-reservation).
+    const runBy = def.staffedBy.map((role) => ROLE_DEFS[role].label).join(', ');
+    const hasPost = def.staffedBy.some((role) => ROLE_DEFS[role].standingPost);
+    // This body re-renders every frame — only scan the staff map for the two
+    // room types that actually render a Posted line (review MINOR).
+    const posted = hasPost
+      ? [...this.world.staff.values()].filter(
+          (s) => s.duty.kind === 'post' && s.duty.roomId === room.id,
+        )
+      : [];
     this.body.innerHTML =
       `<div class="inspect-name">${esc(def.label)}</div>` +
       this.line('Size', `${room.rect.cols}×${room.rect.rows}`) +
       this.line('Quality', `+${room.quality}`) +
-      this.line('Staffed by', posted.map((s) => s.name.short).join(', ') || '—') +
+      (runBy ? this.line('Run by', runBy) : '') +
+      (hasPost ? this.line('Posted', posted.map((s) => s.name.short).join(', ') || '—') : '') +
       this.line('Treating', occupant);
     // sellbackAmount is the sim's payout AND this label (SSOT audit #2).
     const refund = sellbackAmount(room.type);
