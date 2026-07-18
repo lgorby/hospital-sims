@@ -114,7 +114,7 @@ function entranceTile(): Graphics {
  * (`propKey`, §2.6) is untouched, and strip length still lives ONLY in
  * `PROP_STYLE[id].tiles`.
  */
-type PropDecor = 'pillow' | 'backrest' | 'monitor' | 'panel' | 'basin';
+type PropDecor = 'pillow' | 'backrest' | 'monitor' | 'panel' | 'basin' | 'toilet' | 'vendingFront';
 const PROP_DECOR: Readonly<Partial<Record<PropId, PropDecor>>> = {
   // Beds/tables patients lie on get a pillow at the head end.
   bed: 'pillow',
@@ -138,6 +138,73 @@ const PROP_DECOR: Readonly<Partial<Record<PropId, PropDecor>>> = {
   dialysisMachine: 'basin',
   nebulizer: 'basin',
   hotLabBench: 'basin',
+  // Amenities Stage 1: the restroom fixture + the vending machine keep the
+  // prism silhouette and add readable decor; trashcan/plant are full custom
+  // silhouettes (see CUSTOM_PROPS) — a diamond prism can't read as a bin/pot.
+  toiletStall: 'toilet',
+  vending: 'vendingFront',
+};
+
+/** Fixed product palette for the vending glass front — deterministic, no rng. */
+const VENDING_PRODUCT_COLORS: readonly number[] = [0xffd166, 0x7ec8e3, 0x9ade7c, 0xf49f6e];
+
+/**
+ * Cylindrical lidded bin — replaces the prism entirely (a gray diamond box
+ * read as "crate", not "trashcan"). Same padded canvas; all coords stay
+ * inside the PROP_RISE_PAD bounds so placement math is untouched.
+ */
+function trashcanProp(g: Graphics, color: number, rise: number): void {
+  const cx = TILE_W / 2;
+  const rx = 11; // bin radius (screen px)
+  const bottomY = TILE_H / 2 + 8;
+  const topY = bottomY - (rise + 8); // a bin is taller than its prism rise
+  // Ground contact shadow.
+  g.ellipse(cx, bottomY + 2, rx + 3, 5).fill({ color: 0x000000, alpha: 0.15 });
+  // Base cap + body cylinder.
+  g.ellipse(cx, bottomY, rx, 5).fill(shade(color, 0.8));
+  g.rect(cx - rx, topY, rx * 2, bottomY - topY).fill(shade(color, 0.92));
+  // Vertical shading: lit toward the NW light, shadowed on the SE side.
+  g.rect(cx - rx, topY, 6, bottomY - topY).fill({ color: shade(color, 1.18), alpha: 0.7 });
+  g.rect(cx + rx - 7, topY, 7, bottomY - topY).fill({ color: shade(color, 0.68), alpha: 0.7 });
+  // Two rolled ribs so the body reads as sheet metal.
+  g.rect(cx - rx, topY + 5, rx * 2, 1.5).fill({ color: shade(color, 0.75), alpha: 0.8 });
+  g.rect(cx - rx, bottomY - 6, rx * 2, 1.5).fill({ color: shade(color, 0.75), alpha: 0.8 });
+  // Domed lid with a handle knob.
+  g.ellipse(cx, topY, rx + 1.5, 5.5).fill(shade(color, 1.15));
+  g.ellipse(cx, topY, rx + 1.5, 5.5).stroke({ color: shade(color, 0.6), width: 1 });
+  g.ellipse(cx, topY - 2, rx - 4, 3.5).fill(shade(color, 1.28));
+  g.ellipse(cx, topY - 3, 3, 1.8).fill(shade(color, 0.7));
+}
+
+/**
+ * Potted plant — terracotta pot + a leafy cluster in shades of the SSOT green.
+ * Replaces the prism (a green diamond box read as "hedge cube"). Deterministic
+ * fixed offsets, no rng; bounds stay inside the shared padding rect.
+ */
+function plantProp(g: Graphics, color: number): void {
+  const cx = TILE_W / 2;
+  const pot = 0xb0714f;
+  // Ground contact shadow.
+  g.ellipse(cx, TILE_H / 2 + 4, 12, 5).fill({ color: 0x000000, alpha: 0.15 });
+  // Pot: tapered body, lit rim band, darker base cap.
+  g.poly([cx - 9, 10, cx + 9, 10, cx + 6, 20, cx - 6, 20]).fill(pot);
+  g.poly([cx - 9, 10, cx + 9, 10, cx + 8.2, 13, cx - 8.2, 13]).fill(shade(pot, 1.18));
+  g.ellipse(cx, 20, 6, 2.5).fill(shade(pot, 0.75));
+  g.poly([cx + 3, 10, cx + 9, 10, cx + 6, 20, cx + 2, 20]).fill({ color: shade(pot, 0.78), alpha: 0.7 });
+  // Foliage cluster: overlapping blobs, lit on the NW side, shadowed on the SE.
+  g.ellipse(cx, 0, 12, 9).fill(color);
+  g.ellipse(cx - 7, 3, 8, 6.5).fill(shade(color, 1.14));
+  g.ellipse(cx + 7, 3, 8, 6.5).fill(shade(color, 0.82));
+  g.ellipse(cx, -7, 7, 5.5).fill(shade(color, 1.22));
+  // Leaf glints.
+  g.ellipse(cx - 4, -4, 2.5, 1.5).fill({ color: shade(color, 1.5), alpha: 0.8 });
+  g.ellipse(cx + 3, -8, 2, 1.2).fill({ color: shade(color, 1.5), alpha: 0.6 });
+}
+
+/** Amenity props whose whole silhouette is custom (never the generic prism). */
+const CUSTOM_PROPS: Readonly<Partial<Record<PropId, (g: Graphics, color: number, rise: number) => void>>> = {
+  trashcan: trashcanProp,
+  plant: (g, color) => plantProp(g, color),
 };
 
 /** A box prism filling one tile — the per-tile slice of (multi-tile) furniture. */
@@ -146,6 +213,13 @@ function propSlice(id: PropId, slice: PropSlice): Graphics {
   const g = new Graphics();
   // Constant padding rect → identical texture bounds for every prop/slice.
   g.rect(0, -PROP_RISE_PAD, TILE_W, TILE_H + PROP_RISE_PAD).fill({ color: 0xffffff, alpha: 0.001 });
+  // Fully custom silhouettes (amenities): drawn on the same padded canvas,
+  // skipping the prism — the propKey lookup contract is untouched.
+  const custom = CUSTOM_PROPS[id];
+  if (custom) {
+    custom(g, color, rise);
+    return g;
+  }
   const top = [
     TILE_W / 2, -rise,
     TILE_W, TILE_H / 2 - rise,
@@ -195,6 +269,57 @@ function propSlice(id: PropId, slice: PropSlice): Graphics {
       .fill(shade(color, 0.5));
     const [lx, ly] = at(0.6, 0.42);
     g.circle(lx, ly, 1.6).fill(shade(color, 1.6));
+  } else if (decor === 'toilet') {
+    // Cistern tank at the back + a bowl with a visible seat opening, on the
+    // low porcelain block — reads "toilet" at tile scale (billboard-style
+    // flats, same convention as the monitor decor).
+    const cy = TILE_H / 2 - rise; // top-face center
+    g.rect(TILE_W / 2 - 8, -rise - 11, 16, 10).fill(shade(color, 1.06)); // tank
+    g.rect(TILE_W / 2 - 8, -rise - 11, 16, 2.5).fill(shade(color, 1.22)); // tank lid
+    g.rect(TILE_W / 2 - 8, -rise - 11, 16, 10).stroke({ color: shade(color, 0.72), width: 1 });
+    g.ellipse(TILE_W / 2, cy + 3, 10, 5.5).fill(shade(color, 0.82)); // bowl shadow rim
+    g.ellipse(TILE_W / 2, cy + 2, 10, 5).fill(0xf6fafc); // seat
+    g.ellipse(TILE_W / 2, cy + 2, 10, 5).stroke({ color: shade(color, 0.7), width: 1 });
+    g.ellipse(TILE_W / 2, cy + 2, 5.5, 2.8).fill(shade(color, 0.55)); // opening
+  } else if (decor === 'vendingFront') {
+    // Glass-front machine on the SE face: dark window, shelves of colorful
+    // products, a coin panel column, and a dispensing slot — tall + colorful
+    // is the read. Face basis: S corner + u (true SE top edge) + v (down).
+    const bx = TILE_W / 2;
+    const by = TILE_H - rise;
+    const ux = TILE_W / 2;
+    const uy = -TILE_H / 2;
+    const at = (a: number, b: number): [number, number] => [bx + ux * a, by + uy * a + rise * b];
+    // Window glass.
+    g.poly([...at(0.1, 0.08), ...at(0.68, 0.08), ...at(0.68, 0.6), ...at(0.1, 0.6)])
+      .fill(0x2e3d4a);
+    // Shelf rows of products (fixed palette — deterministic, never rng).
+    const rows = [0.19, 0.33, 0.47];
+    const cols = [0.17, 0.3, 0.43, 0.56];
+    for (let r = 0; r < rows.length; r++) {
+      for (let c = 0; c < cols.length; c++) {
+        const [px, py] = at(cols[c]!, rows[r]!);
+        g.circle(px, py, 1.9).fill(VENDING_PRODUCT_COLORS[(r + c) % VENDING_PRODUCT_COLORS.length]!);
+      }
+      const [sx, sy] = at(0.12, rows[r]! + 0.055);
+      const [ex, ey] = at(0.66, rows[r]! + 0.055);
+      g.poly([sx, sy, ex, ey, ex, ey + 1, sx, sy + 1]).fill({ color: 0x8fb7cc, alpha: 0.45 });
+    }
+    // Glass sheen.
+    g.poly([...at(0.14, 0.1), ...at(0.3, 0.1), ...at(0.22, 0.58), ...at(0.14, 0.58)])
+      .fill({ color: 0xcfe6f2, alpha: 0.18 });
+    // Coin panel column: slot + glowing button.
+    g.poly([...at(0.74, 0.1), ...at(0.92, 0.1), ...at(0.92, 0.48), ...at(0.74, 0.48)])
+      .fill(shade(color, 0.72));
+    g.poly([...at(0.79, 0.16), ...at(0.87, 0.16), ...at(0.87, 0.2), ...at(0.79, 0.2)])
+      .fill(0x1d2226);
+    const [kx, ky] = at(0.83, 0.32);
+    g.circle(kx, ky, 1.6).fill(shade(color, 1.55));
+    // Dispensing slot along the bottom.
+    g.poly([...at(0.14, 0.72), ...at(0.86, 0.72), ...at(0.86, 0.88), ...at(0.14, 0.88)])
+      .fill(shade(color, 0.42));
+    g.poly([...at(0.14, 0.72), ...at(0.86, 0.72), ...at(0.86, 0.75), ...at(0.14, 0.75)])
+      .fill(shade(color, 1.2));
   }
   return g;
 }

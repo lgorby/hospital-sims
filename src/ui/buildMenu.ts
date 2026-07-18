@@ -1,5 +1,6 @@
 import type { CommandQueue } from '../commands';
 import type { EventBus } from '../events';
+import { AMENITY_DEFS, AMENITY_IDS, type AmenityId } from '../sim/data/amenities';
 import { ROLE_DEFS } from '../sim/data/roles';
 import { ROOM_DEFS, ROOM_TYPES, type RoomCategory, type RoomType } from '../sim/data/rooms';
 import type { World } from '../sim/world';
@@ -25,6 +26,14 @@ const CATEGORY_LABELS: Record<RoomCategory, string> = {
 const CATEGORIES = Object.keys(CATEGORY_LABELS) as RoomCategory[];
 
 /**
+ * Amenities live in the Comfort dropdown (AMENITIES_PLAN §3.4 — freestanding
+ * comfort props beside the restroom). One-tile placeables, no staffedBy, no
+ * size; rendered FROM AMENITY_DEFS (SSOT rule 1) after the category's rooms,
+ * alphabetized with the same pinned-'en' convention as the room list.
+ */
+const AMENITY_CATEGORY: RoomCategory = 'comfort';
+
+/**
  * Bottom bar: the room catalog as §9 category dropdowns (rendered FROM
  * ROOM_DEFS — SSOT rule 1; whatever the table contains is what shows), sell
  * toggle, debug spawn, and a hint line fed by the renderer + buildRejected.
@@ -32,9 +41,11 @@ const CATEGORIES = Object.keys(CATEGORY_LABELS) as RoomCategory[];
  */
 export class BuildMenu {
   private roomButtons = new Map<RoomType, HTMLButtonElement>();
+  private amenityButtons = new Map<AmenityId, HTMLButtonElement>();
   private categoryButtons = new Map<RoomCategory, HTMLButtonElement>();
   /** Price spans, re-tinted on cashChanged (RCT-style affordability signal). */
   private costSpans = new Map<RoomType, HTMLElement>();
+  private amenityCostSpans = new Map<AmenityId, HTMLElement>();
   private sellButton!: HTMLButtonElement;
   private hintEl!: HTMLElement;
   /** The hire panel registers this button with the coordinator. */
@@ -67,7 +78,8 @@ export class BuildMenu {
       const types = ROOM_TYPES.filter((type) => ROOM_DEFS[type].category === category).sort(
         (a, b) => ROOM_DEFS[a].label.localeCompare(ROOM_DEFS[b].label, 'en'),
       );
-      if (types.length === 0) continue;
+      const hasAmenities = category === AMENITY_CATEGORY && AMENITY_IDS.length > 0;
+      if (types.length === 0 && !hasAmenities) continue;
       bar.appendChild(this.categoryDropdown(category, types));
     }
 
@@ -106,6 +118,11 @@ export class BuildMenu {
       // Min-size price on purpose (see the catalog label note above); the
       // sized check happens in validateRoomRect against the live ghost.
       span.classList.toggle('unaffordable', ROOM_DEFS[type].cost > this.world.cash);
+    }
+    // Same owner ruling for amenities: red price, still clickable — the sim's
+    // validateAmenityPlace cash check remains the hard gate.
+    for (const [kind, span] of this.amenityCostSpans) {
+      span.classList.toggle('unaffordable', AMENITY_DEFS[kind].cost > this.world.cash);
     }
   }
 
@@ -159,6 +176,32 @@ export class BuildMenu {
       this.roomButtons.set(type, button);
     }
 
+    // Amenities (Stage 1): 1-tile roomless props after the category's rooms.
+    // Deliberately simpler rows than rooms — no staffedBy roles (unstaffed by
+    // definition), no size (always one tile); label + price only.
+    if (category === AMENITY_CATEGORY) {
+      const kinds = [...AMENITY_IDS].sort((a, b) =>
+        AMENITY_DEFS[a].label.localeCompare(AMENITY_DEFS[b].label, 'en'),
+      );
+      for (const kind of kinds) {
+        const def = AMENITY_DEFS[kind];
+        const button = BuildMenu.button('', () => {
+          this.toggleAmenity(kind);
+          this.bottomBar.closeAll(); // same dismissal as picking a room tool
+        });
+        const label = document.createElement('span');
+        label.className = 'room-label';
+        label.textContent = def.label;
+        const cost = document.createElement('span');
+        cost.className = 'room-cost';
+        cost.textContent = `$${def.cost.toLocaleString()}`;
+        this.amenityCostSpans.set(kind, cost);
+        button.append(label, cost);
+        panel.appendChild(button);
+        this.amenityButtons.set(kind, button);
+      }
+    }
+
     wrap.append(toggle, panel);
     this.bottomBar.register(toggle, panel);
     this.categoryButtons.set(category, toggle);
@@ -187,6 +230,16 @@ export class BuildMenu {
     }
   }
 
+  /** Arm/disarm the 1-tile amenity placement mode (mirrors toggleBuild). */
+  private toggleAmenity(kind: AmenityId): void {
+    const current = this.renderer.mode;
+    if (current.kind === 'placeAmenity' && current.amenity === kind) {
+      this.renderer.setMode({ kind: 'idle' });
+    } else {
+      this.renderer.setMode({ kind: 'placeAmenity', amenity: kind });
+    }
+  }
+
   private toggleSell(): void {
     this.renderer.setMode(this.renderer.mode.kind === 'sell' ? { kind: 'idle' } : { kind: 'sell' });
     this.bottomBar.closeAll(); // a mode swap shouldn't leave a panel floating over it
@@ -196,12 +249,16 @@ export class BuildMenu {
     for (const [type, button] of this.roomButtons) {
       button.classList.toggle('active', mode.kind === 'build' && mode.type === type);
     }
+    for (const [kind, button] of this.amenityButtons) {
+      button.classList.toggle('active', mode.kind === 'placeAmenity' && mode.amenity === kind);
+    }
     // With its dropdown closed, the category button still shows where the
-    // active build tool lives.
+    // active build tool lives (amenity tools light up their home category).
     for (const [category, button] of this.categoryButtons) {
       button.classList.toggle(
         'active',
-        mode.kind === 'build' && ROOM_DEFS[mode.type].category === category,
+        (mode.kind === 'build' && ROOM_DEFS[mode.type].category === category) ||
+          (mode.kind === 'placeAmenity' && category === AMENITY_CATEGORY),
       );
     }
     this.sellButton.classList.toggle('active', mode.kind === 'sell');

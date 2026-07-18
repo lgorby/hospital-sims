@@ -12,6 +12,13 @@ import type { World } from '../sim/world';
  * sim tick (never caches authoritative state); the DOM is rebuilt only when
  * the needs actually changed.
  */
+/** Row cap (Stage-1 live-drive review MAJOR 2): unbounded, a busy early-game
+ *  panel grew tall enough to physically cover — and CLICK-BLOCK — the inspect
+ *  card's Expand/Sell buttons. Urgent rows sort first, so the cap drops only
+ *  the least-pressing tail behind a "+N more" row; ui.css adds a max-height
+ *  scroll as belt-and-suspenders. */
+const MAX_VISIBLE_ROWS = 8;
+
 export class BlockedPanel {
   private panel!: HTMLElement;
   private list!: HTMLElement;
@@ -36,6 +43,10 @@ export class BlockedPanel {
     events.on('roomSold', invalidate);
     events.on('staffHired', invalidate);
     events.on('staffFired', invalidate);
+    // Amenities Stage 1 (pre-impl MINOR 18): a vending machine placed/sold
+    // while paused changes need computation the same way a room does.
+    events.on('amenityPlaced', invalidate);
+    events.on('amenitySold', invalidate);
   }
 
   mount(parent: HTMLElement): void {
@@ -62,11 +73,17 @@ export class BlockedPanel {
 
     this.panel.classList.toggle('hidden', needs.length === 0);
     this.list.replaceChildren();
-    for (const need of needs) {
+    for (const need of needs.slice(0, MAX_VISIBLE_ROWS)) {
       const row = document.createElement('div');
       row.className = need.urgent ? 'blocked-item' : 'blocked-item soon';
       row.textContent = need.urgent ? need.label : `soon: ${need.label}`;
       this.list.appendChild(row);
+    }
+    if (needs.length > MAX_VISIBLE_ROWS) {
+      const more = document.createElement('div');
+      more.className = 'blocked-item soon';
+      more.textContent = `+${needs.length - MAX_VISIBLE_ROWS} more`;
+      this.list.appendChild(more);
     }
   }
 }

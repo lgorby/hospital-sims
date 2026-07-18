@@ -2,7 +2,13 @@ import { Application, Container, Graphics, Sprite, Text, type Texture } from 'pi
 import type { CommandQueue } from '../commands';
 import { isTextEditable } from '../ui/dom';
 import type { EventBus } from '../events';
-import { doorFromOutsideTile, validateRoomBuild, validateRoomExpand, validateRoomRect } from '../sim/build';
+import {
+  doorFromOutsideTile,
+  validateAmenityPlace,
+  validateRoomBuild,
+  validateRoomExpand,
+  validateRoomRect,
+} from '../sim/build';
 import { BALANCE } from '../sim/data/balance';
 import { ROOM_DEFS, type RoomType } from '../sim/data/rooms';
 import type { WallEdge } from '../sim/entities/room';
@@ -61,7 +67,7 @@ const WALK_FRAME_TICKS = 3;
 /** Bubble height above the feet anchor. */
 const BUBBLE_RISE = 46;
 
-import type { AmenityId } from '../sim/data/amenities';
+import { AMENITY_DEFS, type AmenityId } from '../sim/data/amenities';
 
 /** UI interaction mode — the build menu drives it; Esc/right-click cancel it. */
 export type UiMode =
@@ -122,6 +128,10 @@ export class WorldRenderer {
   private sellMode = false;
   /** Stage B expand mode: hover previews the superset rect; click buys. */
   private expand: { roomId: number; rect: Rect | null } | null = null;
+  /** Amenities Stage 1: armed 1-tile roomless prop placement (§3.4). */
+  private amenityMode: AmenityId | null = null;
+  /** Roomless amenity prop sprites, keyed `${col},${row}` (the tile IS the identity). */
+  private amenitySprites = new Map<string, Sprite>();
 
   /** Current hovered tile, if in bounds — HUD readout polls this. */
   hoveredTile: TilePoint | null = null;
@@ -189,9 +199,17 @@ export class WorldRenderer {
       this.removeRoom(roomId);
       if (this.selected?.kind === 'room' && this.selected.id === roomId) this.selected = null;
     });
+    // Roomless amenity props (Stage 1): per-change draw/remove, never per-frame.
+    this.events.on('amenityPlaced', ({ col, row, kind }) => this.drawAmenity(col, row, kind));
+    this.events.on('amenitySold', ({ col, row }) => this.removeAmenity(col, row));
 
     // Rooms that existed before the renderer (new-game start state).
     for (const roomId of this.world.rooms.keys()) this.drawRoom(roomId);
+    // Amenities that existed before the renderer (the ?load= full-reload path
+    // builds the world from the save BEFORE init — mirror the rooms loop).
+    for (const amenity of this.world.amenities.values()) {
+      this.drawAmenity(amenity.tile.col, amenity.tile.row, amenity.kind);
+    }
   }
 
   // ---------------------------------------------------------------- mode API
@@ -199,6 +217,7 @@ export class WorldRenderer {
   get mode(): UiMode {
     if (this.build) return { kind: 'build', type: this.build.type };
     if (this.expand) return { kind: 'expand', roomId: this.expand.roomId };
+    if (this.amenityMode) return { kind: 'placeAmenity', amenity: this.amenityMode };
     if (this.sellMode) return { kind: 'sell' };
     return { kind: 'idle' };
   }
@@ -207,6 +226,7 @@ export class WorldRenderer {
     this.build = null;
     this.sellMode = false;
     this.expand = null;
+    this.amenityMode = null;
     if (mode.kind === 'build') {
       this.build = { type: mode.type, phase: 'drag', anchor: null, rect: null };
       this.hintLine.instruction(
@@ -223,6 +243,14 @@ export class WorldRenderer {
       // Room sold out from under the button: fall through as idle — the
       // onModeChanged notify below still fires (review NIT: an early return
       // skipped it, desyncing the toolbar mirror).
+    } else if (mode.kind === 'placeAmenity') {
+      this.amenityMode = mode.amenity;
+      const def = AMENITY_DEFS[mode.amenity];
+      // Same style the per-hover price line re-emits — the ghost geometry key
+      // takes over as soon as the pointer is on the map.
+      this.hintLine.instruction(
+        `${def.label} — $${def.cost.toLocaleString('en-US')} · click to place`,
+      );
     } else if (mode.kind === 'sell') {
       this.sellMode = true;
       this.hintLine.instruction(
@@ -237,14 +265,18 @@ export class WorldRenderer {
   private cancelMode(): void {
     // Esc peels one layer at a time: build/sell mode first, then the selection
     // (which closes the inspect panel) — RCT muscle memory (M4 polish).
-    if (this.build || this.sellMode || this.expand) this.setMode({ kind: 'idle' });
-    else this.selected = null;
+    if (this.build || this.sellMode || this.expand || this.amenityMode) {
+      this.setMode({ kind: 'idle' });
+    } else {
+      this.selected = null;
+    }
   }
 
   /**
-   * Idle-mode pick: patient beats staff beats room. ONE implementation for
-   * both the click handler and the hover cursor (audit #10) — the cursor must
-   * never promise a click that resolves differently.
+   * Idle-mode pick: patient beats staff beats amenity beats room (frozen §1.12
+   * priority). ONE implementation for both the click handler and the hover
+   * cursor (audit #10) — the cursor must never promise a click that resolves
+   * differently.
    */
   private pickAt(tile: TilePoint): Selection | null {
     for (const patient of this.world.patients.values()) {
@@ -256,6 +288,9 @@ export class WorldRenderer {
       if (samePoint(member.at, tile) || (member.next && samePoint(member.next, tile))) {
         return { kind: 'staff', id: member.id };
       }
+    }
+    if (this.world.amenityAt(tile.col, tile.row)) {
+      return { kind: 'amenity', col: tile.col, row: tile.row };
     }
     const room = this.world.roomAt(tile);
     return room ? { kind: 'room', id: room.id } : null;
@@ -406,6 +441,32 @@ export class WorldRenderer {
   private removeRoom(roomId: number): void {
     for (const visual of this.roomVisuals.get(roomId) ?? []) visual.destroy();
     this.roomVisuals.delete(roomId);
+  }
+
+  /**
+   * Roomless amenity prop at a tile (Stage 1, §3.4): same texture path and
+   * depth math as room props — the shared sorted layer keeps walkers in front
+   * of / behind it correctly. Called per amenityPlaced/amenitySold change and
+   * once at init for pre-existing amenities; never per-frame.
+   */
+  private drawAmenity(col: number, row: number, kind: AmenityId): void {
+    const key = `${col},${row}`;
+    this.amenitySprites.get(key)?.destroy(); // defensive: re-place over stale
+    const sprite = new Sprite(this.textures.props.get(propKey(kind, 'single'))!);
+    const { x, y } = toScreen(col, row);
+    sprite.position.set(x - TILE_W / 2, y - PROP_RISE_PAD);
+    sprite.zIndex = depthKey(col, row);
+    this.sortedLayer.addChild(sprite);
+    this.amenitySprites.set(key, sprite);
+  }
+
+  private removeAmenity(col: number, row: number): void {
+    const key = `${col},${row}`;
+    this.amenitySprites.get(key)?.destroy();
+    this.amenitySprites.delete(key);
+    if (this.selected?.kind === 'amenity' && this.selected.col === col && this.selected.row === row) {
+      this.selected = null;
+    }
   }
 
   /** Mood bubble per GDD §10: 💢 impatient/AMA, 💀 critical, 💚 treated, ❓ lost. */
@@ -620,7 +681,24 @@ export class WorldRenderer {
       }
       return;
     }
+    if (this.amenityMode) {
+      // Same validator the ghost tint uses (SSOT rule 4) — the click can never
+      // succeed where the ghost showed red.
+      const check = validateAmenityPlace(this.world, this.amenityMode, tile);
+      if (!check.ok) {
+        // error(): survives the ghost's re-price until the geometry moves
+        // (hintLine contract — same as the room-build rejection path).
+        this.hintLine.error(check.reason);
+        return;
+      }
+      this.commands.push({ type: 'placeAmenity', kind: this.amenityMode, col: tile.col, row: tile.row });
+      // Mirror room build: one stamp exits the tool (re-arm from the menu).
+      this.setMode({ kind: 'idle' });
+      return;
+    }
     if (this.sellMode) {
+      // Stage 1 deliberately IGNORES amenity tiles here (plan §1.11 / NIT 14):
+      // amenities sell via their inspect card only — 'No room there' stands.
       const room = this.world.roomAt(tile);
       if (room) this.commands.push({ type: 'sellRoom', roomId: room.id });
       else this.onHint?.('No room there');
@@ -782,9 +860,14 @@ export class WorldRenderer {
     // per tick — so the color stays honest at ≤10 revalidations/s, not 60fps.
     const build = this.build;
     const expand = this.expand;
+    const amenity = this.amenityMode;
     const rect = build?.rect ?? expand?.rect ?? null;
-    const key =
-      !build && !expand
+    // Amenity ghost inputs: the armed kind, the hovered tile, and the sim tick
+    // (validity reads live actors/cash — ≤10 revalidations/s, same as rooms).
+    const key = amenity
+      ? `amenity:${amenity}:${this.world.clock.tick}:` +
+        `${this.hoveredTile ? `${this.hoveredTile.col},${this.hoveredTile.row}` : 'off'}`
+      : !build && !expand
         ? ''
         : `${build ? `${build.type}:${build.phase}` : `expand:${expand!.roomId}`}:` +
           `${this.world.clock.tick}:` +
@@ -794,6 +877,15 @@ export class WorldRenderer {
     this.lastGhostKey = key;
 
     this.ghost.clear();
+    if (amenity) {
+      if (!this.hoveredTile) return;
+      const valid = validateAmenityPlace(this.world, amenity, this.hoveredTile).ok;
+      const { x, y } = toScreen(this.hoveredTile.col, this.hoveredTile.row);
+      this.ghost
+        .poly([x, y, x + TILE_W / 2, y + TILE_H / 2, x, y + TILE_H, x - TILE_W / 2, y + TILE_H / 2])
+        .fill({ color: valid ? 0x7fd77f : 0xe07f7f, alpha: 0.45 });
+      return;
+    }
     if (!rect) return;
 
     // Validity: a new build validates the rect; an expansion validates the
@@ -861,7 +953,7 @@ export class WorldRenderer {
       // Hover affordance (M4 polish): crosshair while placing/selling,
       // pointer over anything clickable, default otherwise.
       const cursor =
-        this.build || this.sellMode || this.expand
+        this.build || this.sellMode || this.expand || this.amenityMode
           ? 'crosshair'
           : this.hoveredTile && this.pickAt(this.hoveredTile) !== null
             ? 'pointer'
@@ -889,6 +981,17 @@ export class WorldRenderer {
         // Geometry key incl. POSITION — the text repeats across tiles at the
         // same size, and an error hold must release when the ghost moves.
         `${rect.col},${rect.row},${rect.cols},${rect.rows}`,
+      );
+    }
+    // Amenity placement (Stage 1): the 1-tile ghost carries a fixed price, so
+    // the line is constant text — still routed through price() with the TILE
+    // as the geometry key, so a rejection reason holds until the ghost moves
+    // (hintLine contract), then live pricing resumes.
+    if (this.amenityMode && this.hoveredTile) {
+      const def = AMENITY_DEFS[this.amenityMode];
+      this.hintLine.price(
+        `${def.label} — $${def.cost.toLocaleString('en-US')} · click to place`,
+        `amenity:${this.hoveredTile.col},${this.hoveredTile.row}`,
       );
     }
     // Expand mode (Stage B): the preview is the bounding box of the room and

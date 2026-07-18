@@ -1,7 +1,15 @@
 # Amenities epic — implementation plan (Stage 1: amenities + needs)
 
-**Status: v2 (2026-07-18) — pre-impl review PASSED after revision; ready to
-freeze.** Stage 1 only; Stages 2/3 get their sections in their own sessions.
+**Status: STAGE 1 IMPLEMENTED (2026-07-18)** — shipped through the full
+workflow: freeze → 3 parallel tracks → 2 adversarial reviews (code/contract:
+1 MAJOR vending stand-zone + 2 MINOR; live-drive: 2 MAJOR — checklist×vending
+`feeBilled` source, blocked-panel occlusion row cap — all fixed with
+regression tests; 377 tests green). Implementation deltas from this plan:
+`feeBilled` gained a `source` discriminator; the vending stand pick/flip
+gained the standing-zone rule; the blocked panel gained a row cap; the
+restroom "In use" line labels walking claimants "(on the way)"; report rows
+renamed "Patient fees" / "Sell-back income". Stages 2/3 get their sections
+in their own sessions.
 Contract: `docs/AMENITIES_PLAN.md` v2 RATIFIED (all § references below are to
 it unless noted). Pre-impl review findings (6 MAJOR / 5 MINOR / 3 NIT) all
 folded: §1.12 freeze block (cross-track compile surfaces), the committed-

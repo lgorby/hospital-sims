@@ -1,3 +1,4 @@
+import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditions';
 import { ROLE_DEFS, type RoleId } from './data/roles';
 import { ROOM_DEFS, type RoomType } from './data/rooms';
@@ -175,6 +176,38 @@ export function computeBlockedNeeds(world: World): BlockedNeed[] {
       urgent: agg.urgent,
       label: base + suffix,
     });
+  }
+
+  // Restroom need (amenities Stage 1, §1.11 / pre-impl MINOR 9): meter-based,
+  // not condition-based, so it lives outside the aggregate scan. Urgent when
+  // ≥1 patient in the ACTIONABLE stages (waiting/waitingTriage, design §3.1)
+  // is below the bladder threshold with no restroom built; upcoming otherwise
+  // while patients exist. The label is the ONE wording (panel + toast SSOT).
+  if (!builtRooms.has('restroom')) {
+    let preTerminal = 0;
+    let seeking = 0;
+    for (const patient of world.patients.values()) {
+      const stage = patient.stage.kind;
+      if (stage === 'leaving' || stage === 'dead') continue;
+      preTerminal += 1;
+      if (
+        (stage === 'waiting' || stage === 'waitingTriage') &&
+        patient.bladder < BALANCE.needs.seekThreshold
+      ) {
+        seeking += 1;
+      }
+    }
+    if (preTerminal > 0) {
+      needs.push({
+        key: 'room:restroom',
+        kind: 'room',
+        room: 'restroom',
+        patients: seeking > 0 ? seeking : preTerminal,
+        conditions: [],
+        urgent: seeking > 0,
+        label: 'Build a Restroom — patients need the restroom',
+      });
+    }
   }
 
   // Total, deterministic order: urgent first, most-affected first, key tiebreak.

@@ -65,6 +65,12 @@ export function patienceDecayPerTick(acuity: number | null): number {
   return (BALANCE.decay.patiencePerGameHour[a]! * GAME_MINUTES_PER_TICK) / GAME_MINUTES_PER_HOUR;
 }
 
+/** Need meters (amenities Stage 1, §3.1): BALANCE.needs rates are authored
+ *  per game-hour like the decay tables; one conversion for sim and tests. */
+export function meterDecayPerTick(ratePerGameHour: number): number {
+  return (ratePerGameHour * GAME_MINUTES_PER_TICK) / GAME_MINUTES_PER_HOUR;
+}
+
 /** GDD §5: a roomier waiting room slows patience decay for its seated waiters
  *  (audit #4). Floored — like treatment duration — so oversized rooms can't
  *  freeze patience entirely. */
@@ -228,6 +234,17 @@ export function auraCoversTile(footprint: Rect, p: GridPoint, radius: number): b
     if (dc * dc + dr * dr <= radiusSq) return true;
   }
   return false;
+}
+
+/**
+ * Plant comfort-aura membership (amenities Stage 1, AMENITIES_PLAN §3.4) —
+ * the ONE formula, beside `auraCoversTile`: `refreshAuras` fills its grid
+ * with it and any render preview asks it directly. Chebyshev distance per
+ * the `plantAuraRadius` declaration in balance.ts (a small square patch —
+ * a 1-tile prop has no footprint to sweep a Euclidean disc from).
+ */
+export function plantCoversTile(plant: GridPoint, p: GridPoint, radius: number): boolean {
+  return Math.abs(p.col - plant.col) <= radius && Math.abs(p.row - plant.row) <= radius;
 }
 
 /**

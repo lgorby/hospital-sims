@@ -195,7 +195,10 @@ export const BALANCE = {
     vendingPrice: 5,
     /** Spawn meter roll floor (max = stats.vitalsMax). */
     spawnMeterMin: 60,
-    /** Plant comfort-aura radius (Chebyshev, like room auras). */
+    /** Plant comfort-aura radius — Chebyshev (a square patch around the
+     *  pot). DELIBERATELY different from room auras, which are Euclidean
+     *  (`auraCoversTile`): a 1-tile prop reads fine as a square, and the
+     *  cheap check is test-pinned in `plantCoversTile` (code review MINOR). */
     plantAuraRadius: 2,
   },
 } as const;

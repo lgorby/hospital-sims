@@ -69,7 +69,9 @@ export interface EventMap {
   patientRecovered: { patientId: number; name: string; col: number; row: number };
   /** Thought-log feed (GDD §9): emitted at mood/lifecycle moments. */
   patientThought: { patientId: number; name: string; text: string; col: number; row: number };
-  feeBilled: { amount: number; label: string };
+  /** `source` discriminates treatment billing from amenity revenue (Stage-1
+   *  live-drive MAJOR 1: the checklist's 'treat' must ignore vending fees). */
+  feeBilled: { amount: number; label: string; source: 'treatment' | 'vending' };
   staffHired: { staffId: number };
   staffFired: { staffId: number };
   /** Non-terminal staff change (e.g. fire deferred while mid-job) — UI re-renders. */

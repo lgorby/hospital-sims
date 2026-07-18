@@ -232,12 +232,18 @@ function canReachRoom(world: World, walker: Walker, room: Room): boolean {
 }
 
 /**
- * Waiting patients eligible for dispatch: rule-8 retry hold honored, and lost
- * patients skipped (M3-gate ruling — never idle staff against a wanderer).
+ * Waiting patients eligible for dispatch: rule-8 retry hold honored, lost
+ * patients skipped (M3-gate ruling — never idle staff against a wanderer),
+ * and on-break patients skipped exactly like lost ones (amenities §3.2 —
+ * they re-enter the pool the tick the break ends).
  */
 function dispatchable(world: World, stageKind: 'waitingTriage' | 'waiting'): Patient[] {
   return [...world.patients.values()].filter(
-    (p) => p.stage.kind === stageKind && p.lost === null && world.clock.tick >= p.dispatchHoldUntil,
+    (p) =>
+      p.stage.kind === stageKind &&
+      p.lost === null &&
+      p.needBreak === null &&
+      world.clock.tick >= p.dispatchHoldUntil,
   );
 }
 

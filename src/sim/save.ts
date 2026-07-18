@@ -1,11 +1,13 @@
 import type { EventBus } from '../events';
+import { gameMinutesToTicks } from './clock';
 import { emptyDayTally, type DayTally } from './dailyStats';
+import { AMENITY_IDS, type AmenityId } from './data/amenities';
 import { BALANCE } from './data/balance';
 import { CONDITION_IDS, type ConditionId } from './data/conditions';
 import type { PersonName } from './data/names';
 import { ROLE_IDS, type RoleId } from './data/roles';
 import { PROP_STYLE, ROOM_DEFS, ROOM_TYPES, type PropId, type RoomType } from './data/rooms';
-import type { Patient, PatientStage } from './entities/patient';
+import type { NeedBreak, Patient, PatientStage } from './entities/patient';
 import type { Room } from './entities/room';
 import type { Candidate, Reservation, Staff, StaffDuty } from './entities/staff';
 import type { GridPoint, Rect } from './types';
@@ -17,7 +19,7 @@ import { World, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 /**
  * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
@@ -38,7 +40,16 @@ export const SAVE_VERSION = 3;
  * read-time default: pre-v3 saves lack the field and restore `slotIndex: 0`,
  * which is exactly right — a pre-Stage-A room could hold at most ONE
  * reservation, and every legacy room's slot 0 exists. A re-save stamps v3.
- * Anything below 1 or above SAVE_VERSION is refused.
+ *
+ * v3 → v4 (amenities epic Stage 1, AMENITIES_PLAN §3.5): patients gain
+ * `bladder`/`thirst`/`needBreak`/`needBreakHoldUntil`; the world gains
+ * `amenities` (roomless props — trashcan/vending/plant, `fill` a Stage-2
+ * field shipped at 0); `today` gains `vendingRevenue`. Migration is read-time
+ * defaults: pre-v4 patients restore full meters (stats.vitalsMax) and no
+ * break, amenities restore empty, and `readTally` defaults `vendingRevenue`
+ * to 0 (version-aware — its shape check would otherwise refuse every old
+ * save, review MAJOR 3). An old save plays identically until meters cross
+ * thresholds. Anything below 1 or above SAVE_VERSION is refused.
  */
 export function isLoadableVersion(version: number): boolean {
   return version >= 1 && version <= SAVE_VERSION;
@@ -85,6 +96,18 @@ export type SavedPatientStage =
   | { kind: 'leaving'; reason: 'discharged' | 'ama' }
   | { kind: 'dead'; since: number };
 
+/** v4 (amenities Stage 1): the need side-trip sub-state. Restroom claims
+ *  carry roomId+slot; vending claims carry the machine tile. */
+export interface SavedNeedBreak {
+  kind: 'restroom' | 'vending';
+  roomId?: number;
+  slot?: number;
+  tile?: SavedPoint;
+  phase: 'walking' | 'using';
+  ticksRemaining: number;
+  startedAt: number;
+}
+
 export interface SavedPatient {
   id: number;
   name: SavedName;
@@ -104,6 +127,12 @@ export interface SavedPatient {
   waitingSince: number | null;
   dispatchHoldUntil: number;
   waitingRoomId: number | null;
+  /** v4 (amenities Stage 1): need meters + side-trip. Pre-v4 defaults:
+   *  meters `stats.vitalsMax` (normative, not a literal), break null, hold 0. */
+  bladder: number;
+  thirst: number;
+  needBreak: SavedNeedBreak | null;
+  needBreakHoldUntil: number;
   // In-flight walker state — paths are saved, never recomputed on load.
   at: SavedPoint;
   next: SavedPoint | null;
@@ -155,6 +184,15 @@ export interface SavedReservation {
   patientWaitingSince: number | null;
 }
 
+/** v4 (amenities Stage 1): a freestanding roomless prop. `fill` is Stage-2
+ *  surface (trashcan contents), always 0 in Stage 1 — shipped now so Stage 2
+ *  needs no map migration. */
+export interface SavedAmenity {
+  kind: AmenityId;
+  tile: SavedPoint;
+  fill: number;
+}
+
 export interface SavedCandidate {
   id: number;
   role: RoleId;
@@ -189,6 +227,9 @@ export interface SaveData {
   /** Per-tile walkable/roomId/object/marker, run-length encoded. */
   grid: string;
   rooms: SavedRoom[];
+  /** v4: FROZEN position — immediately after rooms (impl plan §1.12; the
+   *  byte-identity fixtures pin serializer insertion order forever). */
+  amenities: SavedAmenity[];
   patients: SavedPatient[];
   staff: SavedStaff[];
   candidates: SavedCandidate[];
@@ -310,16 +351,30 @@ function readName(value: unknown, label: string): PersonName {
 /** Key list from the SSOT factory — a new tally field is auto-carried and auto-validated. */
 const TALLY_KEYS = Object.keys(emptyDayTally()) as (keyof DayTally)[];
 
+/**
+ * Tally keys introduced AFTER v1, keyed by the SAVE_VERSION that added them
+ * (review MAJOR 3): `readTally` throws on any missing key, so without this a
+ * new tally field would refuse every older save. Loading a save older than a
+ * key's version defaults it to the factory 0; same-or-newer saves must carry
+ * it. Unlisted keys are v1 (always required).
+ */
+const TALLY_KEY_VERSIONS: Partial<Record<keyof DayTally, number>> = {
+  vendingRevenue: 4,
+};
+
 function writeTally(tally: DayTally): DayTally {
   const copy = emptyDayTally();
   for (const key of TALLY_KEYS) copy[key] = tally[key];
   return copy;
 }
 
-function readTally(value: unknown, label: string): DayTally {
+function readTally(value: unknown, label: string, saveVersion: number): DayTally {
   const o = asRecord(value, label);
-  const copy = emptyDayTally();
-  for (const key of TALLY_KEYS) copy[key] = asNumber(o[key], `${label}.${key}`);
+  const copy = emptyDayTally(); // factory zeroes are the version defaults
+  for (const key of TALLY_KEYS) {
+    if (saveVersion < (TALLY_KEY_VERSIONS[key] ?? 1)) continue;
+    copy[key] = asNumber(o[key], `${label}.${key}`);
+  }
   return copy;
 }
 
@@ -375,6 +430,51 @@ function readPatientStage(value: unknown, label: string): PatientStage {
   }
 }
 
+function writeNeedBreak(nb: NeedBreak): SavedNeedBreak {
+  // Kind-shaped: restroom claims write roomId+slot, vending claims write the
+  // machine tile — fixed key order per kind (byte-identity depends on it).
+  return {
+    kind: nb.kind,
+    ...(nb.roomId !== undefined ? { roomId: nb.roomId } : {}),
+    ...(nb.slot !== undefined ? { slot: nb.slot } : {}),
+    ...(nb.tile !== undefined ? { tile: writePoint(nb.tile) } : {}),
+    phase: nb.phase,
+    ticksRemaining: nb.ticksRemaining,
+    startedAt: nb.startedAt,
+  };
+}
+
+function readNeedBreak(value: unknown, label: string): NeedBreak {
+  const o = asRecord(value, label);
+  const kind = asOneOf(o.kind, ['restroom', 'vending'], `${label}.kind`);
+  // Bounded (code review NIT): a hostile `using` timer beyond the longest
+  // legal use duration would hide the patient from the dispatcher with
+  // patience paused until health death. Untrusted input dies at the border.
+  const maxUseTicks = gameMinutesToTicks(
+    Math.max(BALANCE.needs.restroomUseGameMinutes, BALANCE.needs.vendingUseGameMinutes),
+  );
+  const ticksRemaining = asNumber(o.ticksRemaining, `${label}.ticksRemaining`);
+  if (ticksRemaining < 0 || ticksRemaining > maxUseTicks) {
+    fail(`${label}.ticksRemaining`, `a use timer within [0, ${maxUseTicks}] ticks`);
+  }
+  const shared = {
+    phase: asOneOf(o.phase, ['walking', 'using'], `${label}.phase`),
+    ticksRemaining,
+    startedAt: asNumber(o.startedAt, `${label}.startedAt`),
+  };
+  // Shape is kind-strict: a restroom claim NEEDS roomId+slot (a vending claim
+  // a tile) or the sim would deref undefined; extraneous fields are dropped.
+  if (kind === 'restroom') {
+    return {
+      kind,
+      roomId: asInt(o.roomId, `${label}.roomId`),
+      slot: asInt(o.slot, `${label}.slot`),
+      ...shared,
+    };
+  }
+  return { kind, tile: readPoint(o.tile, `${label}.tile`), ...shared };
+}
+
 function writePatient(p: Patient): SavedPatient {
   return {
     id: p.id,
@@ -395,6 +495,10 @@ function writePatient(p: Patient): SavedPatient {
     waitingSince: p.waitingSince,
     dispatchHoldUntil: p.dispatchHoldUntil,
     waitingRoomId: p.waitingRoomId,
+    bladder: p.bladder,
+    thirst: p.thirst,
+    needBreak: p.needBreak === null ? null : writeNeedBreak(p.needBreak),
+    needBreakHoldUntil: p.needBreakHoldUntil,
     at: writePoint(p.at),
     next: writePointOrNull(p.next),
     path: p.path.map(writePoint),
@@ -403,9 +507,10 @@ function writePatient(p: Patient): SavedPatient {
   };
 }
 
-function readPatient(value: unknown, label: string): Patient {
+function readPatient(value: unknown, label: string, saveVersion: number): Patient {
   const o = asRecord(value, label);
   const lost = o.lost === null ? null : asRecord(o.lost, `${label}.lost`);
+  const V4 = 4; // amenities Stage 1 — meters + side-trips (§3.5)
   return {
     id: asInt(o.id, `${label}.id`),
     name: readName(o.name, `${label}.name`),
@@ -429,13 +534,18 @@ function readPatient(value: unknown, label: string): Patient {
     waitingSince: asNumberOrNull(o.waitingSince, `${label}.waitingSince`),
     dispatchHoldUntil: asNumber(o.dispatchHoldUntil, `${label}.dispatchHoldUntil`),
     waitingRoomId: asIntOrNull(o.waitingRoomId, `${label}.waitingRoomId`),
-    // Amenities Stage 1 freeze defaults (v≤3 semantics — full meters, no
-    // break). Track S threads `saveVersion` through readPatient (the
-    // readReservation slotIndex precedent) and serializes these at v4.
-    bladder: BALANCE.stats.vitalsMax,
-    thirst: BALANCE.stats.vitalsMax,
-    needBreak: null,
-    needBreakHoldUntil: 0,
+    // v3→v4 migration (the readReservation slotIndex precedent): pre-v4
+    // patients restore FULL meters (normative vitalsMax, not a literal 100),
+    // no break, no hold — an old save plays identically until meters cross
+    // thresholds (AMENITIES_PLAN §3.5 compat statement).
+    bladder: saveVersion < V4 ? BALANCE.stats.vitalsMax : asNumber(o.bladder, `${label}.bladder`),
+    thirst: saveVersion < V4 ? BALANCE.stats.vitalsMax : asNumber(o.thirst, `${label}.thirst`),
+    needBreak:
+      saveVersion < V4 || o.needBreak === null
+        ? null
+        : readNeedBreak(o.needBreak, `${label}.needBreak`),
+    needBreakHoldUntil:
+      saveVersion < V4 ? 0 : asNumber(o.needBreakHoldUntil, `${label}.needBreakHoldUntil`),
     at: readPoint(o.at, `${label}.at`),
     next: readPointOrNull(o.next, `${label}.next`),
     path: readPath(o.path, `${label}.path`),
@@ -539,6 +649,24 @@ function readRoom(value: unknown, label: string): Room {
             outside: readPoint(door.outside, `${label}.door.outside`),
           },
     quality: asNumber(o.quality, `${label}.quality`),
+  };
+}
+
+// ------------------------------------------------------------------ amenities
+
+function writeAmenity(a: { kind: AmenityId; tile: GridPoint; fill: number }): SavedAmenity {
+  return { kind: a.kind, tile: writePoint(a.tile), fill: a.fill };
+}
+
+function readAmenity(
+  value: unknown,
+  label: string,
+): { kind: AmenityId; tile: GridPoint; fill: number } {
+  const o = asRecord(value, label);
+  return {
+    kind: asOneOf(o.kind, AMENITY_IDS, `${label}.kind`),
+    tile: readPoint(o.tile, `${label}.tile`),
+    fill: asNumber(o.fill, `${label}.fill`),
   };
 }
 
@@ -699,6 +827,8 @@ export function serializeWorld(world: World): SaveData {
     hintedOnce: priv.hintedOnce,
     grid: encodeGrid(world.grid),
     rooms: [...world.rooms.values()].map(writeRoom),
+    // v4 FROZEN position: immediately after rooms (impl plan §1.12).
+    amenities: [...world.amenities.values()].map(writeAmenity),
     patients: [...world.patients.values()].map(writePatient),
     staff: [...world.staff.values()].map(writeStaff),
     candidates: world.candidates.map(writeCandidate),
@@ -732,6 +862,7 @@ interface RestorePayload {
   hintedOnce: string[];
   grid: Tile[][];
   rooms: Room[];
+  amenities: { kind: AmenityId; tile: GridPoint; fill: number }[];
   patients: Patient[];
   staff: Staff[];
   candidates: Candidate[];
@@ -747,7 +878,7 @@ function readRestorePayload(root: Record<string, unknown>, saveVersion: number):
     tick: asInt(root.tick, 'tick'),
     cash: asNumber(root.cash, 'cash'),
     reputation: asNumber(root.reputation, 'reputation'),
-    today: readTally(root.today, 'today'),
+    today: readTally(root.today, 'today', saveVersion),
     lifetimeTreated: asNumber(root.lifetimeTreated, 'lifetimeTreated'),
     lifetimeDied: asNumber(root.lifetimeDied, 'lifetimeDied'),
     bankruptSinceTick: asNumberOrNull(root.bankruptSinceTick, 'bankruptSinceTick'),
@@ -757,7 +888,14 @@ function readRestorePayload(root: Record<string, unknown>, saveVersion: number):
     ),
     grid: decodeGrid(asString(root.grid, 'grid'), BALANCE.map.cols, BALANCE.map.rows),
     rooms: asArray(root.rooms, 'rooms').map((r, i) => readRoom(r, `rooms[${i}]`)),
-    patients: asArray(root.patients, 'patients').map((p, i) => readPatient(p, `patients[${i}]`)),
+    // v3→v4: pre-v4 saves carry no amenities — restore an empty store.
+    amenities:
+      saveVersion < 4
+        ? []
+        : asArray(root.amenities, 'amenities').map((a, i) => readAmenity(a, `amenities[${i}]`)),
+    patients: asArray(root.patients, 'patients').map((p, i) =>
+      readPatient(p, `patients[${i}]`, saveVersion),
+    ),
     staff: asArray(root.staff, 'staff').map((s, i) => readStaff(s, `staff[${i}]`)),
     candidates: asArray(root.candidates, 'candidates').map((c, i) =>
       readCandidate(c, `candidates[${i}]`),
@@ -829,25 +967,26 @@ function validateReferences(data: RestorePayload): void {
   // GRID-derived capacity and exclusive per room — a hostile slotIndex would
   // otherwise stack two patients on one bed or anchor into the fallback path.
   const roomsById = new Map(data.rooms.map((r) => [r.id, r]));
+  // Grid-derived slot capacity, shared by reservation slots and (v4) stall
+  // claims. DELIBERATELY floor(total/stripLen), which is ≤ the runtime's
+  // per-run strip consumption on hand-crafted grids (a 3-tile bed run: 1
+  // here, 2 at runtime) — the border may only ever be STRICTER than the sim,
+  // never more permissive. Don't "harmonize" this to the run-based count.
+  const gridPropCapacity = (room: Room, prop: PropId): number => {
+    let propTiles = 0;
+    for (let col = room.rect.col; col < room.rect.col + room.rect.cols; col++) {
+      for (let row = room.rect.row; row < room.rect.row + room.rect.rows; row++) {
+        if (data.grid[col]?.[row]?.object === prop) propTiles += 1;
+      }
+    }
+    return Math.floor(propTiles / PROP_STYLE[prop].tiles);
+  };
   const slotsHeld = new Map<number, Set<number>>();
   data.reservations.forEach((r, i) => {
     if (r.slotIndex < 0) fail(`reservations[${i}].slotIndex`, 'a non-negative slot');
     const room = roomsById.get(r.roomId)!; // resolved above
     const rule = ROOM_DEFS[room.type].capacity;
-    let capacity = 1;
-    if (rule.kind === 'perProp') {
-      let propTiles = 0;
-      for (let col = room.rect.col; col < room.rect.col + room.rect.cols; col++) {
-        for (let row = room.rect.row; row < room.rect.row + room.rect.rows; row++) {
-          if (data.grid[col]?.[row]?.object === rule.prop) propTiles += 1;
-        }
-      }
-      // DELIBERATELY floor(total/stripLen), which is ≤ the runtime's per-run
-      // strip consumption on hand-crafted grids (a 3-tile bed run: 1 here,
-      // 2 at runtime) — the border may only ever be STRICTER than the sim,
-      // never more permissive. Don't "harmonize" this to the run-based count.
-      capacity = Math.floor(propTiles / PROP_STYLE[rule.prop].tiles);
-    }
+    const capacity = rule.kind === 'perProp' ? gridPropCapacity(room, rule.prop) : 1;
     if (r.slotIndex >= capacity) {
       fail(
         `reservations[${i}].slotIndex`,
@@ -877,6 +1016,78 @@ function validateReferences(data: RestorePayload): void {
     }
     if (p.waitingRoomId !== null) {
       mustResolve(p.waitingRoomId, roomIds, `patients[${i}].waitingRoomId`, 'a room');
+    }
+  });
+
+  // -- amenities ↔ grid tiles, BOTH ways (v4, AMENITIES_PLAN §3.5): every
+  // entry sits on an in-bounds tile carrying its prop (non-walkable — the
+  // §3.4 rule), one entry per tile; and every amenity-prop tile on the grid
+  // has an entry (a propped tile with no store entry would render but never
+  // sell or claim).
+  const amenityTileKeys = new Set<string>();
+  const vendingTileKeys = new Set<string>();
+  data.amenities.forEach((a, i) => {
+    const { col, row } = a.tile;
+    const tile = data.grid[col]?.[row];
+    if (!tile) fail(`amenities[${i}].tile`, 'a tile inside the map');
+    const key = `${col},${row}`;
+    if (amenityTileKeys.has(key)) {
+      fail(`amenities[${i}].tile`, `one amenity per tile (${key} appears twice)`);
+    }
+    amenityTileKeys.add(key);
+    if (a.kind === 'vending') vendingTileKeys.add(key);
+    if (tile.object !== a.kind) {
+      fail(`amenities[${i}]`, `a grid tile carrying '${a.kind}' (got '${tile.object}')`);
+    }
+    if (tile.walkable) fail(`amenities[${i}]`, 'a non-walkable amenity tile (§3.4 rule)');
+    if (a.fill < 0) fail(`amenities[${i}].fill`, 'a non-negative fill');
+  });
+  const amenityKindSet = new Set<string>(AMENITY_IDS);
+  for (let col = 0; col < data.grid.length; col++) {
+    const column = data.grid[col]!;
+    for (let row = 0; row < column.length; row++) {
+      const object = column[row]!.object;
+      if (object !== null && amenityKindSet.has(object) && !amenityTileKeys.has(`${col},${row}`)) {
+        fail('grid', `tile (${col},${row}) carries amenity prop '${object}' with no amenities entry`);
+      }
+    }
+  }
+
+  // -- need-break claims (v4): restroom claims resolve to a restroom room
+  // with the slot inside its grid-derived stall count, exclusively held;
+  // vending claims sit on a vending amenity tile, one user per machine.
+  const stallClaimsHeld = new Set<string>();
+  const vendingClaimsHeld = new Set<string>();
+  data.patients.forEach((p, i) => {
+    const nb = p.needBreak;
+    if (nb === null) return;
+    if (nb.kind === 'restroom') {
+      mustResolve(nb.roomId!, roomIds, `patients[${i}].needBreak.roomId`, 'a room');
+      const room = roomsById.get(nb.roomId!)!;
+      if (room.type !== 'restroom') {
+        fail(`patients[${i}].needBreak.roomId`, `a restroom (room ${room.id} is ${room.type})`);
+      }
+      const stalls = gridPropCapacity(room, 'toiletStall');
+      if (nb.slot! < 0 || nb.slot! >= stalls) {
+        fail(
+          `patients[${i}].needBreak.slot`,
+          `a stall below the room's count of ${stalls} (got ${nb.slot})`,
+        );
+      }
+      const claimKey = `${nb.roomId}:${nb.slot}`;
+      if (stallClaimsHeld.has(claimKey)) {
+        fail(`patients[${i}].needBreak.slot`, `an exclusive stall (${claimKey} is held twice)`);
+      }
+      stallClaimsHeld.add(claimKey);
+    } else {
+      const key = `${nb.tile!.col},${nb.tile!.row}`;
+      if (!vendingTileKeys.has(key)) {
+        fail(`patients[${i}].needBreak.tile`, `a vending machine tile (got ${key})`);
+      }
+      if (vendingClaimsHeld.has(key)) {
+        fail(`patients[${i}].needBreak.tile`, `one user per machine (${key} is claimed twice)`);
+      }
+      vendingClaimsHeld.add(key);
     }
   });
 
@@ -969,6 +1180,7 @@ function restoreInto(world: World, data: RestorePayload): void {
     }
   }
   for (const room of data.rooms) world.rooms.set(room.id, room);
+  for (const a of data.amenities) world.amenities.set(`${a.tile.col},${a.tile.row}`, a);
   for (const patient of data.patients) world.patients.set(patient.id, patient);
   for (const member of data.staff) world.staff.set(member.id, member);
   for (const reservation of data.reservations) world.reservations.set(reservation.id, reservation);

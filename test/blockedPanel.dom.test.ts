@@ -15,7 +15,7 @@ function fixture() {
   const root = document.createElement('div');
   const panel = new BlockedPanel(world, events);
   panel.mount(root);
-  return { world, root, panel };
+  return { world, events, root, panel };
 }
 
 function rows(root: HTMLElement): string[] {
@@ -87,5 +87,66 @@ describe('BlockedPanel', () => {
     world.buildRoom('triage', { col: 5, row: 20, cols: 2, rows: 2 }, { col: 7, row: 20 }, true);
     panel.update();
     expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(false);
+  });
+
+  it('amenityPlaced/amenitySold invalidate without a tick (amenities Stage 1, MINOR 18)', () => {
+    // Same paused-staleness rule as builds: amenity commands apply at speed 0,
+    // so the panel must recompute on the events, not wait for the clock.
+    const { world, events, root, panel } = fixture();
+    const patient = world.spawnPatient('flu');
+    patient.stage = { kind: 'waitingTriage' };
+    world.tick();
+    panel.update();
+    expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(true);
+
+    // Clear the need by DIRECT mutation — no event, no tick. The panel is
+    // (correctly) stale: this proves the tick gate is closed, so the assertion
+    // after the emit can only pass via the amenity-event invalidation.
+    world.patients.delete(patient.id);
+    panel.update();
+    expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(true);
+
+    events.emit('amenityPlaced', { col: 1, row: 1, kind: 'trashcan' });
+    panel.update();
+    expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(false);
+
+    // amenitySold, same shape: recreate the need silently, then emit.
+    const second = world.spawnPatient('flu');
+    second.stage = { kind: 'waitingTriage' };
+    panel.update();
+    expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(false); // stale again
+
+    events.emit('amenitySold', { col: 1, row: 1, kind: 'trashcan' });
+    panel.update();
+    expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(true);
+  });
+
+  it('caps visible rows at 8 + a "+N more" tail (live-drive MAJOR 2: never occlude the inspect card)', () => {
+    const { world, root, panel } = fixture();
+    // A wide condition spread in a bare hospital produces well over 8 needs
+    // (each condition's full chain: rooms + roles, plus check-in/triage).
+    for (const condition of [
+      'gallstones',
+      'stroke',
+      'kidneyFailure',
+      'asthma',
+      'fracture',
+      'pneumonia',
+    ] as const) {
+      const p = world.spawnPatient(condition);
+      p.stage = { kind: 'waiting' };
+      p.acuity = 3;
+    }
+    world.tick();
+    panel.update();
+    const lines = rows(root);
+    // Premise: the world genuinely wants more than the cap (else vacuous).
+    const MAX_ROWS = 8;
+    expect(lines.length).toBe(MAX_ROWS + 1);
+    expect(lines[MAX_ROWS]).toMatch(/^\+\d+ more$/);
+    // Urgent rows survive the cut — the tail drops upcoming rows only.
+    expect(lines.slice(0, MAX_ROWS).some((l) => !l.startsWith('soon:') && !l.startsWith('+'))).toBe(
+      true,
+    );
   });
 });

@@ -61,8 +61,13 @@ export class Checklist {
       if (role === 'nurse') this.complete('nurse');
       if (role === 'doctor') this.complete('doctor');
     });
-    // First treatment fee = first successfully treated step (triage is free).
-    this.events.on('feeBilled', () => this.complete('treat'));
+    // First TREATMENT fee = first successfully treated step (triage is
+    // free). Source-gated: vending revenue rides the same billFee choke
+    // point, and a $5 soda must not check off "treat your first patient"
+    // (Stage-1 live-drive review MAJOR 1).
+    this.events.on('feeBilled', ({ source }) => {
+      if (source === 'treatment') this.complete('treat');
+    });
   }
 
   /** Mirror of the live-event conditions, evaluated against current World state. */

@@ -768,6 +768,10 @@ body {
   background: rgba(24, 28, 33, 0.9);
   color: #e8e6e0;
   font-size: 13px;
+  /* Belt-and-suspenders with the BlockedPanel row cap (Stage-1 live-drive
+     MAJOR 2): the panel must never grow over the inspect card's buttons. */
+  max-height: 30vh;
+  overflow-y: auto;
 }
 
 #blocked.hidden {

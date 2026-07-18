@@ -1,11 +1,12 @@
 import type { CommandQueue } from '../commands';
 import type { WorldRenderer, Selection } from '../render/renderer';
 import { validateRoomSell } from '../sim/build';
+import { AMENITY_DEFS, type AmenityId } from '../sim/data/amenities';
 import { CONDITION_DEFS } from '../sim/data/conditions';
 import { ROOM_DEFS } from '../sim/data/rooms';
 import { ROLE_DEFS } from '../sim/data/roles';
 import { BALANCE } from '../sim/data/balance';
-import { moodOf, sellbackAmount } from '../sim/formulas';
+import { amenitySellback, moodOf, sellbackAmount } from '../sim/formulas';
 import type { PatientStage } from '../sim/entities/patient';
 import type { Reservation, StaffDuty } from '../sim/entities/staff';
 import type { World } from '../sim/world';
@@ -125,6 +126,14 @@ export class InspectPanel {
       fresh.addEventListener('click', () =>
         this.commands.push({ type: 'sellRoom', roomId: selection.id }),
       );
+    } else if (selection.kind === 'amenity') {
+      // Stage 1: the inspect card is the ONLY sell path for amenities (sell
+      // MODE ignores their tiles — pre-impl NIT 14, deliberate). Label set in
+      // renderBody alongside the room pattern.
+      fresh.classList.add('danger');
+      fresh.addEventListener('click', () =>
+        this.commands.push({ type: 'sellAmenity', col: selection.col, row: selection.row }),
+      );
     } else {
       fresh.style.display = 'none';
     }
@@ -179,6 +188,9 @@ export class InspectPanel {
         this.line('Acuity', p.acuity === null ? 'not triaged' : `${p.acuity}`) +
         this.bar('Health', p.health, '#57bb6a') +
         this.bar('Patience', p.patience, '#e0a800') +
+        // Need meters (amenities Stage 1, §3.1) — same 0–vitalsMax scale.
+        this.bar('Bladder', p.bladder, '#8e7cc3') +
+        this.bar('Thirst', p.thirst, '#4aa3c9') +
         this.line('State', patientStageLabel(p.stage, this.reservationPhase(p.stage))) +
         this.line('Billed', `$${p.billed.toLocaleString()}`);
       return;
@@ -199,8 +211,23 @@ export class InspectPanel {
       return;
     }
     if (selection.kind === 'amenity') {
-      // Stage 1 freeze stub — Track U builds the real card (label + Sell).
-      this.body.innerHTML = '';
+      const amenity = this.world.amenityAt(selection.col, selection.row)!;
+      const def = AMENITY_DEFS[amenity.kind];
+      // What it does (§3.4): vending's price is the billFee SSOT number; the
+      // plant aura radius comes from the same table refreshAuras reads; the
+      // trashcan is pure flavor until Stage-2 messes give it a job.
+      const effectLine: Record<AmenityId, string> = {
+        vending: this.line('Drinks', `$${BALANCE.needs.vendingPrice} per use`),
+        plant: this.line('Effect', `Comfort aura, ${BALANCE.needs.plantAuraRadius} tiles`),
+        trashcan: this.line('Effect', 'Keeps the ER tidy'),
+      };
+      this.body.innerHTML =
+        `<div class="inspect-name">${esc(def.label)}</div>` + effectLine[amenity.kind];
+      // amenitySellback is the sim's payout AND this label (the sellbackAmount
+      // pattern — never a locally computed 50%).
+      const refund = amenitySellback(amenity.kind);
+      this.actionButton.textContent = `Sell (+$${refund.toLocaleString()})`;
+      this.actionButton.disabled = false;
       return;
     }
     const room = this.world.rooms.get(selection.id)!;
@@ -209,20 +236,39 @@ export class InspectPanel {
     // Stage A: a room can hold SEVERAL reservations (one per bed/machine) —
     // list every occupant, not an arbitrary .find of one.
     const reservations = this.world.reservationsOn(room.id);
-    const occupant =
-      reservations
-        .map((r) => this.world.patients.get(r.patientId)?.name.short)
-        .filter((name): name is string => name !== undefined)
-        .join(', ') || '—';
-    // Capacity readout ("Beds 1/3" / "Seats 4/9"): used count differs by rule —
-    // waiting-room seats are occupied by seated waiters, treatment slots by
-    // reservations. capacityOf is the same SSOT the dispatcher reads.
+    // Restroom occupancy is DERIVED from needBreak stall claims (§3.3) —
+    // reservations are ALWAYS empty for the unstaffed self-service room, so
+    // reading them would render a permanent "Stalls 0/2" (review MINOR 7).
+    const stallClaims = room.type === 'restroom' ? this.world.stallClaims(room.id) : null;
+    // "In use" lists only USING claimants; walkers still crossing the map
+    // read "on the way" (live-drive review MINOR 3 — the flat list overstated
+    // occupancy while a claimant was three corridors away).
+    const claimName = (id: number): string | undefined => this.world.patients.get(id)?.name.short;
+    const occupant = stallClaims
+      ? [...stallClaims.values()]
+          .map((id) => {
+            const name = claimName(id);
+            if (name === undefined) return undefined;
+            const walking = this.world.patients.get(id)?.needBreak?.phase === 'walking';
+            return walking ? `${name} (on the way)` : name;
+          })
+          .filter((name): name is string => name !== undefined)
+          .join(', ') || '—'
+      : reservations
+          .map((r) => claimName(r.patientId))
+          .filter((name): name is string => name !== undefined)
+          .join(', ') || '—';
+    // Capacity readout ("Beds 1/3" / "Seats 4/9" / "Stalls 1/2"): used count
+    // differs by rule — waiting-room seats by seated waiters, restroom stalls
+    // by live claims, treatment slots by reservations. capacityOf is the same
+    // SSOT the dispatcher reads.
     const capRule = def.capacity;
     let capacityLine = '';
     if (capRule.kind === 'perProp') {
       const total = this.world.capacityOf(room);
-      const used =
-        room.type === 'waiting'
+      const used = stallClaims
+        ? stallClaims.size
+        : room.type === 'waiting'
           ? [...this.world.patients.values()].filter((p) => p.waitingRoomId === room.id).length
           : reservations.length;
       capacityLine = this.line(capRule.noun, `${used}/${total}`);
@@ -247,7 +293,8 @@ export class InspectPanel {
       capacityLine +
       (runBy ? this.line('Run by', runBy) : '') +
       (hasPost ? this.line('Posted', posted.map((s) => s.name.short).join(', ') || '—') : '') +
-      this.line('Treating', occupant);
+      // "Treating" would be dishonest for a self-service room (§3.3).
+      this.line(stallClaims ? 'In use' : 'Treating', occupant);
     // sellbackAmount is the sim's payout AND this label (SSOT audit #2);
     // rect-aware since Stage 0 (an oversized room refunds its sized price).
     const refund = sellbackAmount(room.type, room.rect);

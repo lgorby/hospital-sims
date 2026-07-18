@@ -85,6 +85,7 @@ function pipelineRich(world: World): boolean {
   const stages = new Set<string>(patients.map((p) => p.stage.kind));
   const reservations = [...world.reservations.values()];
   const overflow = patients.filter((p) => p.stage.kind === 'atEntrance' && p.lost === null);
+  const breaks = patients.flatMap((p) => (p.needBreak === null ? [] : [p.needBreak]));
   return (
     patients.some((p) => p.lost !== null) &&
     overflow.length >= 3 && // 2 get debugForce'd to leaving/dead; ≥1 must remain
@@ -97,7 +98,14 @@ function pipelineRich(world: World): boolean {
     reservations.some((r) => r.phase === 'active') &&
     // Stage A: a CONCURRENT reservation (slot 1 of the dialysis room) must be
     // live at the save tick, or the gate never exercises multi-slot state.
-    reservations.some((r) => r.slotIndex > 0)
+    reservations.some((r) => r.slotIndex > 0) &&
+    // v4 (amenities Stage 1, §3.5 pins): a `walking` AND a `using` break, one
+    // restroom AND one vending claim, live at the save tick — else the gate
+    // never exercises the needBreak schema corners.
+    breaks.some((b) => b.phase === 'walking') &&
+    breaks.some((b) => b.phase === 'using') &&
+    breaks.some((b) => b.kind === 'restroom') &&
+    breaks.some((b) => b.kind === 'vending')
   );
 }
 
@@ -147,6 +155,17 @@ function assertRichPremises(world: World): void {
     [...world.checkInQueues.values()].some((q) => q.length > 0),
     'a populated check-in queue',
   ).toBe(true);
+  // v4 premises (amenities Stage 1, §3.5 — asserted, never assumed):
+  const breaks = patients.flatMap((p) => (p.needBreak === null ? [] : [p.needBreak]));
+  expect(breaks.some((b) => b.phase === 'walking'), 'a walking need break').toBe(true);
+  expect(breaks.some((b) => b.phase === 'using'), 'a using need break').toBe(true);
+  expect(breaks.some((b) => b.kind === 'restroom'), 'a restroom stall claim').toBe(true);
+  expect(breaks.some((b) => b.kind === 'vending'), 'a vending machine claim').toBe(true);
+  expect(world.amenityAt(26, 36)?.kind, 'a placed trashcan').toBe('trashcan');
+  expect(
+    patients.some((p) => p.needBreakHoldUntil > world.clock.tick),
+    'a pending needBreakHoldUntil',
+  ).toBe(true);
 }
 
 /**
@@ -191,6 +210,16 @@ function bootScenario(): { world: World; events: EventBus } {
     rect: { col: 14, row: 6, cols: 3, rows: 3 },
     doorOutside: { col: 15, row: 9 },
   });
+  // v4 (amenities Stage 1): a restroom + vending + trashcan so the gate can
+  // pin stall/machine claims and the amenities store (§3.5 pins).
+  queue.push({
+    type: 'buildRoom',
+    roomType: 'restroom',
+    rect: { col: 6, row: 30, cols: 2, rows: 3 },
+    doorOutside: { col: 8, row: 31 },
+  });
+  queue.push({ type: 'placeAmenity', kind: 'vending', col: 25, row: 36 });
+  queue.push({ type: 'placeAmenity', kind: 'trashcan', col: 26, row: 36 });
   queue.push({ type: 'debugSpawnPatient', condition: 'flu' });
   queue.push({ type: 'debugSpawnPatient', condition: 'laceration' });
   world.applyCommands(queue);
@@ -233,6 +262,20 @@ function bootScenario(): { world: World; events: EventBus } {
     // Everyone navigates terribly (field poke — allowed; stages never poked):
     // wrong turns on the exam trek become likely, so lostness shows up fast.
     for (const p of world.patients.values()) p.wayfinding = 1;
+    // Need side-trips (v4 gate): keep a steady stream of below-threshold
+    // meters (field pokes) so some tick catches walking + using breaks of
+    // BOTH kinds simultaneously with everything above.
+    if (guard % 30 === 0) {
+      const free = [...world.patients.values()].filter(
+        (p) =>
+          (p.stage.kind === 'waiting' || p.stage.kind === 'waitingTriage') &&
+          p.needBreak === null &&
+          p.lost === null,
+      );
+      if (free[0]) free[0].bladder = BALANCE.needs.seekThreshold - 10;
+      if (free[1]) free[1].thirst = BALANCE.needs.seekThreshold - 10;
+      if (free[2]) free[2].thirst = BALANCE.needs.seekThreshold - 10;
+    }
     world.tick();
     guard += 1;
   }
@@ -253,6 +296,8 @@ function bootScenario(): { world: World; events: EventBus } {
   // A pending dispatcher retry hold (field poke — never poke stage directly).
   const held = [...world.patients.values()].find((p) => p.stage.kind === 'waitingTriage')!;
   held.dispatchHoldUntil = world.clock.tick + 500;
+  // A pending need-break retry hold (v4 §3.5 pin — same poke pattern).
+  held.needBreakHoldUntil = world.clock.tick + 500;
 
   assertRichPremises(world);
   return { world, events };
@@ -261,7 +306,8 @@ function bootScenario(): { world: World; events: EventBus } {
 describe('save/load round-trip (THE acceptance gate, plan rule 4)', () => {
   it('save → load → run N ticks: identical event logs and identical final state', () => {
     const a = bootScenario(); // asserts every schema-corner premise at the save tick
-    expect(a.world.rooms.size).toBe(6); // reception, waiting, triage, exam, atrium, dialysis
+    // reception, waiting, triage, exam, atrium, dialysis, restroom (v4)
+    expect(a.world.rooms.size).toBe(7);
 
     const json = saveToString(a.world);
     const loadedEvents = new EventBus();
@@ -542,6 +588,179 @@ describe('load border referential integrity (review MAJOR 1)', () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toContain('grid');
     }
+  });
+});
+
+// ------------------------------------------------- v4 (amenities Stage 1)
+
+/** A REAL v3 payload: the current shape minus everything v4 added. */
+function v3Fixture(): Record<string, unknown> {
+  const save = JSON.parse(smallSave()) as Record<string, unknown>;
+  save.saveVersion = 3;
+  delete save.amenities;
+  delete (save.today as Record<string, unknown>).vendingRevenue;
+  for (const p of save.patients as Record<string, unknown>[]) {
+    delete p.bladder;
+    delete p.thirst;
+    delete p.needBreak;
+    delete p.needBreakHoldUntil;
+  }
+  return save;
+}
+
+/** A small save carrying a restroom + vending machine (for claim tampering). */
+let cachedAmenitySave: string | null = null;
+function amenitySave(): string {
+  if (cachedAmenitySave === null) {
+    const world = new World(new EventBus(), 9);
+    setupNewGame(world);
+    world.buildRoom('restroom', { col: 5, row: 20, cols: 2, rows: 3 }, { col: 7, row: 21 });
+    world.placeAmenity('vending', { col: 10, row: 20 });
+    world.spawnPatient('flu');
+    world.spawnPatient('flu');
+    for (let i = 0; i < 50; i++) world.tick();
+    cachedAmenitySave = saveToString(world);
+  }
+  return cachedAmenitySave;
+}
+
+function parsedAmenitySave(): SaveData {
+  return JSON.parse(amenitySave()) as SaveData;
+}
+
+/** A shape-valid restroom stall claim to graft onto a patient (tamper base). */
+function stallClaim(roomId: number, slot: number): Record<string, unknown> {
+  return { kind: 'restroom', roomId, slot, phase: 'walking', ticksRemaining: 0, startedAt: 0 };
+}
+
+describe('v3 → v4 migration (amenities Stage 1, review MAJOR 3)', () => {
+  it('a genuine v3 fixture loads: tally + meter + break defaults applied', () => {
+    // The tally default is THE MAJOR-3 regression: readTally throws on any
+    // missing key, so an unversioned reader would refuse every pre-v4 save.
+    const result = loadOf(v3Fixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.world.today.vendingRevenue).toBe(0);
+    expect(result.world.amenities.size).toBe(0);
+    expect(result.world.patients.size).toBeGreaterThan(0); // premise
+    for (const p of result.world.patients.values()) {
+      expect(p.bladder).toBe(BALANCE.stats.vitalsMax);
+      expect(p.thirst).toBe(BALANCE.stats.vitalsMax);
+      expect(p.needBreak).toBeNull();
+      expect(p.needBreakHoldUntil).toBe(0);
+    }
+    // A re-save stamps v4 with the new surface present.
+    const resaved = JSON.parse(saveToString(result.world)) as SaveData;
+    expect(resaved.saveVersion).toBe(SAVE_VERSION);
+    expect(resaved.amenities).toEqual([]);
+    expect(resaved.today.vendingRevenue).toBe(0);
+  });
+
+  it('a v4 save with amenities round-trips byte-identically', () => {
+    const loaded = loadWorld(new EventBus(), amenitySave());
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    expect(loaded.world.amenities.size).toBe(1); // premise: the machine landed
+    expect(saveToString(loaded.world)).toBe(amenitySave());
+  });
+});
+
+describe('load border: need-break claims (v4, AMENITIES_PLAN §3.5)', () => {
+  it('accepts a well-formed stall claim (control)', () => {
+    const save = parsedAmenitySave();
+    const restroom = save.rooms.find((r) => r.type === 'restroom')!;
+    save.patients[0]!.needBreak = stallClaim(restroom.id, 0) as never;
+    expect(loadOf(save).ok).toBe(true);
+  });
+
+  it('rejects a stall claim on a missing room', () => {
+    const save = parsedAmenitySave();
+    save.patients[0]!.needBreak = stallClaim(31337, 0) as never;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('needBreak');
+  });
+
+  it('rejects a stall claim on a NON-restroom room', () => {
+    const save = parsedAmenitySave();
+    const reception = save.rooms.find((r) => r.type === 'reception')!;
+    save.patients[0]!.needBreak = stallClaim(reception.id, 0) as never;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('restroom');
+  });
+
+  it('rejects a slot at/above the grid-derived stall count (min restroom = 2)', () => {
+    const save = parsedAmenitySave();
+    const restroom = save.rooms.find((r) => r.type === 'restroom')!;
+    save.patients[0]!.needBreak = stallClaim(restroom.id, 2) as never;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('slot');
+  });
+
+  it('rejects two patients holding one stall (claim exclusivity, NIT 19)', () => {
+    const save = parsedAmenitySave();
+    const restroom = save.rooms.find((r) => r.type === 'restroom')!;
+    save.patients[0]!.needBreak = stallClaim(restroom.id, 1) as never;
+    save.patients[1]!.needBreak = stallClaim(restroom.id, 1) as never;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('exclusive');
+  });
+
+  it('rejects a vending claim whose tile carries no machine; accepts the real one', () => {
+    const vend = (col: number, row: number): Record<string, unknown> => ({
+      kind: 'vending',
+      tile: { col, row },
+      phase: 'walking',
+      ticksRemaining: 0,
+      startedAt: 0,
+    });
+    const good = parsedAmenitySave();
+    good.patients[0]!.needBreak = vend(10, 20) as never; // the placed machine
+    expect(loadOf(good).ok).toBe(true);
+    const bad = parsedAmenitySave();
+    bad.patients[0]!.needBreak = vend(11, 20) as never; // bare corridor
+    const result = loadOf(bad);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('vending');
+  });
+
+  it('rejects two patients claiming one machine (one user at a time)', () => {
+    const save = parsedAmenitySave();
+    const vend = { kind: 'vending', tile: { col: 10, row: 20 }, phase: 'walking', ticksRemaining: 0, startedAt: 0 };
+    save.patients[0]!.needBreak = vend as never;
+    save.patients[1]!.needBreak = { ...vend } as never;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('one user per machine');
+  });
+});
+
+describe('load border: amenities ↔ grid, both ways (v4)', () => {
+  it('rejects an amenities entry whose tile does not carry the prop', () => {
+    const save = parsedAmenitySave();
+    save.amenities[0]!.tile = { col: 0, row: 0 }; // bare corridor
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('amenities[0]');
+  });
+
+  it('rejects a grid amenity-prop tile with NO amenities entry (reverse)', () => {
+    const save = parsedAmenitySave();
+    save.amenities = []; // the grid RLE still carries the vending prop
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('no amenities entry');
+  });
+
+  it('rejects duplicate amenities entries on one tile', () => {
+    const save = parsedAmenitySave();
+    save.amenities.push({ ...save.amenities[0]! });
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('one amenity per tile');
   });
 });
 

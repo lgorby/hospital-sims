@@ -1,3 +1,4 @@
+import { AMENITY_DEFS, type AmenityId } from './data/amenities';
 import { ROOM_DEFS, type RoomType } from './data/rooms';
 import { BALANCE } from './data/balance';
 import { expandPrice, priceOf } from './formulas';
@@ -244,6 +245,13 @@ export function validateRoomExpand(
   for (const reservation of world.reservations.values()) {
     if (reservation.roomId === roomId) return fail('Room is busy — wait for treatments to finish');
   }
+  // Live stall claims gate geometry (amenities Stage 1, §3.3 / §8 Q7): slot
+  // indices are row-major over the rect, so expansion RENUMBERS them — and
+  // stall claims are derived, without Reservation.slotIndex's stored-stable
+  // protection. Walking claimants included, symmetric with the gate above.
+  for (const p of world.patients.values()) {
+    if (p.needBreak?.roomId === roomId) return fail('Occupied');
+  }
   if (room.door && rectContains(newRect, room.door.outside)) {
     return fail('Expansion would swallow the door — grow away from it');
   }
@@ -310,12 +318,90 @@ export function validateRoomExpand(
   return reachabilityWithWalls(world, newRect, room.door, isOpen, roomId);
 }
 
+/**
+ * Amenity placement validation (amenities Stage 1, AMENITIES_PLAN §3.4 /
+ * plan §1.8). One validator for the UI ghost AND the sim command (SSOT rule
+ * 4). Rules, in order: bounds; tile walkable with no object; roomless OR
+ * open-plan (walled-room interiors rejected); explicitly NOT the entrance
+ * tile (review MAJOR 5 — the reachability BFS seeds AT the entrance and
+ * cannot see its own start tile become unwalkable); no person's `at` OR
+ * committed `next` on the tile and the tile unclaimed as a walk target
+ * (the build-validator clause — NOT isTileClaimed, which misses `next`);
+ * cash; and the blocked-tile reachability BFS (the §3.4 variant): with the
+ * candidate tile removed from the walkable set, the entrance must still
+ * reach every room door AND every person's standing tile (no trapping).
+ */
+export function validateAmenityPlace(world: World, kind: AmenityId, tile: GridPoint): Validation {
+  const t = world.tileAt(tile.col, tile.row);
+  if (!t) return fail('Out of bounds');
+  if (!t.walkable || t.object !== null) return fail('Blocked by an object');
+  if (t.roomId !== null) {
+    const room = world.rooms.get(t.roomId);
+    if (!room || ROOM_DEFS[room.type].kind !== 'open') {
+      return fail('Must go on a corridor or atrium tile');
+    }
+  }
+  if (samePoint(tile, BALANCE.map.entrance)) return fail('Cannot block the entrance');
+  for (const person of [...world.patients.values(), ...world.staff.values()]) {
+    if (
+      samePoint(person.at, tile) ||
+      (person.next && samePoint(person.next, tile)) ||
+      (person.target && samePoint(person.target, tile))
+    ) {
+      return fail('Someone is standing there');
+    }
+  }
+  if (world.cash < AMENITY_DEFS[kind].cost) return fail('Not enough cash');
+
+  // Blocked-tile BFS: the room-build BFS overlays WALLS, which is not
+  // sufficient here — this variant removes the candidate tile itself from the
+  // walkable set (the machine will occupy it) and asserts nothing is cut off.
+  const keyOf = (p: GridPoint): number => p.col * world.rows + p.row;
+  const blockedKey = keyOf(tile);
+  const visited = new Set<number>([keyOf(BALANCE.map.entrance)]);
+  const queue: GridPoint[] = [BALANCE.map.entrance];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const step of ORTHOGONAL_STEPS) {
+      const next = { col: current.col + step.col, row: current.row + step.row };
+      if (!world.tileAt(next.col, next.row)?.walkable) continue;
+      const k = keyOf(next);
+      if (k === blockedKey || visited.has(k)) continue;
+      if (!world.canStep(current, next)) continue;
+      visited.add(k);
+      queue.push(next);
+    }
+  }
+  for (const room of world.rooms.values()) {
+    if (room.door && !visited.has(keyOf(room.door.outside))) {
+      return fail(`Would cut off ${ROOM_DEFS[room.type].label} from the entrance`);
+    }
+  }
+  for (const person of [...world.patients.values(), ...world.staff.values()]) {
+    const standing = person.next ?? person.at;
+    if (!visited.has(keyOf(standing))) {
+      return fail(`Would trap ${person.name.full}`);
+    }
+  }
+  return OK;
+}
+
+/** Amenity sell validation (plan §1.8): the amenity must exist. */
+export function validateAmenitySell(world: World, tile: GridPoint): Validation {
+  return world.amenityAt(tile.col, tile.row) === null ? fail('No amenity there') : OK;
+}
+
 /** Sell validation: unoccupied and unreserved (Flow rule 9). */
 export function validateRoomSell(world: World, roomId: number): Validation {
   const room = world.rooms.get(roomId);
   if (!room) return fail('No such room');
   for (const reservation of world.reservations.values()) {
     if (reservation.roomId === roomId) return fail('Room is reserved');
+  }
+  // Live stall claims block the sale (amenities Stage 1, §3.3 / §8 Q7) —
+  // walking claimants included; the gate clears in minutes.
+  for (const p of world.patients.values()) {
+    if (p.needBreak?.roomId === roomId) return fail('Occupied');
   }
   // Open-plan exemption (Flow rule 9, M3 ruling): an atrium holds no one —
   // its tiles are public through-traffic, so people standing on them never

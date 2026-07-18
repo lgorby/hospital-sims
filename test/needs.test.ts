@@ -222,11 +222,68 @@ describe('computeBlockedNeeds — enumeration', () => {
     const solo = world.spawnPatient('kidneyFailure');
     forceStage(solo, { kind: 'waiting' });
     solo.acuity = 3; // dialysis room missing, nurse hired → room:dialysis ×1
-    // All urgent; 2-patient needs before the 1-patient need; key breaks the tie.
-    expect(needKeys(world)).toEqual(['role:surgeon', 'room:surgery', 'room:dialysis']);
+    // All urgent; 2-patient needs before the 1-patient need; key breaks the
+    // tie. room:restroom (amenities Stage 1) trails as an UPCOMING row —
+    // patients exist, none below the bladder threshold, no restroom built.
+    expect(needKeys(world)).toEqual([
+      'role:surgeon',
+      'room:surgery',
+      'room:dialysis',
+      'room:restroom',
+    ]);
     // The ordering is total: keys are unique.
     const needs = computeBlockedNeeds(world);
     expect(new Set(needs.map((n) => n.key)).size).toBe(needs.length);
+  });
+});
+
+describe('room:restroom need (amenities Stage 1, §1.11 / pre-impl MINOR 9)', () => {
+  const BLADDER_LOW = 10; // below BALANCE.needs.seekThreshold (35)
+
+  it('no patients → no restroom row; patients with full meters → UPCOMING row', () => {
+    const { world } = setup();
+    expect(needKeys(world)).not.toContain('room:restroom');
+    const p = world.spawnPatient('flu');
+    p.bladder = 100; // full — nobody is seeking
+    const row = need(world, 'room:restroom');
+    expect(row).toBeDefined();
+    expect(row!.urgent).toBe(false);
+    // Label is EXACT — the panel + toast wording SSOT.
+    expect(row!.label).toBe('Build a Restroom — patients need the restroom');
+  });
+
+  it('urgent only for below-threshold patients in the ACTIONABLE stages (waiting/waitingTriage)', () => {
+    const { world } = setup();
+    const p = world.spawnPatient('flu');
+    p.bladder = BLADDER_LOW;
+    // Below threshold but still in the check-in pipeline: NOT actionable.
+    expect(need(world, 'room:restroom')!.urgent).toBe(false);
+    forceStage(p, { kind: 'waitingTriage' });
+    expect(need(world, 'room:restroom')!.urgent).toBe(true);
+    forceStage(p, { kind: 'waiting' });
+    p.acuity = 3;
+    const row = need(world, 'room:restroom')!;
+    expect(row.urgent).toBe(true);
+    expect(row.patients).toBe(1);
+  });
+
+  it('building a restroom clears the need entirely', () => {
+    const { world } = setup();
+    const p = world.spawnPatient('flu');
+    forceStage(p, { kind: 'waitingTriage' });
+    p.bladder = BLADDER_LOW;
+    expect(need(world, 'room:restroom')).toBeDefined();
+    world.buildRoom('restroom', { col: 5, row: 20, cols: 2, rows: 3 }, { col: 7, row: 21 }, true);
+    expect(needKeys(world)).not.toContain('room:restroom');
+  });
+
+  it('leaving/dead patients keep no restroom need alive', () => {
+    const { world } = setup();
+    const leaver = world.spawnPatient('flu');
+    forceStage(leaver, { kind: 'leaving', reason: 'ama' });
+    const corpse = world.spawnPatient('flu');
+    forceStage(corpse, { kind: 'dead', since: 0 });
+    expect(needKeys(world)).not.toContain('room:restroom');
   });
 });
 

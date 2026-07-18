@@ -1,9 +1,16 @@
 import type { CommandQueue, Command } from '../commands';
 import type { EventBus } from '../events';
-import { doorFromOutsideTile, validateRoomBuild, validateRoomExpand, validateRoomSell } from './build';
+import {
+  doorFromOutsideTile,
+  validateAmenityPlace,
+  validateAmenitySell,
+  validateRoomBuild,
+  validateRoomExpand,
+  validateRoomSell,
+} from './build';
 import { GameClock, gameMinutesToTicks, TICKS_PER_DAY, ticksToGameMinutes } from './clock';
 import { emptyDayTally, type DayReport, type DayTally } from './dailyStats';
-import type { AmenityId } from './data/amenities';
+import { AMENITY_DEFS, type AmenityId } from './data/amenities';
 import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, type ConditionId } from './data/conditions';
 import { generateAge, generateName, generateStaffAge } from './data/names';
@@ -13,11 +20,13 @@ import type { Door, Room } from './entities/room';
 import { LEGAL_STAGE_TRANSITIONS, type Patient, type PatientStage } from './entities/patient';
 import type { Candidate, Reservation, Staff } from './entities/staff';
 import {
+  amenitySellback,
   auraCoversTile,
   candidateSalary,
   checkInCapacity,
   dischargeReputationGain,
   expandPrice,
+  plantCoversTile,
   priceOf,
   propTargetCount,
   roomQuality,
@@ -27,6 +36,7 @@ import { findPath, type PathGrid } from './path/astar';
 import { SeededRng } from './rng';
 import { updateDecay } from './systems/decay';
 import { updateDispatcher } from './systems/dispatcher';
+import { updatePatientNeeds } from './systems/patientNeeds';
 import { updateEconomy } from './systems/economy';
 import { updateMovement } from './systems/movement';
 import { updateSpawn } from './systems/spawn';
@@ -462,16 +472,22 @@ export class World implements PathGrid {
     if (this.clock.tick === this.auraCheckedTick) return;
     this.auraCheckedTick = this.clock.tick;
     const atriums = this.roomsOfType('atrium');
+    // Plants project a small comfort aura (amenities Stage 1, §3.4) — their
+    // tiles join the signature so placing/selling one bumps `auraRevision`
+    // and the overlay cache rebuilds (the aura-input rule, HANDOFF).
+    const plants = [...this.amenities.values()].filter((a) => a.kind === 'plant');
     // The RECT is part of the signature (Stage B, design-review MAJOR 5):
     // rooms can now GROW post-build — an expanded atrium must rebuild its
     // coverage, not keep the old footprint's aura.
-    const signature = atriums
-      .map(
-        (room) =>
-          `${room.id}:${this.atriumStaffed(room) ? 1 : 0}:` +
-          `${room.rect.col},${room.rect.row},${room.rect.cols},${room.rect.rows}`,
-      )
-      .join('|');
+    const signature =
+      atriums
+        .map(
+          (room) =>
+            `${room.id}:${this.atriumStaffed(room) ? 1 : 0}:` +
+            `${room.rect.col},${room.rect.row},${room.rect.cols},${room.rect.rows}`,
+        )
+        .join('|') +
+      `#plants:${plants.map((a) => `${a.tile.col},${a.tile.row}`).join('|')}`;
     if (signature === this.auraSignature) return;
     this.auraSignature = signature;
     // Public change stamp: render-side overlay caches rebuild ONLY when this
@@ -495,6 +511,22 @@ export class World implements PathGrid {
           if (!auraCoversTile(room.rect, { col, row }, radius)) continue;
           this.auraComfort[col]![row] = true;
           if (staffed) this.auraGuidance[col]![row] = true;
+        }
+      }
+    }
+
+    // Plant comfort auras (Stage 1): pure comfort, never guidance. Membership
+    // via the ONE formula (plantCoversTile) so any preview can't drift.
+    const plantRadius = BALANCE.needs.plantAuraRadius;
+    for (const plant of plants) {
+      const minCol = Math.max(0, plant.tile.col - plantRadius);
+      const maxCol = Math.min(this.cols - 1, plant.tile.col + plantRadius);
+      const minRow = Math.max(0, plant.tile.row - plantRadius);
+      const maxRow = Math.min(this.rows - 1, plant.tile.row + plantRadius);
+      for (let col = minCol; col <= maxCol; col++) {
+        for (let row = minRow; row <= maxRow; row++) {
+          if (!plantCoversTile(plant.tile, { col, row }, plantRadius)) continue;
+          this.auraComfort[col]![row] = true;
         }
       }
     }
@@ -895,46 +927,124 @@ export class World implements PathGrid {
   // -------------------------------------------------------- patient routing
 
   // ------------------------------------------------- amenities (Stage 1)
-  // CONTRACT STUBS (AMENITIES_IMPL_PLAN §1.7/§2 freeze): typed, inert until
-  // Track S lands the real bodies. UI/render tracks compile against these.
 
   amenityAt(col: number, row: number): { kind: AmenityId; tile: GridPoint; fill: number } | null {
     return this.amenities.get(`${col},${row}`) ?? null;
   }
 
-  /** slot → patientId, derived from live needBreak claims (§3.3). */
-  stallClaims(_roomId: number): Map<number, number> {
-    return new Map();
+  /**
+   * slot → patientId, DERIVED from live needBreak claims (§3.3): a stall is
+   * taken iff some live patient's needBreak references {roomId, slot}. No
+   * stored reservation-like state — terminal clears release by construction.
+   * Sim (claiming) and UI (inspect "Stalls 1/2" + "In use") both read this.
+   */
+  stallClaims(roomId: number): Map<number, number> {
+    const claims = new Map<number, number>();
+    for (const p of this.patients.values()) {
+      const nb = p.needBreak;
+      if (nb?.kind === 'restroom' && nb.roomId === roomId && nb.slot !== undefined) {
+        claims.set(nb.slot, p.id);
+      }
+    }
+    return claims;
   }
 
-  /** Lowest unclaimed stall slot, or null when full (claim-aware). */
-  freeStallIndex(_room: Room): number | null {
+  /** Lowest unclaimed stall slot, or null when full (claim-aware — walking
+   *  claimants hold their stall exactly like reservations hold beds). */
+  freeStallIndex(room: Room): number | null {
+    const capacity = this.capacityOf(room);
+    const claims = this.stallClaims(room.id);
+    for (let i = 0; i < capacity; i++) if (!claims.has(i)) return i;
     return null;
   }
 
   /** patientId of the live vending claim on this machine tile, or null. */
-  vendingClaimedBy(_tileKey: string): number | null {
+  vendingClaimedBy(tileKey: string): number | null {
+    for (const p of this.patients.values()) {
+      const nb = p.needBreak;
+      if (nb?.kind === 'vending' && nb.tile && `${nb.tile.col},${nb.tile.row}` === tileKey) {
+        return p.id;
+      }
+    }
     return null;
   }
 
-  /** Validate → mutate → emit `amenityPlaced` → recomputePaths (§1.7). */
-  placeAmenity(_kind: AmenityId, _tile: GridPoint): void {
-    // Track S: implement per AMENITIES_IMPL_PLAN §1.7/§1.8.
+  /** Validate → mutate → tally → emit `amenityPlaced` → recomputePaths (§1.7).
+   *  recomputePaths is load-bearing (pre-impl MAJOR 2): movement never
+   *  re-validates steps, so a precomputed path THROUGH the new machine must be
+   *  repaired exactly as buildRoom does. */
+  placeAmenity(kind: AmenityId, tile: GridPoint): void {
+    const check = validateAmenityPlace(this, kind, tile);
+    if (!check.ok) {
+      this.events.emit('buildRejected', { reason: check.reason });
+      return;
+    }
+    const t = this.tileAt(tile.col, tile.row)!;
+    t.object = kind;
+    t.walkable = false; // amenity props are ALWAYS non-walkable (§3.4 rule)
+    this.amenities.set(`${tile.col},${tile.row}`, {
+      kind,
+      tile: { col: tile.col, row: tile.row },
+      fill: 0,
+    });
+    const cost = AMENITY_DEFS[kind].cost;
+    this.cash -= cost;
+    this.today.construction += cost; // capital bucket — dayNet stays honest
+    this.events.emit('cashChanged', { cash: this.cash });
+    this.events.emit('amenityPlaced', { col: tile.col, row: tile.row, kind });
+    this.recomputePaths();
   }
 
-  /** Validate → clear claims/jobs → emit `amenitySold` → recomputePaths. */
-  sellAmenity(_tile: GridPoint): void {
-    // Track S: implement per AMENITIES_IMPL_PLAN §1.7.
+  /** Validate → sweep live claims (abandon path) → mutate → refund → emit
+   *  `amenitySold` → recomputePaths (§1.7 / §3.4 sell sweep). */
+  sellAmenity(tile: GridPoint): void {
+    const check = validateAmenitySell(this, tile);
+    if (!check.ok) {
+      this.events.emit('buildRejected', { reason: check.reason });
+      return;
+    }
+    const key = `${tile.col},${tile.row}`;
+    const amenity = this.amenities.get(key)!;
+    // Selling sweeps its state (§3.4): live vending claims on THIS machine are
+    // cleared via the abandon path — hold set, meter unchanged.
+    for (const p of [...this.patients.values()]) {
+      const nb = p.needBreak;
+      if (nb?.kind === 'vending' && nb.tile && samePoint(nb.tile, tile)) {
+        this.clearNeedBreak(p, { hold: true });
+      }
+    }
+    const t = this.tileAt(tile.col, tile.row)!;
+    t.object = null;
+    t.walkable = true;
+    this.amenities.delete(key);
+    // SSOT: the payout and the inspect button label share amenitySellback.
+    const refund = amenitySellback(amenity.kind);
+    this.cash += refund;
+    this.today.sellIncome += refund;
+    this.events.emit('cashChanged', { cash: this.cash });
+    this.events.emit('amenitySold', { col: tile.col, row: tile.row, kind: amenity.kind });
+    this.recomputePaths();
   }
 
   /**
    * THE one abandon/clear path for need side-trips (§3.2): clears the
-   * sub-state (+ target/path per the lost/non-lost rule), optionally sets
-   * the retry hold. Terminal choke points call it with {hold:false}.
+   * sub-state and target/path, optionally sets the retry hold, then re-spots
+   * non-lost patients. Lost patients get target = null — the lost-timeout
+   * semantics, NOT a retained target a later recovery would walk into a stall
+   * they no longer hold (design MAJOR 1 + MINOR 10). Terminal choke points
+   * call it with {hold:false}; claims are derived, so release is automatic.
    */
-  clearNeedBreak(patient: Patient, _opts: { hold: boolean }): void {
+  clearNeedBreak(patient: Patient, opts: { hold: boolean }): void {
+    if (patient.needBreak === null) return;
     patient.needBreak = null;
-    // Track S: target/path nulling, hold, assignWaitingSpot per §1.9.
+    if (opts.hold) {
+      patient.needBreakHoldUntil =
+        this.clock.tick + gameMinutesToTicks(BALANCE.needs.breakRetryGameMinutes);
+    }
+    patient.target = null;
+    patient.path = [];
+    if (patient.lost) return; // wanderers get their spot at recovery (M3 rule)
+    this.assignWaitingSpot(patient);
   }
 
   spawnPatient(condition: ConditionId): Patient {
@@ -957,11 +1067,11 @@ export class World implements PathGrid {
       waitingSince: null,
       dispatchHoldUntil: 0,
       waitingRoomId: null,
-      // Freeze defaults (compile-green, stream-neutral); Track S switches
-      // these to the §1.5 rng rolls [spawnMeterMin, vitalsMax] and re-pins
-      // every fixed-seed expectation in the same change.
-      bladder: BALANCE.stats.vitalsMax,
-      thirst: BALANCE.stats.vitalsMax,
+      // Need meters spawn part-full (§3.1/§1.5): rng-rolled in
+      // [spawnMeterMin, vitalsMax] — two in-order draws on the seeded stream
+      // (bladder first). Fixed-seed expectations were re-pinned with this.
+      bladder: this.rng.intInRange(BALANCE.needs.spawnMeterMin, BALANCE.stats.vitalsMax),
+      thirst: this.rng.intInRange(BALANCE.needs.spawnMeterMin, BALANCE.stats.vitalsMax),
       needBreak: null,
       needBreakHoldUntil: 0,
       at: { ...BALANCE.map.entrance },
@@ -1139,11 +1249,15 @@ export class World implements PathGrid {
     this.events.emit('reputationChanged', { reputation: this.reputation });
   }
 
-  billFee(amount: number, label: string): void {
+  /** All patient fees flow through here (revenue tally choke point, M4).
+   *  `source` discriminates treatment billing from amenity revenue — the
+   *  checklist's "treat your first patient" must not complete on a $5 soda
+   *  (Stage-1 live-drive review MAJOR 1). */
+  billFee(amount: number, label: string, source: 'treatment' | 'vending' = 'treatment'): void {
     this.cash += amount;
     this.today.revenue += amount;
     this.events.emit('cashChanged', { cash: this.cash });
-    this.events.emit('feeBilled', { amount, label });
+    this.events.emit('feeBilled', { amount, label, source });
   }
 
   /** Emit an advisory toast at most once per key (Flow rule 5). */
@@ -1232,6 +1346,7 @@ export class World implements PathGrid {
 
   killPatient(patient: Patient): void {
     if (patient.stage.kind === 'dead') return;
+    this.clearNeedBreak(patient, { hold: false }); // rule-7 analogue (§3.2)
     this.releasePatientHoldings(patient);
     this.setPatientStage(patient, { kind: 'dead', since: this.clock.tick });
     patient.lost = null;
@@ -1251,6 +1366,7 @@ export class World implements PathGrid {
   }
 
   patientLeavesAma(patient: Patient): void {
+    this.clearNeedBreak(patient, { hold: false }); // rule-7 analogue (§3.2)
     this.releasePatientHoldings(patient);
     this.setPatientStage(patient, { kind: 'leaving', reason: 'ama' });
     patient.lost = null; // exits clear lostness (M3-gate ruling)
@@ -1266,6 +1382,7 @@ export class World implements PathGrid {
   }
 
   dischargePatient(patient: Patient, totalBilled: number): void {
+    this.clearNeedBreak(patient, { hold: false }); // rule-7 analogue (§3.2)
     this.releasePatientHoldings(patient);
     this.setPatientStage(patient, { kind: 'leaving', reason: 'discharged' });
     patient.lost = null; // exits clear lostness (M3-gate ruling)
@@ -1365,6 +1482,7 @@ export class World implements PathGrid {
     updateSpawn(this);
     updateDecay(this);
     updateThoughts(this);
+    updatePatientNeeds(this); // side-trips BEFORE dispatch (plan §1.9 order)
     updateDispatcher(this);
     updateWayfinding(this);
     updateMovement(this);

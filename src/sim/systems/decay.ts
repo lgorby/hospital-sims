@@ -1,6 +1,12 @@
 import { BALANCE } from '../data/balance';
-import { healthDecayPerTick, patienceDecayPerTick, waitingQualityMultiplier } from '../formulas';
+import {
+  healthDecayPerTick,
+  meterDecayPerTick,
+  patienceDecayPerTick,
+  waitingQualityMultiplier,
+} from '../formulas';
 import type { Patient } from '../entities/patient';
+import { clearMatchingRestroomBreak } from './patientNeeds';
 import type { World } from '../world';
 
 /** Stages where patience drains and hitting 0 means walking out AMA (Flow rule 3). */
@@ -38,6 +44,33 @@ export function updateDecay(world: World): void {
       }
     }
 
+    // Need meters (amenities Stage 1, §3.1): flat per-game-hour rates, every
+    // pre-terminal stage — acuity does not change how badly you need a
+    // restroom. Thirst clamps at 0 (the unmet multiplier keeps stacking);
+    // bladder at 0 is an ACCIDENT: one-time patience hit, meter refills.
+    patient.thirst = Math.max(
+      0,
+      patient.thirst - meterDecayPerTick(BALANCE.needs.thirstPerGameHour),
+    );
+    patient.bladder -= meterDecayPerTick(BALANCE.needs.bladderPerGameHour);
+    if (patient.bladder <= 0) {
+      patient.bladder = BALANCE.stats.vitalsMax;
+      // Accident × in-flight break (pre-impl MINOR 8): a matching restroom
+      // claim is cleared with NO hold — the need no longer exists, and the
+      // claim must not pin the restroom's "Occupied" geometry gates.
+      clearMatchingRestroomBreak(world, patient);
+      // Accidents never mint a new fail state (design principle 3): the hit
+      // clamps at the floor in non-AMA-eligible stages (checkingIn/reserved);
+      // in AMA-eligible stages patience just drops and normal rules apply.
+      const floor = isAmaEligible(patient) ? 0 : BALANCE.needs.accidentPatienceFloor;
+      patient.patience = Math.max(floor, patient.patience - BALANCE.needs.accidentPatienceHit);
+      world.emitThought(patient, 'accident');
+    }
+
+    // While `using` a stall/machine, patience decay pauses entirely (relief
+    // is relief — §3.2; use is ≤3 game-minutes, no camping exploit).
+    if (patient.needBreak?.phase === 'using') continue;
+
     // Patience drains only while actually waiting IN PLACE — purposeful
     // walking is exempt (Flow rule 3). Lostness counts as waiting in ANY
     // stage, including `reserved` (rules 3/13): a lost patient going to 0
@@ -61,6 +94,23 @@ export function updateDecay(world: World): void {
       // (M3-gate ruling): a standing waiter in comfort decays at 1.5 × 0.75.
       if (world.hasComfortAura(patient.at)) {
         rate *= BALANCE.wayfinding.comfortAuraPatienceMultiplier;
+      }
+      // Unmet needs (§3.1): ×1.25 PER meter below threshold, multiplying into
+      // the stack above, unless the MATCHING break is actively relieving it.
+      // (The full using-pause already skipped this block for the user's own
+      // break; the guards keep the rule locally true regardless.)
+      const nb = patient.needBreak;
+      if (
+        patient.bladder < BALANCE.needs.seekThreshold &&
+        !(nb?.kind === 'restroom' && nb.phase === 'using')
+      ) {
+        rate *= BALANCE.needs.unmetPatienceMultiplier;
+      }
+      if (
+        patient.thirst < BALANCE.needs.seekThreshold &&
+        !(nb?.kind === 'vending' && nb.phase === 'using')
+      ) {
+        rate *= BALANCE.needs.unmetPatienceMultiplier;
       }
       patient.patience -= rate;
       if (patient.patience <= 0) {

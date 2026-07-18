@@ -21,13 +21,26 @@ export function appendDailyReportSections(card: HTMLElement, report: DayReport):
   modalRow(patients, 'Got lost', `${report.lostEpisodes}×`);
 
   const moneySection = modalSection(card, 'Money');
-  modalRow(moneySection, 'Treatment fees', money(report.revenue), 'good');
+  // "Patient fees", not "Treatment fees": revenue includes vending (below) —
+  // an all-vending day would otherwise read "Treatment fees $15, Treated 0"
+  // (live-drive review NIT 4).
+  modalRow(moneySection, 'Patient fees', money(report.revenue), 'good');
+  // Vending is a BREAKDOWN of revenue (both tallied at the same billFee choke
+  // point, amenities Stage 1) — informational, deliberately NOT a new net
+  // line: dayNet reads `revenue` alone, which already contains it. Rendered
+  // only when it exists, like the hiring/construction conditionals below.
+  if (report.vendingRevenue > 0) {
+    modalRow(moneySection, 'Vending', money(report.vendingRevenue), 'good');
+  }
   modalRow(moneySection, 'Payroll', money(-report.payroll), 'bad');
   if (report.hireFees > 0) modalRow(moneySection, 'Hiring', money(-report.hireFees), 'bad');
   if (report.construction > 0) {
     modalRow(moneySection, 'Construction', money(-report.construction), 'bad');
   }
-  if (report.sellIncome > 0) modalRow(moneySection, 'Room sales', money(report.sellIncome), 'good');
+  // Amenity sellbacks land in the same bucket (live-drive NIT 4).
+  if (report.sellIncome > 0) {
+    modalRow(moneySection, 'Sell-back income', money(report.sellIncome), 'good');
+  }
   const net = dayNet(report);
   modalRow(moneySection, 'Net', money(net), net >= 0 ? 'good' : 'bad');
   modalRow(moneySection, 'Cash on hand', money(report.cash));
