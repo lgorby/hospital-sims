@@ -7,6 +7,7 @@ import type { Room } from '../entities/room';
 import type { Patient } from '../entities/patient';
 import type { Reservation, Staff } from '../entities/staff';
 import { checkInCapacity, effectivePriority, treatmentDurationTicks } from '../formulas';
+import { computeBlockedNeeds } from '../needs';
 import { findPath } from '../path/astar';
 import { ORTHOGONAL_STEPS, samePoint } from '../types';
 import type { Walker, World } from '../world';
@@ -23,6 +24,21 @@ export function updateDispatcher(world: World): void {
   assignTriage(world);
   assignTreatment(world);
   promoteGatheredReservations(world);
+  emitUrgentNeedHints(world);
+}
+
+/**
+ * Flow rule 5, one source (HINTS_PLAN §2.2): toast every URGENT unmet need —
+ * something blocking a patient's progress RIGHT NOW. Upcoming (look-ahead)
+ * needs are panel-only, so day one isn't a toast burst duplicating the
+ * checklist. Replaces the former inline room:triage / role:nurse / cond:*
+ * hints (those keys are inert in legacy saves; the need:* keys fire once).
+ * MUST stay mutation-free apart from hintOnce (save-gate invariant, §2.1).
+ */
+function emitUrgentNeedHints(world: World): void {
+  for (const need of computeBlockedNeeds(world)) {
+    if (need.urgent) world.hintOnce(`need:${need.key}`, need.label);
+  }
 }
 
 function idleStaff(world: World, filter: (s: Staff) => boolean): Staff[] {
@@ -220,13 +236,7 @@ function assignTriage(world: World): void {
     (a, b) => (a.waitingSince ?? 0) - (b.waitingSince ?? 0),
   );
   if (waiting.length === 0) return;
-  // Flow rule 5: tell the player WHY nothing is happening — once.
-  if (world.roomsOfType('triage').length === 0) {
-    world.hintOnce('room:triage', 'Patients need triage — build a Triage Bay');
-  }
-  if (![...world.staff.values()].some((s) => s.role === 'nurse')) {
-    world.hintOnce('role:nurse', 'Nobody can run triage — hire a Nurse');
-  }
+  // Flow rule 5 hints moved to emitUrgentNeedHints (HINTS_PLAN §2.2).
   for (const patient of waiting) {
     const nurse = idleStaff(world, (s) => s.role === 'nurse')[0];
     if (!nurse) return;
@@ -247,21 +257,7 @@ function assignTreatment(world: World): void {
     const def = CONDITION_DEFS[patient.condition];
     const step = def.steps[patient.stepIndex];
     if (!step) continue;
-    // Flow rule 5: missing facility/staff hints, once per condition.
-    if (world.roomsOfType(step.room).length === 0) {
-      world.hintOnce(
-        `cond:${patient.condition}:room`,
-        `Nobody here can treat ${def.label} — build a ${ROOM_DEFS[step.room].label}`,
-      );
-    }
-    for (const role of step.roles) {
-      if (![...world.staff.values()].some((s) => s.role === role)) {
-        world.hintOnce(
-          `cond:${patient.condition}:${role}`,
-          `Treating ${def.label} needs a ${ROLE_DEFS[role].label}`,
-        );
-      }
-    }
+    // Flow rule 5 hints moved to emitUrgentNeedHints (HINTS_PLAN §2.2).
     const room = world
       .roomsOfType(step.room)
       .find((r) => !roomBusy(world, r.id) && canReachRoom(world, patient, r));

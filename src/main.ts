@@ -2,6 +2,7 @@ import { CommandQueue } from './commands';
 import { EventBus } from './events';
 import { GameLoop } from './loop';
 import { WorldRenderer } from './render/renderer';
+import { BlockedPanel } from './ui/blockedPanel';
 import { BottomBarDropdowns } from './ui/bottomBar';
 import { BuildMenu } from './ui/buildMenu';
 import { ChallengeController } from './ui/challengeController';
@@ -100,6 +101,7 @@ async function bootstrap(boot: Boot): Promise<void> {
     renderer.draw(alpha);
     hud.update();
     inspect.update();
+    blockedPanel.update();
   });
 
   const hud = new Hud(world, loop, renderer, events);
@@ -121,7 +123,14 @@ async function bootstrap(boot: Boot): Promise<void> {
   // commands, and the dev panel that would send them isn't even mounted, so a
   // stray backtick reveals nothing.
   if (boot.kind !== 'challenge') new DebugPanel(renderer, commands).mount(uiRoot);
-  new Checklist(world, events).mount(uiRoot);
+  // Left column (HINTS_PLAN §2.3): one fixed flex stack owns top-left, so the
+  // checklist and the blocked panel never overlap and re-flow on dismiss.
+  const leftStack = document.createElement('div');
+  leftStack.id = 'leftstack';
+  uiRoot.appendChild(leftStack);
+  new Checklist(world, events).mount(leftStack);
+  const blockedPanel = new BlockedPanel(world, events);
+  blockedPanel.mount(leftStack);
 
   // Midnight overlays (plan §6): the coordinator is the SINGLE `dayEnded`
   // owner — it opens the daily report OR (in a challenge, at goal.day) the

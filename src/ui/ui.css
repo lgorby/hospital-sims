@@ -705,11 +705,19 @@ body {
   outline-offset: -6px;
 }
 
-#checklist {
+/* The left column (HINTS_PLAN §2.3): ONE fixed stack owns top-left placement
+   for the checklist + blocked panel — panels flow, never overlap. */
+#leftstack {
   position: fixed;
   top: 48px;
   left: 12px;
   width: 210px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#checklist {
   padding: 10px 12px;
   border-radius: 6px;
   background: rgba(24, 28, 33, 0.9);
@@ -722,7 +730,8 @@ body {
   opacity: 0;
 }
 
-#checklist h3 {
+#checklist h3,
+#blocked h3 {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -737,6 +746,32 @@ body {
 .check-item.checked {
   color: #8fd694;
   text-decoration: line-through;
+}
+
+/* The "what's blocked" panel (HINTS_PLAN §2.3): urgent rows plain, upcoming
+   rows dimmed — same visual language as the checklist. */
+#blocked {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(24, 28, 33, 0.9);
+  color: #e8e6e0;
+  font-size: 13px;
+}
+
+#blocked.hidden {
+  display: none;
+}
+
+#blocked h3 {
+  color: #e0a800;
+}
+
+.blocked-item {
+  padding: 2px 0;
+}
+
+.blocked-item.soon {
+  color: #9fb0c5;
 }
 
 #readout {

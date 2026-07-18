@@ -1,6 +1,7 @@
 import type { EventBus } from '../events';
 import { ROLE_DEFS } from '../sim/data/roles';
 import { ROOM_DEFS } from '../sim/data/rooms';
+import { article } from '../sim/needs';
 import type { World } from '../sim/world';
 
 const DISMISS_DELAY_MS = 2500;
@@ -18,12 +19,13 @@ interface Item {
 export class Checklist {
   private panel!: HTMLElement;
   private list!: HTMLElement;
-  // Labels compose from the defs (§3.1, M4 review #5) — renames stay in sync.
+  // Labels compose from the defs (§3.1, M4 review #5) — renames stay in sync,
+  // and `article` (needs.ts) keeps a/an correct across renames too.
   private items = new Map<string, Item>([
-    ['triage', { label: `Build a ${ROOM_DEFS.triage.label}`, done: false }],
-    ['nurse', { label: `Hire a ${ROLE_DEFS.nurse.label}`, done: false }],
-    ['exam', { label: `Build an ${ROOM_DEFS.exam.label}`, done: false }],
-    ['doctor', { label: `Hire a ${ROLE_DEFS.doctor.label}`, done: false }],
+    ['triage', { label: `Build ${article(ROOM_DEFS.triage.label)} ${ROOM_DEFS.triage.label}`, done: false }],
+    ['nurse', { label: `Hire ${article(ROLE_DEFS.nurse.label)} ${ROLE_DEFS.nurse.label}`, done: false }],
+    ['exam', { label: `Build ${article(ROOM_DEFS.exam.label)} ${ROOM_DEFS.exam.label}`, done: false }],
+    ['doctor', { label: `Hire ${article(ROLE_DEFS.doctor.label)} ${ROLE_DEFS.doctor.label}`, done: false }],
     ['treat', { label: 'Treat your first patient', done: false }],
   ]);
 
