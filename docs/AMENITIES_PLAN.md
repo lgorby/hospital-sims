@@ -73,7 +73,8 @@ Worst-case stack (acuity 5, standing, both needs unmet): 12 × 1.5 × 1.25² ≈
 
 **Accidents never create a new AMA path** (review MINOR 11, principle 3):
 the −20 hit clamps patience at a floor of 1 in non-AMA-eligible stages
-(`reserved`/`checkingIn`/`queuedCheckIn` — see `isAmaEligible`, decay.ts);
+(`reserved`/`checkingIn` — see `isAmaEligible`, decay.ts; ERRATUM fixed by
+the pre-impl review: `queuedCheckIn` IS AMA-eligible today and stays so);
 in AMA-eligible stages patience just drops and the normal rules apply.
 
 Meters decay in `updateDecay` beside patience (one decay system). They decay
