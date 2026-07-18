@@ -1,6 +1,6 @@
 import { ROOM_DEFS, type RoomType } from './data/rooms';
 import { BALANCE } from './data/balance';
-import { priceOf } from './formulas';
+import { expandPrice, priceOf } from './formulas';
 import type { Door } from './entities/room';
 import {
   ORTHOGONAL_STEPS,
@@ -128,7 +128,24 @@ export function validateRoomBuild(
     }
   }
 
-  // Reachability BFS from the entrance, with the pending walls overlaid.
+  return reachabilityWithWalls(world, rect, door, isOpen, null);
+}
+
+/**
+ * The entrance-reachability BFS with a pending rect's walls overlaid — shared
+ * by NEW builds and Stage-B EXPANSIONS (one implementation, tech plan §2.4).
+ * Requires: the pending door's outside tile, every existing room's door, and
+ * every person's standing tile stay entrance-reachable; open-plan rects need
+ * ≥1 reachable footprint tile. `ignoreRoomId` (expansion): the room being
+ * grown — its CURRENT door check is superseded by the overlaid pending door.
+ */
+function reachabilityWithWalls(
+  world: World,
+  rect: Rect,
+  door: Door | null,
+  isOpen: boolean,
+  ignoreRoomId: number | null,
+): Validation {
   const pendingWalled = !isOpen;
   const stepAllowed = (from: GridPoint, to: GridPoint): boolean => {
     if (pendingWalled) {
@@ -171,6 +188,7 @@ export function validateRoomBuild(
     return fail('Atrium must be reachable from the entrance');
   }
   for (const room of world.rooms.values()) {
+    if (room.id === ignoreRoomId) continue;
     if (room.door && !visited.has(keyOf(room.door.outside))) {
       return fail(`Would cut off ${ROOM_DEFS[room.type].label} from the entrance`);
     }
@@ -185,6 +203,111 @@ export function validateRoomBuild(
     }
   }
   return OK;
+}
+
+/**
+ * Stage B (CAPACITY_PLAN §4.2): may this built room grow to `newRect`?
+ * Ratified rules: newRect must be a strict superset; the room must be
+ * RESERVATION-free, but seated/standing occupants inside the CURRENT rect are
+ * allowed (their tiles don't change — a full waiting room can expand); the
+ * DELTA tiles must be clear (no rooms/props/actors/entrance) and must not
+ * swallow any door's corridor tile — including the room's own (door-orphan:
+ * reject iff newRect contains door.outside). One validator for the UI ghost
+ * AND the sim command (SSOT rule 4).
+ */
+export function validateRoomExpand(
+  world: World,
+  roomId: number,
+  newRect: Rect,
+  free = false,
+): Validation {
+  const room = world.rooms.get(roomId);
+  if (!room) return fail('No such room');
+  const old = room.rect;
+  const superset =
+    newRect.col <= old.col &&
+    newRect.row <= old.row &&
+    newRect.col + newRect.cols >= old.col + old.cols &&
+    newRect.row + newRect.rows >= old.row + old.rows;
+  if (!superset) return fail('Expansion must grow the room, not move it');
+  if (newRect.cols * newRect.rows === old.cols * old.rows) {
+    return fail('Drag outside the room to grow it');
+  }
+  if (
+    newRect.col < 0 ||
+    newRect.row < 0 ||
+    newRect.col + newRect.cols > world.cols ||
+    newRect.row + newRect.rows > world.rows
+  ) {
+    return fail('Out of bounds');
+  }
+  for (const reservation of world.reservations.values()) {
+    if (reservation.roomId === roomId) return fail('Room is busy — wait for treatments to finish');
+  }
+  if (room.door && rectContains(newRect, room.door.outside)) {
+    return fail('Expansion would swallow the door — grow away from it');
+  }
+  if (!free && world.cash < expandPrice(room.type, old, newRect)) {
+    return fail('Not enough cash');
+  }
+
+  const entrance = BALANCE.map.entrance;
+  const isOpen = ROOM_DEFS[room.type].kind === 'open';
+  for (const tile of rectTiles(newRect)) {
+    if (rectContains(old, tile)) continue; // existing interior — occupants allowed
+    const t = world.tileAt(tile.col, tile.row)!;
+    if (t.roomId !== null) return fail('Overlaps another room');
+    if (!t.walkable) return fail('Blocked by an object');
+    if (samePoint(tile, entrance)) return fail('Cannot build over the entrance');
+    for (const person of [...world.patients.values(), ...world.staff.values()]) {
+      if (samePoint(person.at, tile) || (person.next && samePoint(person.next, tile))) {
+        return fail('Someone is standing there');
+      }
+    }
+    if (!isOpen) {
+      for (const other of world.rooms.values()) {
+        if (other.id !== roomId && other.door && samePoint(other.door.outside, tile)) {
+          return fail(`Blocks the door of ${ROOM_DEFS[other.type].label}`);
+        }
+      }
+    }
+  }
+
+  // POST-expansion interior connectivity (Stage B review MAJOR 2): the outer
+  // BFS runs against the CURRENT grid where the old boundary walls are still
+  // live, so it can't see that a delta tile may only connect to the door
+  // through the old interior — which props can seal (an ultrasound's bed fills
+  // its whole top row; growing north creates a pocket the dispatcher would
+  // anchor into, grinding reservations forever). Simulate the POST state:
+  // within newRect there are no interior walls, so a plain walkable-tile BFS
+  // from door.inside must reach EVERY walkable tile of the grown room.
+  if (!isOpen && room.door) {
+    const keyOf = (p: GridPoint): number => p.col * world.rows + p.row;
+    const inside = room.door.inside;
+    const seen = new Set<number>([keyOf(inside)]);
+    const queue: GridPoint[] = [inside];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      for (const step of ORTHOGONAL_STEPS) {
+        const next = { col: current.col + step.col, row: current.row + step.row };
+        if (!rectContains(newRect, next)) continue;
+        const k = keyOf(next);
+        if (seen.has(k)) continue;
+        // Delta tiles are corridor today (validated walkable above); old
+        // tiles keep their prop walkability — both read straight off the grid.
+        if (!world.tileAt(next.col, next.row)!.walkable) continue;
+        seen.add(k);
+        queue.push(next);
+      }
+    }
+    for (const tile of rectTiles(newRect)) {
+      if (world.tileAt(tile.col, tile.row)!.walkable && !seen.has(keyOf(tile))) {
+        return fail('Expansion would create space unreachable from the door');
+      }
+    }
+  }
+
+  return reachabilityWithWalls(world, newRect, room.door, isOpen, roomId);
 }
 
 /** Sell validation: unoccupied and unreserved (Flow rule 9). */

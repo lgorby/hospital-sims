@@ -158,6 +158,15 @@ export function priceOf(roomType: RoomType, rect: Rect): number {
 }
 
 /**
+ * Stage B (CAPACITY_PLAN §4): the cost of growing a built room — the SAME
+ * `priceOf` curve, so "build big" and "build small, grow later" cost
+ * identically (no arbitrage between the paths, by construction).
+ */
+export function expandPrice(roomType: RoomType, oldRect: Rect, newRect: Rect): number {
+  return priceOf(roomType, newRect) - priceOf(roomType, oldRect);
+}
+
+/**
  * GDD §5 sell-back refund (SSOT audit #2): the sim's payout AND the UI's
  * button label. Rect-aware since Stage 0 (CAPACITY_PLAN §4.1): the refund
  * derives from what the SAME rect would cost today — no amount-paid

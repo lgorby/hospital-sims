@@ -35,6 +35,8 @@ export class InspectPanel {
   private panel!: HTMLElement;
   private body!: HTMLElement;
   private actionButton!: HTMLButtonElement;
+  /** Stage B: 'Expand' on room selections (above the Sell action). */
+  private expandButton!: HTMLButtonElement;
   private shownKey = '';
 
   constructor(
@@ -62,11 +64,14 @@ export class InspectPanel {
     header.append(title, close);
 
     this.body = document.createElement('div');
+    this.expandButton = document.createElement('button');
+    this.expandButton.className = 'inspect-action';
+    this.expandButton.setAttribute('data-ui', '');
     this.actionButton = document.createElement('button');
     this.actionButton.className = 'inspect-action';
     this.actionButton.setAttribute('data-ui', '');
 
-    this.panel.append(header, this.body, this.actionButton);
+    this.panel.append(header, this.body, this.expandButton, this.actionButton);
     parent.appendChild(this.panel);
   }
 
@@ -116,6 +121,22 @@ export class InspectPanel {
       );
     } else {
       fresh.style.display = 'none';
+    }
+    // Stage B: the Expand gesture entry point (CAPACITY_PLAN §4.2) — rebuilt
+    // fresh like the action button so listeners never stack across selections.
+    const freshExpand = document.createElement('button');
+    freshExpand.className = 'inspect-action';
+    freshExpand.setAttribute('data-ui', '');
+    this.expandButton.replaceWith(freshExpand);
+    this.expandButton = freshExpand;
+    if (selection.kind === 'room') {
+      freshExpand.textContent = 'Expand';
+      freshExpand.addEventListener('click', () => {
+        this.renderer.setMode({ kind: 'expand', roomId: selection.id });
+        this.renderer.selected = null; // hand the bottom-left back to the map
+      });
+    } else {
+      freshExpand.style.display = 'none';
     }
   }
 

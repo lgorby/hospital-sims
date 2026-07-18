@@ -26,6 +26,20 @@ export function minRectAt(type: RoomType, tile: GridPoint): Rect {
  *
  * The anchor-side corner stays fixed; the rect always contains the cursor.
  */
+/**
+ * Stage B expand preview: the bounding box of the existing room and the
+ * cursor — a strict SUPERSET that grows toward the cursor's corner. Cursor
+ * inside the room returns the room unchanged (nothing to buy). Pure and
+ * tested like growRect.
+ */
+export function growExpandRect(oldRect: Rect, cursor: GridPoint): Rect {
+  const col = Math.min(oldRect.col, cursor.col);
+  const row = Math.min(oldRect.row, cursor.row);
+  const east = Math.max(oldRect.col + oldRect.cols - 1, cursor.col);
+  const south = Math.max(oldRect.row + oldRect.rows - 1, cursor.row);
+  return { col, row, cols: east - col + 1, rows: south - row + 1 };
+}
+
 export function growRect(type: RoomType, anchor: GridPoint, cursor: GridPoint): Rect {
   const def = ROOM_DEFS[type];
   const spanCols = Math.abs(cursor.col - anchor.col) + 1;

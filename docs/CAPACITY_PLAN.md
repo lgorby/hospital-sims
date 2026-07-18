@@ -1,9 +1,18 @@
 # Room capacity & growth — design scoping (the "bigger rooms do more" epic)
 
-**Status: v2 RATIFIED (2026-07-18) — adversarial design review round 1 folded
-in (5 major, 6 minor, 2 nit); all five §8 owner decisions ratified same day
-(recommended options across the board — see §8 markers). NOT yet implemented;
-next step = the Stage-0 implementation plan + pre-impl review (§7).** Owner ask: "as
+**Status: IMPLEMENTED — ALL THREE STAGES SHIPPED (2026-07-18).** Stage 0
+(size-based pricing), Stage A (multi-slot capacity), Stage B (expand tool) —
+each through the full milestone workflow with its own adversarial review
+(Stage 0: 1 MAJOR hint-clobbering; Stage A: 0 MAJOR / 4 MINOR; Stage B: 2
+probe-confirmed MAJORs — prop-on-person entombment and door-unreachable
+pockets — both fixed with regressions of record). Deltas from this plan:
+open-plan rooms ARE expandable (the aura signature gained the rect, so the
+exclusion fallback wasn't needed); the expand gesture is hover-preview +
+click-to-buy (no drag); `tryPlaceStripAt` now refuses tiles under any
+person's feet (load-bearing for expansion; byte-neutral for builds). Known
+symmetric quirk (review MINOR, deliberately unfixed in BOTH paths): a
+walker whose TARGET tile is swallowed by a new footprint keeps it and
+re-paths through the door. v2 ratified design below. Owner ask: "as
 more patients come, the ER may need to get larger to handle more patients and
 doctors at once with more beds — and not just the ER: the waiting room and
 other areas too." Owner follow-up ruling: **size affects cost** ("the

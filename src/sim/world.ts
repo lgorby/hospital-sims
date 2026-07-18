@@ -1,6 +1,6 @@
 import type { CommandQueue, Command } from '../commands';
 import type { EventBus } from '../events';
-import { doorFromOutsideTile, validateRoomBuild, validateRoomSell } from './build';
+import { doorFromOutsideTile, validateRoomBuild, validateRoomExpand, validateRoomSell } from './build';
 import { GameClock, gameMinutesToTicks, TICKS_PER_DAY, ticksToGameMinutes } from './clock';
 import { emptyDayTally, type DayReport, type DayTally } from './dailyStats';
 import { BALANCE } from './data/balance';
@@ -16,6 +16,7 @@ import {
   candidateSalary,
   checkInCapacity,
   dischargeReputationGain,
+  expandPrice,
   priceOf,
   propTargetCount,
   roomQuality,
@@ -320,11 +321,17 @@ export class World implements PathGrid {
   slotOrigins(room: Room): GridPoint[] {
     const cap = ROOM_DEFS[room.type].capacity;
     if (cap.kind !== 'perProp') return [];
-    const stripLen = PROP_STYLE[cap.prop].tiles;
+    return this.stripOrigins(room.rect, cap.prop);
+  }
+
+  /** Strip origins of ANY prop id within a rect (row-major consumption) —
+   *  slot derivation and Stage B's additive re-densify both count with this. */
+  private stripOrigins(rect: Rect, prop: PropId): GridPoint[] {
+    const stripLen = PROP_STYLE[prop].tiles;
     const origins: GridPoint[] = [];
-    for (let row = room.rect.row; row < room.rect.row + room.rect.rows; row++) {
-      for (let col = room.rect.col; col < room.rect.col + room.rect.cols; col++) {
-        if (this.tileAt(col, row)!.object !== cap.prop) continue;
+    for (let row = rect.row; row < rect.row + rect.rows; row++) {
+      for (let col = rect.col; col < rect.col + rect.cols; col++) {
+        if (this.tileAt(col, row)!.object !== prop) continue;
         origins.push({ col, row });
         col += stripLen - 1; // consume the rest of this strip
       }
@@ -447,8 +454,15 @@ export class World implements PathGrid {
     if (this.clock.tick === this.auraCheckedTick) return;
     this.auraCheckedTick = this.clock.tick;
     const atriums = this.roomsOfType('atrium');
+    // The RECT is part of the signature (Stage B, design-review MAJOR 5):
+    // rooms can now GROW post-build — an expanded atrium must rebuild its
+    // coverage, not keep the old footprint's aura.
     const signature = atriums
-      .map((room) => `${room.id}:${this.atriumStaffed(room) ? 1 : 0}`)
+      .map(
+        (room) =>
+          `${room.id}:${this.atriumStaffed(room) ? 1 : 0}:` +
+          `${room.rect.col},${room.rect.row},${room.rect.cols},${room.rect.rows}`,
+      )
       .join('|');
     if (signature === this.auraSignature) return;
     this.auraSignature = signature;
@@ -516,6 +530,9 @@ export class World implements PathGrid {
     switch (command.type) {
       case 'buildRoom':
         this.buildRoom(command.roomType, command.rect, command.doorOutside);
+        return;
+      case 'expandRoom':
+        this.expandRoom(command.roomId, command.rect);
         return;
       case 'sellRoom':
         this.sellRoom(command.roomId);
@@ -616,6 +633,42 @@ export class World implements PathGrid {
   }
 
   /**
+   * Stage B (CAPACITY_PLAN §4.2): grow a built room to a validated superset
+   * rect. ADDITIVE re-densify: existing prop tiles are preserved verbatim
+   * (byte-identity of the untouched layout); only the density DELTA places new
+   * strips, wherever the deterministic layout finds room in the grown rect.
+   * Charges `expandPrice` (the Stage-0 curve). Emits `roomChanged`.
+   */
+  expandRoom(roomId: number, rect: Rect, free = false): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    const check = validateRoomExpand(this, roomId, rect, free);
+    if (!check.ok) {
+      this.events.emit('buildRejected', { reason: check.reason });
+      return;
+    }
+    const price = expandPrice(room.type, room.rect, rect);
+    room.rect = rect;
+    for (const tile of rectTiles(rect)) {
+      this.tileAt(tile.col, tile.row)!.roomId = roomId; // delta tiles join; old tiles no-op
+    }
+    // Additive density top-up: place only what the grown footprint newly earns.
+    for (const spec of ROOM_DEFS[room.type].props) {
+      const target = propTargetCount(spec.density, rect);
+      const have = this.stripOrigins(rect, spec.id).length;
+      for (let i = have; i < target; i++) this.placePropStrip(room, spec);
+    }
+    room.quality = roomQuality(room.type, rect);
+    if (!free) {
+      this.cash -= price;
+      this.today.construction += price;
+      this.events.emit('cashChanged', { cash: this.cash });
+    }
+    this.events.emit('roomChanged', { roomId });
+    this.recomputePaths();
+  }
+
+  /**
    * Place one horizontal prop strip on the first legal run of tiles.
    * Props must never strand part of the room (M1 review M-8): the interior
    * must stay door-connected after placement, else revert and try the next
@@ -658,6 +711,14 @@ export class World implements PathGrid {
       const tile = this.tileAt(p.col, p.row)!;
       if (tile.object !== null || !tile.walkable || (room.door && samePoint(room.door.inside, p))) {
         return false;
+      }
+      // Never place onto a person's tile (Stage B review MAJOR 1): expansion
+      // top-up runs with occupants legally inside the old footprint — a
+      // blocking prop under a walker entombs them (A* rejects unwalkable
+      // starts) and wedges the room forever. Byte-neutral for NEW builds:
+      // their validation already guarantees an actor-free footprint.
+      for (const person of [...this.patients.values(), ...this.staff.values()]) {
+        if (samePoint(person.at, p) || (person.next && samePoint(person.next, p))) return false;
       }
       strip.push(tile);
     }

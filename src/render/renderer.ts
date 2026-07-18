@@ -2,7 +2,7 @@ import { Application, Container, Graphics, Sprite, Text, type Texture } from 'pi
 import type { CommandQueue } from '../commands';
 import { isTextEditable } from '../ui/dom';
 import type { EventBus } from '../events';
-import { doorFromOutsideTile, validateRoomBuild, validateRoomRect } from '../sim/build';
+import { doorFromOutsideTile, validateRoomBuild, validateRoomExpand, validateRoomRect } from '../sim/build';
 import { BALANCE } from '../sim/data/balance';
 import { ROOM_DEFS, type RoomType } from '../sim/data/rooms';
 import type { WallEdge } from '../sim/entities/room';
@@ -12,10 +12,10 @@ import { auraCoversTile, moodOf } from '../sim/formulas';
 import { PATIENT_TILES_PER_TICK, STAFF_TILES_PER_TICK } from '../sim/systems/movement';
 import { samePoint, type GridPoint, type Rect } from '../sim/types';
 import type { Walker, World } from '../sim/world';
-import { priceOf } from '../sim/formulas';
+import { expandPrice, priceOf } from '../sim/formulas';
 import { HintLine } from './hintLine';
 import { depthKey, TILE_H, TILE_W, toScreen, toTile, type TilePoint } from './iso';
-import { growRect, minRectAt } from './placement';
+import { growExpandRect, growRect, minRectAt } from './placement';
 import {
   CHARACTER_FRAMES,
   characterKey,
@@ -65,6 +65,8 @@ const BUBBLE_RISE = 46;
 export type UiMode =
   | { kind: 'idle' }
   | { kind: 'build'; type: RoomType }
+  /** Stage B: grow a built room — hover previews the superset, click buys. */
+  | { kind: 'expand'; roomId: number }
   | { kind: 'sell' };
 
 /** Idle-click selection: patient beats staff beats room (M3 inspection panels). */
@@ -112,6 +114,8 @@ export class WorldRenderer {
   private lastDrawTime: number | null = null;
   private build: BuildState | null = null;
   private sellMode = false;
+  /** Stage B expand mode: hover previews the superset rect; click buys. */
+  private expand: { roomId: number; rect: Rect | null } | null = null;
 
   /** Current hovered tile, if in bounds — HUD readout polls this. */
   hoveredTile: TilePoint | null = null;
@@ -169,6 +173,12 @@ export class WorldRenderer {
       this.setMarker(col, row, present),
     );
     this.events.on('roomBuilt', ({ roomId }) => this.drawRoom(roomId));
+    // Stage B: an expanded room re-renders whole (floors/walls/props) — still
+    // per-room-change, never per-frame (HANDOFF render invariant).
+    this.events.on('roomChanged', ({ roomId }) => {
+      this.removeRoom(roomId); // same teardown as a sale (review NIT: no dup)
+      this.drawRoom(roomId);
+    });
     this.events.on('roomSold', ({ roomId }) => {
       this.removeRoom(roomId);
       if (this.selected?.kind === 'room' && this.selected.id === roomId) this.selected = null;
@@ -182,6 +192,7 @@ export class WorldRenderer {
 
   get mode(): UiMode {
     if (this.build) return { kind: 'build', type: this.build.type };
+    if (this.expand) return { kind: 'expand', roomId: this.expand.roomId };
     if (this.sellMode) return { kind: 'sell' };
     return { kind: 'idle' };
   }
@@ -189,11 +200,23 @@ export class WorldRenderer {
   setMode(mode: UiMode): void {
     this.build = null;
     this.sellMode = false;
+    this.expand = null;
     if (mode.kind === 'build') {
       this.build = { type: mode.type, phase: 'drag', anchor: null, rect: null };
       this.hintLine.instruction(
         `Click to place the ${ROOM_DEFS[mode.type].label} — hold and drag to grow it`,
       );
+    } else if (mode.kind === 'expand') {
+      const room = this.world.rooms.get(mode.roomId);
+      if (room) {
+        this.expand = { roomId: mode.roomId, rect: null };
+        this.hintLine.instruction(
+          `Move outside the ${ROOM_DEFS[room.type].label} to grow it toward the cursor — click to buy`,
+        );
+      }
+      // Room sold out from under the button: fall through as idle — the
+      // onModeChanged notify below still fires (review NIT: an early return
+      // skipped it, desyncing the toolbar mirror).
     } else if (mode.kind === 'sell') {
       this.sellMode = true;
       this.hintLine.instruction(
@@ -208,7 +231,7 @@ export class WorldRenderer {
   private cancelMode(): void {
     // Esc peels one layer at a time: build/sell mode first, then the selection
     // (which closes the inspect panel) — RCT muscle memory (M4 polish).
-    if (this.build || this.sellMode) this.setMode({ kind: 'idle' });
+    if (this.build || this.sellMode || this.expand) this.setMode({ kind: 'idle' });
     else this.selected = null;
   }
 
@@ -544,6 +567,26 @@ export class WorldRenderer {
   // ------------------------------------------------------------------- input
 
   private handleLeftClick(tile: TilePoint): void {
+    if (this.expand) {
+      const room = this.world.rooms.get(this.expand.roomId);
+      const rect = room ? growExpandRect(room.rect, tile) : null;
+      if (!room || !rect) {
+        this.setMode({ kind: 'idle' });
+        return;
+      }
+      if (rect.cols * rect.rows === room.rect.cols * room.rect.rows) {
+        this.hintLine.error('Move outside the room, then click to grow it there');
+        return;
+      }
+      const check = validateRoomExpand(this.world, room.id, rect);
+      if (!check.ok) {
+        this.hintLine.error(check.reason);
+        return;
+      }
+      this.commands.push({ type: 'expandRoom', roomId: room.id, rect });
+      this.setMode({ kind: 'idle' });
+      return;
+    }
     if (this.build) {
       if (this.build.phase === 'drag') {
         // Anchor at the default size (hybrid placement): a plain click stamps
@@ -731,20 +774,27 @@ export class WorldRenderer {
     // draw() hot path must not gain per-frame work; mirrors lastOverlayKey).
     // The sim tick IS an input: validity reads live actors/cash, which change
     // per tick — so the color stays honest at ≤10 revalidations/s, not 60fps.
-    const rect = this.build?.rect ?? null;
-    const key = !this.build
-      ? ''
-      : `${this.build.type}:${this.build.phase}:${this.world.clock.tick}:` +
-        `${rect ? `${rect.col},${rect.row},${rect.cols},${rect.rows}` : 'none'}:` +
-        `${this.build.phase === 'door' && this.hoveredTile ? `${this.hoveredTile.col},${this.hoveredTile.row}` : '-'}`;
+    const build = this.build;
+    const expand = this.expand;
+    const rect = build?.rect ?? expand?.rect ?? null;
+    const key =
+      !build && !expand
+        ? ''
+        : `${build ? `${build.type}:${build.phase}` : `expand:${expand!.roomId}`}:` +
+          `${this.world.clock.tick}:` +
+          `${rect ? `${rect.col},${rect.row},${rect.cols},${rect.rows}` : 'none'}:` +
+          `${build?.phase === 'door' && this.hoveredTile ? `${this.hoveredTile.col},${this.hoveredTile.row}` : '-'}`;
     if (key === this.lastGhostKey) return;
     this.lastGhostKey = key;
 
     this.ghost.clear();
-    if (!this.build) return;
     if (!rect) return;
 
-    const rectValid = validateRoomRect(this.world, this.build.type, rect).ok;
+    // Validity: a new build validates the rect; an expansion validates the
+    // superset against the built room (same validators the click will use).
+    const rectValid = build
+      ? validateRoomRect(this.world, build.type, rect).ok
+      : validateRoomExpand(this.world, expand!.roomId, rect).ok;
     const fill = rectValid ? 0x7fd77f : 0xe07f7f;
     for (let col = rect.col; col < rect.col + rect.cols; col++) {
       for (let row = rect.row; row < rect.row + rect.rows; row++) {
@@ -755,10 +805,10 @@ export class WorldRenderer {
       }
     }
 
-    if (this.build.phase === 'door' && this.hoveredTile) {
+    if (build?.phase === 'door' && this.hoveredTile) {
       const door = doorFromOutsideTile(rect, this.hoveredTile);
       if (door) {
-        const valid = validateRoomBuild(this.world, this.build.type, rect, door).ok;
+        const valid = validateRoomBuild(this.world, build.type, rect, door).ok;
         const { x, y } = toScreen(door.outside.col, door.outside.row);
         this.ghost
           .poly([x, y, x + TILE_W / 2, y + TILE_H / 2, x, y + TILE_H, x - TILE_W / 2, y + TILE_H / 2])
@@ -805,7 +855,7 @@ export class WorldRenderer {
       // Hover affordance (M4 polish): crosshair while placing/selling,
       // pointer over anything clickable, default otherwise.
       const cursor =
-        this.build || this.sellMode
+        this.build || this.sellMode || this.expand
           ? 'crosshair'
           : this.hoveredTile && this.pickAt(this.hoveredTile) !== null
             ? 'pointer'
@@ -834,6 +884,38 @@ export class WorldRenderer {
         // same size, and an error hold must release when the ghost moves.
         `${rect.col},${rect.row},${rect.cols},${rect.rows}`,
       );
+    }
+    // Expand mode (Stage B): the preview is the bounding box of the room and
+    // the cursor — a strict superset growing toward the hand. Cursor inside
+    // the room = nothing to buy (preview collapses to the current rect).
+    if (this.expand) {
+      const room = this.world.rooms.get(this.expand.roomId);
+      if (!room) {
+        this.setMode({ kind: 'idle' }); // sold/vanished mid-mode
+      } else {
+        const preview = this.hoveredTile ? growExpandRect(room.rect, this.hoveredTile) : null;
+        // No ghost while the cursor is INSIDE the room (nothing to buy) — a
+        // red wash over the whole room read as "broken" in the live drive.
+        const grows =
+          preview !== null && preview.cols * preview.rows > room.rect.cols * room.rect.rows;
+        const hadPreview = this.expand.rect !== null;
+        this.expand.rect = grows ? preview : null;
+        if (grows) {
+          const rect = preview;
+          const price = expandPrice(room.type, room.rect, rect);
+          this.hintLine.price(
+            `${ROOM_DEFS[room.type].label} ${room.rect.cols}×${room.rect.rows} → ` +
+              `${rect.cols}×${rect.rows} — +$${price.toLocaleString('en-US')} · click to expand`,
+            `expand:${rect.col},${rect.row},${rect.cols},${rect.rows}`,
+          );
+        } else if (hadPreview) {
+          // Cursor re-entered the room: the last "+$X" would linger while
+          // nothing is previewed (review NIT) — restore the instruction once.
+          this.hintLine.instruction(
+            `Move outside the ${ROOM_DEFS[room.type].label} to grow it toward the cursor — click to buy`,
+          );
+        }
+      }
     }
 
     this.updateActors(alpha);

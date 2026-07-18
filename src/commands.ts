@@ -9,6 +9,7 @@ import type { GridPoint, Rect } from './sim/types';
  */
 export type Command =
   | { type: 'buildRoom'; roomType: RoomType; rect: Rect; doorOutside: GridPoint | null }
+  | { type: 'expandRoom'; roomId: number; rect: Rect }
   | { type: 'sellRoom'; roomId: number }
   | { type: 'hireStaff'; candidateId: number }
   | { type: 'fireStaff'; staffId: number }

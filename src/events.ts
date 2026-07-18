@@ -38,6 +38,8 @@ export interface EventMap {
     context: ChallengeContext;
   };
   roomBuilt: { roomId: number };
+  /** Stage B: a built room's footprint grew (expand tool) — re-render it. */
+  roomChanged: { roomId: number };
   roomSold: { roomId: number };
   /** A build/sell command failed sim-side validation (UI shows the reason). */
   buildRejected: { reason: string };

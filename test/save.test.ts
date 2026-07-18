@@ -34,6 +34,7 @@ const EVENT_NAMES: Record<EventName, true> = {
   dayEnded: true,
   gameOver: true,
   roomBuilt: true,
+  roomChanged: true,
   roomSold: true,
   buildRejected: true,
   patientSpawned: true,
