@@ -4,6 +4,7 @@ import { EventBus, type EventName } from '../src/events';
 import { TICKS_PER_DAY } from '../src/sim/clock';
 import { BALANCE } from '../src/sim/data/balance';
 import { ROLE_IDS } from '../src/sim/data/roles';
+import { treatmentDurationTicks } from '../src/sim/formulas';
 import { setupNewGame } from '../src/sim/newGame';
 import {
   SAVE_VERSION,
@@ -88,6 +89,7 @@ function pipelineRich(world: World): boolean {
   const reservations = [...world.reservations.values()];
   const overflow = patients.filter((p) => p.stage.kind === 'atEntrance' && p.lost === null);
   const breaks = patients.flatMap((p) => (p.needBreak === null ? [] : [p.needBreak]));
+  const jobs = [...world.jobs.values()];
   return (
     patients.some((p) => p.lost !== null) &&
     overflow.length >= 3 && // 2 get debugForce'd to leaving/dead; ≥1 must remain
@@ -107,7 +109,15 @@ function pipelineRich(world: World): boolean {
     breaks.some((b) => b.phase === 'walking') &&
     breaks.some((b) => b.phase === 'using') &&
     breaks.some((b) => b.kind === 'restroom') &&
-    breaks.some((b) => b.kind === 'vending')
+    breaks.some((b) => b.kind === 'vending') &&
+    // v5 (amenities Stage 2, §S2.4 pins): the queued+assigned+working job
+    // conjunction (2 EVS + a backlog makes it reachable), a filling can,
+    // and a nonzero mess tally — all live at the SAME save tick.
+    jobs.some((j) => j.phase === 'queued') &&
+    jobs.some((j) => j.phase === 'assigned') &&
+    jobs.some((j) => j.phase === 'working') &&
+    (world.amenityAt(26, 36)?.fill ?? 0) > 0 &&
+    world.today.messTicks > 0
   );
 }
 
@@ -168,6 +178,21 @@ function assertRichPremises(world: World): void {
     patients.some((p) => p.needBreakHoldUntil > world.clock.tick),
     'a pending needBreakHoldUntil',
   ).toBe(true);
+  // v5 premises (amenities Stage 2, §S2.4 — asserted, never assumed):
+  const jobs = [...world.jobs.values()];
+  const messKey = (t: { col: number; row: number }): string => `${t.col},${t.row}`;
+  expect(
+    jobs.some((j) => j.phase === 'queued' && world.messes.has(messKey(j.tile))),
+    'a live mess with a queued job',
+  ).toBe(true);
+  expect(jobs.some((j) => j.phase === 'assigned'), 'an assigned job (worker mid-walk)').toBe(true);
+  expect(jobs.some((j) => j.phase === 'working'), 'a working job mid-timer').toBe(true);
+  expect(
+    jobs.some((j) => j.phase === 'queued' && j.holdUntil > world.clock.tick),
+    'a queued job under a retry hold (the Stage-1 hold-pin precedent)',
+  ).toBe(true);
+  expect(world.amenityAt(26, 36)!.fill, 'a can mid-fill (fill > 0)').toBeGreaterThan(0);
+  expect(world.today.messTicks, 'a nonzero mess tally at the save tick').toBeGreaterThan(0);
 }
 
 /**
@@ -189,6 +214,10 @@ function bootScenario(): { world: World; events: EventBus } {
   world.addStaffMember('nurse', 3, 150); // third: keeps dialysis dual-booking likely
   world.addStaffMember('doctor', 3, 300);
   world.addStaffMember('doctor', 3, 300);
+  // v5 (amenities Stage 2, §S2.4 sketch): TWO EVS — the queued+assigned+
+  // working job conjunction needs two workers busy plus a backlog.
+  world.addStaffMember('evs', 3, 90);
+  world.addStaffMember('evs', 3, 90);
   queue.push({
     type: 'buildRoom',
     roomType: 'triage',
@@ -277,6 +306,25 @@ function bootScenario(): { world: World; events: EventBus } {
       if (free[0]) free[0].bladder = BALANCE.needs.seekThreshold - 10;
       if (free[1]) free[1].thirst = BALANCE.needs.seekThreshold - 10;
       if (free[2]) free[2].thirst = BALANCE.needs.seekThreshold - 10;
+      // v5 (§S2.4 sketch): keep a few waiters sub-critical (health pokes —
+      // the established field-poke pattern, border-valid, self-consistent)
+      // so vomits occur ORGANICALLY and the 2 EVS stay busy enough for the
+      // queued+assigned+working conjunction to show up at one tick.
+      // BOUNDED: unthrottled pokes drowned the floor in standing messes
+      // (mess-proximity patience + low health gutted the care pipeline and
+      // the dialysis double-booking never recurred). kidneyFailure waiters
+      // are spared — they must survive to co-occupy dialysis (slot > 0).
+      if (world.messes.size < 8) {
+        const pokeable = [...world.patients.values()].filter(
+          (p) =>
+            (p.stage.kind === 'waiting' ||
+              p.stage.kind === 'waitingTriage' ||
+              p.stage.kind === 'queuedCheckIn') &&
+            p.condition !== 'kidneyFailure' &&
+            p.health >= BALANCE.mood.criticalHealthBelow,
+        );
+        for (const p of pokeable.slice(0, 2)) p.health = BALANCE.mood.criticalHealthBelow - 10;
+      }
     }
     world.tick();
     guard += 1;
@@ -300,6 +348,11 @@ function bootScenario(): { world: World; events: EventBus } {
   held.dispatchHoldUntil = world.clock.tick + 500;
   // A pending need-break retry hold (v4 §3.5 pin — same poke pattern).
   held.needBreakHoldUntil = world.clock.tick + 500;
+  // A queued job under a retry hold (v5 §S2.4 pin — the Stage-1 hold-pin
+  // precedent: organic probe failures are rare in an open floor, so the
+  // hold is poked at the save tick and must round-trip + be honored).
+  const heldJob = [...world.jobs.values()].find((j) => j.phase === 'queued')!;
+  heldJob.holdUntil = world.clock.tick + 500;
 
   assertRichPremises(world);
   return { world, events };
@@ -595,9 +648,21 @@ describe('load border referential integrity (review MAJOR 1)', () => {
 
 // ------------------------------------------------- v4 (amenities Stage 1)
 
-/** A REAL v3 payload: the current shape minus everything v4 added. */
-function v3Fixture(): Record<string, unknown> {
+/** A REAL v4 payload: the current shape minus everything v5 added (messes,
+ *  jobs, the messTicks tally key, and the evs candidate pool). */
+function v4Fixture(): Record<string, unknown> {
   const save = JSON.parse(smallSave()) as Record<string, unknown>;
+  save.saveVersion = 4;
+  delete save.messes;
+  delete save.jobs;
+  delete (save.today as Record<string, unknown>).messTicks;
+  save.candidates = (save.candidates as { role: string }[]).filter((c) => c.role !== 'evs');
+  return save;
+}
+
+/** A REAL v3 payload: the v4 fixture minus everything v4 added. */
+function v3Fixture(): Record<string, unknown> {
+  const save = v4Fixture();
   save.saveVersion = 3;
   delete save.amenities;
   delete (save.today as Record<string, unknown>).vendingRevenue;
@@ -658,12 +723,218 @@ describe('v3 → v4 migration (amenities Stage 1, review MAJOR 3)', () => {
     expect(resaved.today.vendingRevenue).toBe(0);
   });
 
-  it('a v4 save with amenities round-trips byte-identically', () => {
+  it('a current-version save with amenities round-trips byte-identically', () => {
+    // Stage-2 note (§S2.6b): this fixture is minted by CURRENT code, so it is
+    // a v5 save — same-version byte identity holds because topUpCandidates is
+    // a strict no-op on a complete pool. The former "v4 byte-identity" role
+    // is now the v4 fixture-LOAD test below (top-up mints evs candidates on
+    // v≤4 loads, deliberately diverging the migrated world).
     const loaded = loadWorld(new EventBus(), amenitySave());
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
     expect(loaded.world.amenities.size).toBe(1); // premise: the machine landed
     expect(saveToString(loaded.world)).toBe(amenitySave());
+  });
+});
+
+describe('v4 → v5 migration (amenities Stage 2, §S2.4)', () => {
+  it('a genuine v4 fixture LOADS: empty mess/job maps, messTicks 0, evs pool topped up', () => {
+    // The former v4 byte-identity test converts to this fixture-LOAD test
+    // (§S2.6b): topUpCandidates mints evs candidates on every v≤4 load, so
+    // a v4 save can no longer round-trip byte-identically BY DESIGN.
+    const fixture = v4Fixture();
+    expect(
+      (fixture.candidates as unknown[]).length,
+      'premise: the fixture genuinely lacks evs candidates',
+    ).toBe((ROLE_IDS.length - 1) * BALANCE.hiring.candidatesPerRole);
+    const result = loadOf(fixture);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.world.messes.size).toBe(0);
+    expect(result.world.jobs.size).toBe(0);
+    expect(result.world.today.messTicks).toBe(0);
+    const evs = result.world.candidates.filter((c) => c.role === 'evs');
+    expect(evs.length, 'evs candidates topped up on load (v1→v2 precedent)').toBe(
+      BALANCE.hiring.candidatesPerRole,
+    );
+    // A re-save stamps v5 with the new surface present.
+    const resaved = JSON.parse(saveToString(result.world)) as SaveData;
+    expect(resaved.saveVersion).toBe(SAVE_VERSION);
+    expect(resaved.messes).toEqual([]);
+    expect(resaved.jobs).toEqual([]);
+    expect(resaved.today.messTicks).toBe(0);
+  });
+
+  it('a genuine v3 fixture still loads through the v5 reader (transitive migration)', () => {
+    const result = loadOf(v3Fixture());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.world.messes.size).toBe(0);
+    expect(result.world.jobs.size).toBe(0);
+    expect(result.world.today.messTicks).toBe(0);
+  });
+});
+
+/** A small save carrying a trashcan, an EVS worker, and a live mess with its
+ *  auto-minted queued clean job (the v5 border tamper base). */
+let cachedMessSave: string | null = null;
+function messSave(): string {
+  if (cachedMessSave === null) {
+    const world = new World(new EventBus(), 13);
+    setupNewGame(world);
+    world.placeAmenity('trashcan', { col: 10, row: 20 });
+    world.addStaffMember('evs', 3, 90);
+    world.addMess('vomit', { col: 12, row: 20 });
+    cachedMessSave = saveToString(world);
+  }
+  return cachedMessSave;
+}
+
+function parsedMessSave(): SaveData {
+  return JSON.parse(messSave()) as SaveData;
+}
+
+describe('load border: messes & jobs (v5, §S2.4)', () => {
+  it('accepts the control fixture (a mess + its queued clean job + an EVS)', () => {
+    const save = parsedMessSave();
+    expect(save.messes.length).toBe(1); // premise
+    expect(save.jobs.length).toBe(1);
+    expect(save.jobs[0]!.kind).toBe('clean');
+    expect(loadOf(save).ok).toBe(true);
+  });
+
+  it("accepts a 'water' mess (reserved Stage-3 kind — a clean job cleans any mess)", () => {
+    const save = parsedMessSave();
+    save.messes[0]!.kind = 'water';
+    expect(loadOf(save).ok).toBe(true);
+  });
+
+  it("rejects a 'repair' job (reserved union value with no legal v5 target)", () => {
+    const save = parsedMessSave();
+    save.jobs[0]!.kind = 'repair';
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('repair');
+  });
+
+  it('rejects a mess outside the map / two messes on one tile', () => {
+    const outside = parsedMessSave();
+    outside.messes[0]!.tile = { col: 99, row: 99 };
+    expect(loadOf(outside).ok).toBe(false);
+    const doubled = parsedMessSave();
+    doubled.messes.push({ ...doubled.messes[0]! });
+    const result = loadOf(doubled);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('one mess per tile');
+  });
+
+  it("rejects a clean job with no mess on its tile (both-ways, and vice versa)", () => {
+    const jobless = parsedMessSave();
+    jobless.jobs = []; // the mess remains — an uncleanable permanent rep leak
+    const r1 = loadOf(jobless);
+    expect(r1.ok).toBe(false);
+    if (!r1.ok) expect(r1.reason).toContain('job targeting the mess tile');
+    const messless = parsedMessSave();
+    messless.messes = []; // the clean job remains — no target
+    const r2 = loadOf(messless);
+    expect(r2.ok).toBe(false);
+    if (!r2.ok) expect(r2.reason).toContain("clean job's tile");
+  });
+
+  it("rejects an empty job whose tile carries no trashcan", () => {
+    const save = parsedMessSave();
+    // Retarget the clean job's tile as an empty job on the mess tile (no can).
+    save.jobs[0]!.kind = 'empty';
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("empty job's tile");
+  });
+
+  it('rejects two jobs targeting one tile', () => {
+    const save = parsedMessSave();
+    save.jobs.push({ ...save.jobs[0]!, id: save.nextEntityId });
+    save.nextEntityId += 1;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('one job per tile');
+  });
+
+  it('rejects phase/staffId inconsistency (queued ⇔ staffId null)', () => {
+    const evsId = (): number => parsedMessSave().staff.find((s) => s.role === 'evs')!.id;
+    const queuedWithStaff = parsedMessSave();
+    queuedWithStaff.jobs[0]!.staffId = evsId();
+    expect(loadOf(queuedWithStaff).ok).toBe(false);
+    const assignedWithoutStaff = parsedMessSave();
+    assignedWithoutStaff.jobs[0]!.phase = 'assigned';
+    expect(loadOf(assignedWithoutStaff).ok).toBe(false);
+  });
+
+  it('accepts a consistent assigned job; rejects a broken back-reference or a non-EVS worker', () => {
+    const assignTo = (save: SaveData, staffId: number): void => {
+      save.jobs[0]!.phase = 'assigned';
+      save.jobs[0]!.staffId = staffId;
+      const member = save.staff.find((s) => s.id === staffId)!;
+      member.duty = { kind: 'job', jobId: save.jobs[0]!.id };
+    };
+    const good = parsedMessSave();
+    assignTo(good, good.staff.find((s) => s.role === 'evs')!.id);
+    expect(loadOf(good).ok).toBe(true);
+    // Worker's duty doesn't point back at the job.
+    const noBackRef = parsedMessSave();
+    noBackRef.jobs[0]!.phase = 'assigned';
+    noBackRef.jobs[0]!.staffId = noBackRef.staff.find((s) => s.role === 'evs')!.id;
+    const r1 = loadOf(noBackRef);
+    expect(r1.ok).toBe(false);
+    if (!r1.ok) expect(r1.reason).toContain('back-reference');
+    // A receptionist can't work the job queue.
+    const wrongRole = parsedMessSave();
+    assignTo(wrongRole, wrongRole.staff.find((s) => s.role === 'receptionist')!.id);
+    const r2 = loadOf(wrongRole);
+    expect(r2.ok).toBe(false);
+    if (!r2.ok) expect(r2.reason).toContain('EVS');
+  });
+
+  it("rejects a duty jobId that resolves to no job", () => {
+    const save = parsedMessSave();
+    const evs = save.staff.find((s) => s.role === 'evs')!;
+    evs.duty = { kind: 'job', jobId: 31337 };
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('jobId');
+  });
+
+  it('rejects a job timer beyond the longest duration at the slowest skill', () => {
+    const save = parsedMessSave();
+    const evs = save.staff.find((s) => s.role === 'evs')!;
+    save.jobs[0]!.phase = 'working';
+    save.jobs[0]!.staffId = evs.id;
+    evs.duty = { kind: 'job', jobId: save.jobs[0]!.id };
+    // A working worker must stand at/beside the target (adversarial-review
+    // border rule) — keep the fixture self-consistent so the TIMER check is
+    // what trips below.
+    evs.at = { ...save.jobs[0]!.tile };
+    evs.next = null;
+    evs.path = [];
+    evs.target = null;
+    save.jobs[0]!.ticksRemaining = treatmentDurationTicks(
+      Math.max(BALANCE.mess.cleanGameMinutes, BALANCE.mess.emptyGameMinutes),
+      BALANCE.stats.min,
+      0,
+    );
+    expect(loadOf(save).ok).toBe(true); // the exact bound is legal
+    save.jobs[0]!.ticksRemaining += 1;
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('ticksRemaining');
+  });
+
+  it('rejects a job id colliding with another entity id (global uniqueness)', () => {
+    const save = parsedMessSave();
+    save.jobs[0]!.id = save.rooms[0]!.id;
+    // Keep the world otherwise consistent — the register should still trip.
+    const result = loadOf(save);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('twice');
   });
 });
 

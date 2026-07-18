@@ -9,8 +9,10 @@ import type { Patient } from '../entities/patient';
 import { clearMatchingRestroomBreak } from './patientNeeds';
 import type { World } from '../world';
 
-/** Stages where patience drains and hitting 0 means walking out AMA (Flow rule 3). */
-function isAmaEligible(patient: Patient): boolean {
+/** Stages where patience drains and hitting 0 means walking out AMA (Flow
+ *  rule 3). Exported for the mess system (Stage 2): the vomit self-hit uses
+ *  the same accident clamp rule — floor where AMA-ineligible. */
+export function isAmaEligible(patient: Patient): boolean {
   const k = patient.stage.kind;
   return k === 'atEntrance' || k === 'queuedCheckIn' || k === 'waitingTriage' || k === 'waiting';
 }
@@ -59,6 +61,9 @@ export function updateDecay(world: World): void {
       // claim is cleared with NO hold — the need no longer exists, and the
       // claim must not pin the restroom's "Occupied" geometry gates.
       clearMatchingRestroomBreak(world, patient);
+      // Stage 2 (§3.1 upgrade): accidents drop a real mess on the tile —
+      // kind 'vomit' (one decal family; a clean job cleans any mess).
+      world.addMess('vomit', patient.at);
       // Accidents never mint a new fail state (design principle 3): the hit
       // clamps at the floor in non-AMA-eligible stages (checkingIn/reserved);
       // in AMA-eligible stages patience just drops and normal rules apply.
@@ -94,6 +99,12 @@ export function updateDecay(world: World): void {
       // (M3-gate ruling): a standing waiter in comfort decays at 1.5 × 0.75.
       if (world.hasComfortAura(patient.at)) {
         rate *= BALANCE.wayfinding.comfortAuraPatienceMultiplier;
+      }
+      // Mess proximity (Stage 2, §4.2 channel 1): ONCE — not per mess —
+      // composing multiplicatively with the full stack above and the unmet
+      // multipliers below (pre-impl MINOR 9).
+      if (world.hasMessNear(patient.at)) {
+        rate *= BALANCE.mess.patienceMultiplier;
       }
       // Unmet needs (§3.1): ×1.25 PER meter below threshold, multiplying into
       // the stack above, unless the MATCHING break is actively relieving it.

@@ -76,6 +76,10 @@ const STANDARD_STAFF: { role: RoleId; count: number }[] = [
   { role: 'respTherapist', count: 1 },
   { role: 'sonographer', count: 1 },
   { role: 'surgeon', count: 1 },
+  // Amenities Stage 2 (§S2.6b exit gate): the reference build cleans up —
+  // messes occur organically (vomit + litter) and the envelope must stay
+  // green with one EVS working the job queue.
+  { role: 'evs', count: 1 },
 ];
 
 interface RunSummary {
@@ -86,6 +90,9 @@ interface RunSummary {
   treatedPerDay: number[];
   totalDied: number;
   totalAma: number;
+  /** Stage 2 (§S2.6b): summed daily messTicks — proves messes occur
+   *  organically in the reference run (the gate premise is asserted). */
+  messTicksTotal: number;
   lostEpisodes: number;
   chestPainArrived: number;
   /** Per-tick probe: the longest ANY reservation lived, in ticks. */
@@ -134,6 +141,7 @@ function runHospital(
     treatedPerDay: [],
     totalDied: 0,
     totalAma: 0,
+    messTicksTotal: 0,
     lostEpisodes: 0,
     chestPainArrived: 0,
     maxReservationAgeTicks: 0,
@@ -154,7 +162,10 @@ function runHospital(
   events.on('patientSpawned', ({ patientId }) => {
     if (world.patients.get(patientId)?.condition === 'chestPain') summary.chestPainArrived += 1;
   });
-  events.on('dayEnded', (r) => summary.treatedPerDay.push(r.treated));
+  events.on('dayEnded', (r) => {
+    summary.treatedPerDay.push(r.treated);
+    summary.messTicksTotal += r.messTicks;
+  });
 
   // In-run probe (M4 review #1): a deadlocked reservation shows up as an age
   // that grows without bound — sampling every tick makes the check impossible
@@ -187,6 +198,11 @@ describe('headless balance harness (M4)', () => {
     // arrived in 5 days and none cleared the shared OR — arrival luck, not
     // balance (cash/rep/treated all healthy there; audited across 5 seeds).
     // Assertions unchanged — the seed is the fixture.
+    // Stage 2 (§S2.6b): the evs role's constructor candidates + per-patient
+    // vomit draws + the EVS hire shifted every stream AGAIN. Seed 1338
+    // re-validated green as-is (probe: ~16.8k mess-ticks over 5 days, a can
+    // overflow, EVS steady-state ~5 standing messes, 124 treated / 0 died,
+    // rep 545) — no alternate-seed hunt needed; the fixture seed stands.
     const s = runHospital(1338, STANDARD_ROOMS, 5);
     const w = s.world;
 
@@ -196,6 +212,10 @@ describe('headless balance harness (M4)', () => {
     expect(s.totalTreated).toBeGreaterThan(30);
     expect(s.totalDied).toBeLessThan(s.totalTreated / 2);
     expect(w.reputation).toBeGreaterThan(0);
+    // Stage-2 gate premise, asserted not assumed (§S2.6b): messes occurred
+    // ORGANICALLY in this run — the envelope above was earned with the
+    // cleanliness layer live, not on a spotless fluke.
+    expect(s.messTicksTotal).toBeGreaterThan(0);
     // End-to-end coverage of every §12 path (review MINOR): each expansion
     // condition must actually DISCHARGE — an idle nucMed or dialysis room
     // would otherwise pass every aggregate gate above.

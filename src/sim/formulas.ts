@@ -202,7 +202,9 @@ export function cleanlinessRepDelta(messTicks: number, arrivals: number): number
   const m = BALANCE.mess;
   if (messTicks === 0) return arrivals > 0 ? m.cleanDayRepBonus : 0;
   const messHours = messTicks / (GAME_MINUTES_PER_HOUR / GAME_MINUTES_PER_TICK);
-  return -Math.min(m.dailyRepCap, Math.floor(messHours / m.messHoursPerRepPoint));
+  // `|| 0` normalizes IEEE −0 when the floor lands on zero (Track-U finding:
+  // −0 renders as "+0" through signed formatting and fails Object.is pins).
+  return -Math.min(m.dailyRepCap, Math.floor(messHours / m.messHoursPerRepPoint)) || 0;
 }
 
 /**

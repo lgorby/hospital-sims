@@ -1,5 +1,6 @@
 import { Graphics, type Renderer, type Texture } from 'pixi.js';
 import { PROP_STYLE, type PropId } from '../sim/data/rooms';
+import type { Mess } from '../sim/world';
 import { PROP_RISE_PAD, shade, TILE_H, TILE_W } from './sprites/shared';
 
 /**
@@ -29,6 +30,10 @@ export interface TileTextures {
   entrance: Texture;
   /** Per-tile prop slices, keyed `${PropId}:${'single'|'west'|'east'}` (§2.5 slicing). */
   props: Map<string, Texture>;
+  /** Flat ground-level mess decals (amenities Stage 2, §4.1), keyed by
+   *  `messKey(kind, variant)` — the renderer picks variant + mirror by
+   *  hashing TILE coords (never rng), so a mess always re-syncs identically. */
+  messes: Map<string, Texture>;
 }
 
 export type PropSlice = 'single' | 'west' | 'east';
@@ -207,6 +212,156 @@ const CUSTOM_PROPS: Readonly<Partial<Record<PropId, (g: Graphics, color: number,
   plant: (g, color) => plantProp(g, color),
 };
 
+// ------------------------------------------------ mess decals (Stage 2, §4.1)
+
+/**
+ * Shape variants generated per mess kind. The renderer picks one (plus a
+ * mirror bit) by hashing TILE coords at draw time — 6 distinct looks per kind,
+ * stable across re-syncs of the same tile (render invariant: variety is
+ * hashed, never rolled).
+ */
+export const MESS_VARIANTS = 3;
+
+export function messKey(kind: Mess['kind'], variant: number): string {
+  return `mess:${kind}:${variant}`;
+}
+
+/**
+ * Deterministic init-time jitter in [0,1) — an integer mix of (variant, i),
+ * never Math.random. Purely a texture-generation helper: the same inputs
+ * always paint the same decal, so textures are reproducible frame zero.
+ */
+function messJitter(variant: number, i: number): number {
+  let h = (Math.imul(variant + 1, 374761393) + Math.imul(i + 1, 668265263)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/**
+ * Vomit: an irregular sickly green-brown splat — overlapping flat (2:1)
+ * ellipses so it never reads as a clean oval, a darker wet center, chunky
+ * brown bits, and a few flung satellite droplets. FLAT on the ground plane
+ * (all ellipses squashed 2:1 — no rise, decals are not prisms).
+ */
+function messVomit(g: Graphics, variant: number): void {
+  const cx = TILE_W / 2;
+  const cy = TILE_H / 2;
+  const base = 0x8f8d4a; // sickly green-brown
+  const chunk = 0x7a6b3c; // browner solids
+  const j = (i: number, span: number): number => (messJitter(variant, i) - 0.5) * span;
+  // Main splat body: three overlapping lobes.
+  g.ellipse(cx + j(0, 6), cy + j(1, 3), 12 + j(2, 4), 6 + j(3, 2)).fill({ color: base, alpha: 0.92 });
+  g.ellipse(cx + 6 + j(4, 5), cy + 2 + j(5, 3), 7, 3.6).fill({ color: shade(base, 0.9), alpha: 0.9 });
+  g.ellipse(cx - 7 + j(6, 5), cy - 2 + j(7, 3), 6, 3).fill({ color: shade(base, 1.08), alpha: 0.9 });
+  // Darker wet center.
+  g.ellipse(cx + j(8, 4), cy + j(9, 2), 6.5, 3.2).fill({ color: shade(base, 0.72), alpha: 0.85 });
+  // Chunky bits scattered over the pool.
+  for (let i = 0; i < 5; i++) {
+    const a = messJitter(variant, 10 + i) * Math.PI * 2;
+    const d = 2 + messJitter(variant, 20 + i) * 6;
+    g.ellipse(cx + Math.cos(a) * d, cy + Math.sin(a) * d * 0.5, 1.6, 0.9)
+      .fill(shade(chunk, 0.9 + messJitter(variant, 30 + i) * 0.4));
+  }
+  // Satellite droplets flung past the rim.
+  for (let i = 0; i < 3; i++) {
+    const a = messJitter(variant, 40 + i) * Math.PI * 2;
+    const d = 12 + messJitter(variant, 50 + i) * 4;
+    g.ellipse(cx + Math.cos(a) * d, cy + Math.sin(a) * d * 0.5, 1.8, 1)
+      .fill({ color: shade(base, 0.95), alpha: 0.85 });
+  }
+}
+
+/**
+ * Litter: scattered scraps — paper bits and wrappers in the vending-machine
+ * product palette (the litter SOURCE is vending, so the colors rhyme), plus a
+ * crumpled paper ball. Scraps are rotated flat quads squashed 2:1 onto the
+ * ground plane, each with a sliver of drop shadow.
+ */
+function messLitter(g: Graphics, variant: number): void {
+  const cx = TILE_W / 2;
+  const cy = TILE_H / 2;
+  const paper = 0xe8e4da;
+  const j = (i: number, span: number): number => (messJitter(variant, i) - 0.5) * span;
+  const scrap = (px: number, py: number, w: number, h: number, rot: number, color: number): void => {
+    const c = Math.cos(rot);
+    const s = Math.sin(rot);
+    const corners: readonly (readonly [number, number])[] = [[-w, -h], [w, -h], [w, h], [-w, h]];
+    const at = (dy: number): number[] => {
+      const pts: number[] = [];
+      for (const [ox, oy] of corners) {
+        pts.push(px + (ox * c - oy * s), py + (ox * s + oy * c) * 0.5 + dy);
+      }
+      return pts;
+    };
+    g.poly(at(0.8)).fill({ color: 0x000000, alpha: 0.1 }); // ground-contact shadow
+    g.poly(at(0)).fill(color);
+    g.poly(at(0)).stroke({ color: shade(color, 0.75), width: 0.6, alpha: 0.8 });
+  };
+  for (let i = 0; i < 6; i++) {
+    const a = messJitter(variant, i) * Math.PI * 2;
+    const d = 3 + messJitter(variant, 10 + i) * 9;
+    const color =
+      i % 2 === 0 ? paper : VENDING_PRODUCT_COLORS[(variant + i) % VENDING_PRODUCT_COLORS.length]!;
+    scrap(
+      cx + Math.cos(a) * d,
+      cy + Math.sin(a) * d * 0.5,
+      4.5 + messJitter(variant, 20 + i) * 3,
+      2.2 + messJitter(variant, 30 + i) * 1.5,
+      messJitter(variant, 40 + i) * Math.PI,
+      color,
+    );
+  }
+  // Crumpled paper ball — the one piece with a little height.
+  const bx = cx + j(50, 12);
+  const by = cy + j(51, 6);
+  g.ellipse(bx, by + 1, 3.2, 1.4).fill({ color: 0x000000, alpha: 0.12 });
+  g.circle(bx, by - 1, 2.6).fill(paper);
+  g.circle(bx - 0.8, by - 1.8, 1.2).fill({ color: 0xffffff, alpha: 0.5 });
+  g.circle(bx, by - 1, 2.6).stroke({ color: shade(paper, 0.8), width: 0.6 });
+}
+
+/**
+ * Water: a translucent blue puddle with a sheen — pooled overlapping lobes, a
+ * deeper center, NW-light glints (the wall/prop light convention), and a
+ * bright rim so the edge reads on any floor color. No producer until Stage 3
+ * (piping bursts) — the texture ships now so the atlas contract is complete.
+ */
+function messWater(g: Graphics, variant: number): void {
+  const cx = TILE_W / 2;
+  const cy = TILE_H / 2;
+  const base = 0x4f86c2;
+  const sheen = 0xdff0fa;
+  const j = (i: number, span: number): number => (messJitter(variant, i) - 0.5) * span;
+  // Pooled body: main lobe + two offset lobes for an irregular shoreline.
+  g.ellipse(cx + j(0, 4), cy + j(1, 2), 13 + j(2, 3), 6.5 + j(3, 1.5)).fill({ color: base, alpha: 0.42 });
+  g.ellipse(cx + 7 + j(4, 4), cy + 2 + j(5, 2), 7, 3.4).fill({ color: base, alpha: 0.38 });
+  g.ellipse(cx - 8 + j(6, 4), cy - 2 + j(7, 2), 6, 3).fill({ color: base, alpha: 0.38 });
+  // Deeper center.
+  g.ellipse(cx + j(8, 3), cy + j(9, 1.5), 7, 3.4).fill({ color: shade(base, 0.8), alpha: 0.4 });
+  // Sheen glints, lit from the NW.
+  g.ellipse(cx - 4 + j(10, 3), cy - 2 + j(11, 1), 5, 1.6).fill({ color: sheen, alpha: 0.5 });
+  g.ellipse(cx + 3 + j(12, 3), cy + 2 + j(13, 1), 2.4, 0.8).fill({ color: sheen, alpha: 0.35 });
+  // Bright rim on the main lobe (same jitter indices → same geometry).
+  g.ellipse(cx + j(0, 4), cy + j(1, 2), 13 + j(2, 3), 6.5 + j(3, 1.5))
+    .stroke({ color: shade(base, 1.25), width: 1, alpha: 0.35 });
+}
+
+/** Exhaustive by construction: a new Mess kind is a compile error until painted. */
+const MESS_PAINTERS: Readonly<Record<Mess['kind'], (g: Graphics, variant: number) => void>> = {
+  vomit: messVomit,
+  litter: messLitter,
+  water: messWater,
+};
+
+/** One flat decal on the ground-tile canvas — positioned exactly like a ground
+ *  tile (x − TILE_W/2, y), thanks to the constant near-invisible bounds rect. */
+function messDecal(kind: Mess['kind'], variant: number): Graphics {
+  const g = new Graphics();
+  g.rect(0, 0, TILE_W, TILE_H).fill({ color: 0xffffff, alpha: 0.001 });
+  MESS_PAINTERS[kind](g, variant);
+  return g;
+}
+
 /** A box prism filling one tile — the per-tile slice of (multi-tile) furniture. */
 function propSlice(id: PropId, slice: PropSlice): Graphics {
   const { color, rise } = PROP_STYLE[id];
@@ -340,6 +495,13 @@ export function generateTileTextures(renderer: Renderer): TileTextures {
     }
   }
 
+  const messes = new Map<string, Texture>();
+  for (const kind of Object.keys(MESS_PAINTERS) as Mess['kind'][]) {
+    for (let variant = 0; variant < MESS_VARIANTS; variant++) {
+      messes.set(messKey(kind, variant), renderer.generateTexture(messDecal(kind, variant)));
+    }
+  }
+
   return {
     ground: [renderer.generateTexture(groundA), renderer.generateTexture(groundB)],
     plain: renderer.generateTexture(plain),
@@ -347,5 +509,6 @@ export function generateTileTextures(renderer: Renderer): TileTextures {
     marker: renderer.generateTexture(marker),
     entrance: renderer.generateTexture(entrance),
     props,
+    messes,
   };
 }

@@ -1,8 +1,9 @@
 import type { EventBus } from '../events';
 import type { GameLoop } from '../loop';
-import { GAME_MINUTES_PER_HOUR } from '../sim/clock';
+import { GAME_MINUTES_PER_HOUR, ticksToGameMinutes } from '../sim/clock';
 import { BALANCE } from '../sim/data/balance';
 import { dayNet, type DayReport } from '../sim/dailyStats';
+import { cleanlinessRepDelta } from '../sim/formulas';
 import { money, signedDelta } from './format';
 import { modalRow, modalSection } from './modal';
 import { PausingOverlay } from './pausingOverlay';
@@ -57,6 +58,23 @@ export function appendDailyReportSections(card: HTMLElement, report: DayReport):
       'Fast-care bonus',
       `${signedDelta(BALANCE.reputation.dayCloseWaitBonus)} rep`,
       'good',
+    );
+  }
+  // Cleanliness (amenities Stage 2, AMENITIES_PLAN §4.2): the SAME formula
+  // closeDay applied — a REPUTATION component beside the fast-care bonus,
+  // never cash (dayNet ignores messTicks). Absent when it contributed nothing:
+  // an empty day, or too little mess for a whole rep point.
+  const cleanDelta = cleanlinessRepDelta(report.messTicks, report.arrivals);
+  if (cleanDelta !== 0) {
+    // Mess-hours context on a penalty — how long messes sat, via clock.ts
+    // conversions only (SSOT rule; formulas divides the identical way).
+    const messHours = ticksToGameMinutes(report.messTicks) / GAME_MINUTES_PER_HOUR;
+    const context = cleanDelta < 0 ? ` (${Math.round(messHours)} mess-hours)` : '';
+    modalRow(
+      standing,
+      'Cleanliness',
+      `${signedDelta(cleanDelta)} rep${context}`,
+      cleanDelta > 0 ? 'good' : 'bad',
     );
   }
   const repText = `${signedDelta(report.repDelta)} → ${Math.round(report.reputation)}`;

@@ -19,6 +19,12 @@ export const ROLE_DEFS = {
   sonographer: { label: 'Sonographer', salaryPerDay: 180, color: 0x76c7e0, standingPost: false },
   surgeon: { label: 'Surgeon', salaryPerDay: 500, color: 0x2d6a4f, standingPost: false },
   greeter: { label: 'Volunteer Greeter', salaryPerDay: 50, color: 0xe9c46a, standingPost: true },
+  // Amenities Stage 2 (AMENITIES_PLAN §4.4): the cleaning crew. Brown/tan —
+  // deliberately far from the teal/green cluster (art-review color-spread
+  // note). NOTE: adding a role mints constructor candidates (~12 seeded rng
+  // draws before tick 0), shifting EVERY fixed-seed trajectory — the Stage-2
+  // re-pin pass (impl plan §S2.6b) landed together with this entry.
+  evs: { label: 'EVS Worker', salaryPerDay: 90, color: 0x9b7653, standingPost: false },
 } as const;
 
 export type RoleId = keyof typeof ROLE_DEFS;

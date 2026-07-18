@@ -9,9 +9,10 @@ import { ROLE_IDS, type RoleId } from './data/roles';
 import { PROP_STYLE, ROOM_DEFS, ROOM_TYPES, type PropId, type RoomType } from './data/rooms';
 import type { NeedBreak, Patient, PatientStage } from './entities/patient';
 import type { Room } from './entities/room';
-import type { Candidate, Reservation, Staff, StaffDuty } from './entities/staff';
+import type { Candidate, Job, Reservation, Staff, StaffDuty } from './entities/staff';
+import { treatmentDurationTicks } from './formulas';
 import type { GridPoint, Rect } from './types';
-import { World, type Tile } from './world';
+import { World, type Mess, type Tile } from './world';
 
 /**
  * Phase-1 save/load (docs/PERSISTENCE_PLAN.md): one versioned JSON snapshot of
@@ -19,7 +20,7 @@ import { World, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 /**
  * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
@@ -49,7 +50,15 @@ export const SAVE_VERSION = 4;
  * break, amenities restore empty, and `readTally` defaults `vendingRevenue`
  * to 0 (version-aware — its shape check would otherwise refuse every old
  * save, review MAJOR 3). An old save plays identically until meters cross
- * thresholds. Anything below 1 or above SAVE_VERSION is refused.
+ * thresholds.
+ *
+ * v4 → v5 (amenities epic Stage 2, AMENITIES_PLAN §4.5): the world gains
+ * `messes` + `jobs`; staff duty gains the `job` kind; `today` gains
+ * `messTicks` (TALLY_KEY_VERSIONS). Migration is read-time defaults: pre-v5
+ * saves restore empty mess/job maps and messTicks 0. NOTE (§S2.6b): v5 also
+ * added the `evs` ROLE, so `topUpCandidates` mints evs candidates on every
+ * v≤4 load — deliberate stream divergence, the v1→v2 sonographer precedent.
+ * Anything below 1 or above SAVE_VERSION is refused.
  */
 export function isLoadableVersion(version: number): boolean {
   return version >= 1 && version <= SAVE_VERSION;
@@ -195,6 +204,27 @@ export interface SavedAmenity {
   fill: number;
 }
 
+/** v5 (amenities Stage 2, §4.5): a floor mess — a walkable decal, keyed by
+ *  its tile at runtime (serialized as an array like everything else). */
+export interface SavedMess {
+  kind: 'vomit' | 'litter' | 'water';
+  tile: SavedPoint;
+  since: number;
+}
+
+/** v5 (amenities Stage 2, §4.5): a facility job. `repair` is a reserved
+ *  union value with NO legal v5 target — the border REJECTS it (a
+ *  shape-valid repair job would sit queued forever, pre-impl MINOR 10). */
+export interface SavedJob {
+  id: number;
+  kind: 'clean' | 'empty' | 'repair';
+  tile: SavedPoint;
+  staffId: number | null;
+  phase: 'queued' | 'assigned' | 'working';
+  ticksRemaining: number;
+  holdUntil: number;
+}
+
 export interface SavedCandidate {
   id: number;
   role: RoleId;
@@ -232,6 +262,10 @@ export interface SaveData {
   /** v4: FROZEN position — immediately after rooms (impl plan §1.12; the
    *  byte-identity fixtures pin serializer insertion order forever). */
   amenities: SavedAmenity[];
+  /** v5: FROZEN positions — messes then jobs, immediately after amenities
+   *  (impl plan §S2.4; same byte-identity pinning). */
+  messes: SavedMess[];
+  jobs: SavedJob[];
   patients: SavedPatient[];
   staff: SavedStaff[];
   candidates: SavedCandidate[];
@@ -677,6 +711,63 @@ function readAmenity(
   };
 }
 
+// ------------------------------------------------- messes & jobs (v5)
+
+function writeMess(m: Mess): SavedMess {
+  return { kind: m.kind, tile: writePoint(m.tile), since: m.since };
+}
+
+function readMess(value: unknown, label: string): Mess {
+  const o = asRecord(value, label);
+  return {
+    // `water` is ACCEPTED (§S2.4): the kind ships in the v5 schema (Stage-3
+    // piping bursts) and a clean job cleans any mess — no dead state.
+    kind: asOneOf(o.kind, ['vomit', 'litter', 'water'], `${label}.kind`),
+    tile: readPoint(o.tile, `${label}.tile`),
+    since: asNumber(o.since, `${label}.since`),
+  };
+}
+
+function writeJob(j: Job): SavedJob {
+  return {
+    id: j.id,
+    kind: j.kind,
+    tile: writePoint(j.tile),
+    staffId: j.staffId,
+    phase: j.phase,
+    ticksRemaining: j.ticksRemaining,
+    holdUntil: j.holdUntil,
+  };
+}
+
+function readJob(value: unknown, label: string): Job {
+  const o = asRecord(value, label);
+  const kind = asOneOf(o.kind, ['clean', 'empty', 'repair'], `${label}.kind`);
+  // `repair` is REJECTED in v5 (pre-impl MINOR 10): a reserved union value
+  // with no legal target — it would sit queued forever.
+  if (kind === 'repair') fail(`${label}.kind`, "a v5-workable job kind ('repair' is Stage 3)");
+  // Bounded like readNeedBreak (§S2.4): the longest job duration at the
+  // slowest skill — a hostile timer would pin the worker indefinitely.
+  const maxJobTicks = treatmentDurationTicks(
+    Math.max(BALANCE.mess.cleanGameMinutes, BALANCE.mess.emptyGameMinutes),
+    BALANCE.stats.min,
+    0,
+  );
+  const ticksRemaining = asNumber(o.ticksRemaining, `${label}.ticksRemaining`);
+  if (ticksRemaining < 0 || ticksRemaining > maxJobTicks) {
+    fail(`${label}.ticksRemaining`, `a job timer within [0, ${maxJobTicks}] ticks`);
+  }
+  return {
+    id: asInt(o.id, `${label}.id`),
+    kind,
+    tile: readPoint(o.tile, `${label}.tile`),
+    staffId: asIntOrNull(o.staffId, `${label}.staffId`),
+    phase: asOneOf(o.phase, ['queued', 'assigned', 'working'], `${label}.phase`),
+    ticksRemaining,
+    holdUntil: asNumber(o.holdUntil, `${label}.holdUntil`), // finite-guarded by asNumber
+  };
+}
+
 // --------------------------------------------------- reservations, candidates
 
 function writeReservation(r: Reservation): SavedReservation {
@@ -836,6 +927,9 @@ export function serializeWorld(world: World): SaveData {
     rooms: [...world.rooms.values()].map(writeRoom),
     // v4 FROZEN position: immediately after rooms (impl plan §1.12).
     amenities: [...world.amenities.values()].map(writeAmenity),
+    // v5 FROZEN positions: messes then jobs, after amenities (§S2.4).
+    messes: [...world.messes.values()].map(writeMess),
+    jobs: [...world.jobs.values()].map(writeJob),
     patients: [...world.patients.values()].map(writePatient),
     staff: [...world.staff.values()].map(writeStaff),
     candidates: world.candidates.map(writeCandidate),
@@ -870,6 +964,8 @@ interface RestorePayload {
   grid: Tile[][];
   rooms: Room[];
   amenities: { kind: AmenityId; tile: GridPoint; fill: number }[];
+  messes: Mess[];
+  jobs: Job[];
   patients: Patient[];
   staff: Staff[];
   candidates: Candidate[];
@@ -900,6 +996,13 @@ function readRestorePayload(root: Record<string, unknown>, saveVersion: number):
       saveVersion < 4
         ? []
         : asArray(root.amenities, 'amenities').map((a, i) => readAmenity(a, `amenities[${i}]`)),
+    // v4→v5: pre-v5 saves carry no messes/jobs — restore empty maps (§4.5).
+    messes:
+      saveVersion < 5
+        ? []
+        : asArray(root.messes, 'messes').map((m, i) => readMess(m, `messes[${i}]`)),
+    jobs:
+      saveVersion < 5 ? [] : asArray(root.jobs, 'jobs').map((j, i) => readJob(j, `jobs[${i}]`)),
     patients: asArray(root.patients, 'patients').map((p, i) =>
       readPatient(p, `patients[${i}]`, saveVersion),
     ),
@@ -946,6 +1049,9 @@ function validateReferences(data: RestorePayload): void {
   data.staff.forEach((s, i) => register(s.id, `staff[${i}].id`));
   data.reservations.forEach((r, i) => register(r.id, `reservations[${i}].id`));
   data.candidates.forEach((c, i) => register(c.id, `candidates[${i}].id`));
+  // v5: job ids join the global-uniqueness register + the nextEntityId bound
+  // (§S2.4 — ids come from takeId(), so they share the one id space).
+  data.jobs.forEach((j, i) => register(j.id, `jobs[${i}].id`));
   if (data.nextEntityId <= maxId) {
     fail(
       'nextEntityId',
@@ -1048,6 +1154,12 @@ function validateReferences(data: RestorePayload): void {
     }
     if (tile.walkable) fail(`amenities[${i}]`, 'a non-walkable amenity tile (§3.4 rule)');
     if (a.fill < 0) fail(`amenities[${i}].fill`, 'a non-negative fill');
+    // Bounded above (Stage-2 code review MINOR): a can beyond capacity is
+    // unproducible in-sim and would be permanently dead post-load (dropLitter
+    // skips it as full; the overflow mint only fires ON reaching capacity).
+    if (a.fill > BALANCE.mess.trashcanCapacity) {
+      fail(`amenities[${i}].fill`, `a fill within [0, ${BALANCE.mess.trashcanCapacity}]`);
+    }
   });
   const amenityKindSet = new Set<string>(AMENITY_IDS);
   for (let col = 0; col < data.grid.length; col++) {
@@ -1098,7 +1210,74 @@ function validateReferences(data: RestorePayload): void {
     }
   });
 
+  // -- messes (v5, §S2.4): in-bounds tiles, at most one per tile; kind
+  // validity (incl. `water` acceptance) already enforced by readMess.
+  const messTileKeys = new Set<string>();
+  data.messes.forEach((m, i) => {
+    if (!data.grid[m.tile.col]?.[m.tile.row]) fail(`messes[${i}].tile`, 'a tile inside the map');
+    const key = `${m.tile.col},${m.tile.row}`;
+    if (messTileKeys.has(key)) fail(`messes[${i}].tile`, `one mess per tile (${key} appears twice)`);
+    messTileKeys.add(key);
+  });
+
+  // -- jobs (v5, §S2.4): job↔target BOTH ways (clean → a mess on the tile;
+  // empty → a trashcan amenity on the tile; ≤1 job per tile; every mess has
+  // a job — the addMess mint invariant), phase ⇔ staffId consistency, and
+  // assigned/working back-references an `evs` worker whose duty is this job.
+  const trashcanTileKeys = new Set(
+    data.amenities.filter((a) => a.kind === 'trashcan').map((a) => `${a.tile.col},${a.tile.row}`),
+  );
+  const staffById = new Map(data.staff.map((s) => [s.id, s]));
+  const jobTileKeys = new Set<string>();
+  data.jobs.forEach((j, i) => {
+    if (!data.grid[j.tile.col]?.[j.tile.row]) fail(`jobs[${i}].tile`, 'a tile inside the map');
+    const key = `${j.tile.col},${j.tile.row}`;
+    if (jobTileKeys.has(key)) fail(`jobs[${i}].tile`, `one job per tile (${key} is targeted twice)`);
+    jobTileKeys.add(key);
+    if (j.kind === 'clean' && !messTileKeys.has(key)) {
+      fail(`jobs[${i}].tile`, `a mess on the clean job's tile (none at ${key})`);
+    }
+    if (j.kind === 'empty' && !trashcanTileKeys.has(key)) {
+      fail(`jobs[${i}].tile`, `a trashcan on the empty job's tile (none at ${key})`);
+    }
+    if (j.phase === 'queued') {
+      if (j.staffId !== null) {
+        fail(`jobs[${i}].staffId`, `null for a queued job (got ${j.staffId})`);
+      }
+    } else {
+      if (j.staffId === null) fail(`jobs[${i}].staffId`, `a worker for an ${j.phase} job`);
+      const member = staffById.get(j.staffId);
+      if (!member) fail(`jobs[${i}].staffId`, `a staff member in this save (got ${j.staffId})`);
+      if (member.role !== 'evs') {
+        fail(`jobs[${i}].staffId`, `an EVS worker (staff ${j.staffId} is a ${member.role})`);
+      }
+      if (member.duty.kind !== 'job' || member.duty.jobId !== j.id) {
+        fail(`jobs[${i}].staffId`, `a worker whose duty back-references this job`);
+      }
+      // A `working` worker stands at/beside the target (Stage-2 code review
+      // NIT): a legal work tile is the job tile or an orthogonal neighbor,
+      // so anything farther is a hostile save working the mess remotely.
+      if (j.phase === 'working') {
+        const dist = Math.max(
+          Math.abs(member.at.col - j.tile.col),
+          Math.abs(member.at.row - j.tile.row),
+        );
+        if (dist > 1) {
+          fail(`jobs[${i}]`, `a working worker within 1 tile of the target (at distance ${dist})`);
+        }
+      }
+    }
+  });
+  // Reverse direction: a mess with NO job would never be cleaned — an
+  // uncleanable permanent reputation leak (the addMess invariant).
+  data.messes.forEach((m, i) => {
+    if (!jobTileKeys.has(`${m.tile.col},${m.tile.row}`)) {
+      fail(`messes[${i}]`, 'a job targeting the mess tile (none does)');
+    }
+  });
+
   // -- staff duty payloads
+  const jobsById = new Map(data.jobs.map((j) => [j.id, j]));
   data.staff.forEach((s, i) => {
     if (s.duty.kind === 'post') {
       mustResolve(s.duty.roomId, roomIds, `staff[${i}].duty.roomId`, 'a room');
@@ -1110,6 +1289,15 @@ function validateReferences(data: RestorePayload): void {
         `staff[${i}].duty.reservationId`,
         'a reservation',
       );
+    }
+    if (s.duty.kind === 'job') {
+      const job = jobsById.get(s.duty.jobId);
+      if (!job) {
+        fail(`staff[${i}].duty.jobId`, `a job in this save (got id ${s.duty.jobId})`);
+      }
+      if (job.staffId !== s.id) {
+        fail(`staff[${i}].duty.jobId`, `a job assigned back to this worker (job ${job.id})`);
+      }
     }
   });
 
@@ -1188,6 +1376,8 @@ function restoreInto(world: World, data: RestorePayload): void {
   }
   for (const room of data.rooms) world.rooms.set(room.id, room);
   for (const a of data.amenities) world.amenities.set(`${a.tile.col},${a.tile.row}`, a);
+  for (const m of data.messes) world.messes.set(`${m.tile.col},${m.tile.row}`, m);
+  for (const job of data.jobs) world.jobs.set(job.id, job);
   for (const patient of data.patients) world.patients.set(patient.id, patient);
   for (const member of data.staff) world.staff.set(member.id, member);
   for (const reservation of data.reservations) world.reservations.set(reservation.id, reservation);

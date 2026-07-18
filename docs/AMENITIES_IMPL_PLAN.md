@@ -295,7 +295,18 @@ green, HANDOFF, commit.
 19. Restroom `perTiles` derivation: 2×3 → exactly 2 stalls (harness-safe
     construction rule).
 
-## S2 — Stage 2 implementation plan (EVS + messes) — v2, pre-impl review FOLDED
+## S2 — Stage 2 implementation plan (EVS + messes) — IMPLEMENTED (2026-07-18)
+
+**Shipped** through the full workflow: freeze → 3 parallel tracks → 2
+adversarial reviews. Code/contract review: 1 MAJOR (through-wall clean via
+the work-tile derivation — fixed with `world.canApproach`, the single
+wall-logic source `canStep` now composes on) + 1 MINOR (fill upper bound in
+the border) + 2 NIT (working-worker adjacency bound; `evsUrgentMesses`
+moved into BALANCE.mess). Live-drive review: **COMMIT — 0 MAJOR, 12/12
+checklist PASS** (v4 compat proven against a real production save); its 3
+visual MINORs fixed: prop-tile decals spill toward the front edge (chair
+vomits + can overflow were fully occluded), and the amenity hover hint now
+runs the real validator so hover and click never disagree. 439 tests.
 
 Contract: AMENITIES_PLAN §4 (ratified) + the banked Stage-1 review notes
 (HANDOFF Next): geometry sweeps (design MAJOR 4), worker step-out via the

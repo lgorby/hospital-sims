@@ -5,11 +5,11 @@ import { ROLE_DEFS } from '../data/roles';
 import { ROOM_DEFS } from '../data/rooms';
 import type { Room } from '../entities/room';
 import type { Patient } from '../entities/patient';
-import type { Reservation, Staff } from '../entities/staff';
+import type { Job, Reservation, Staff } from '../entities/staff';
 import { checkInCapacity, effectivePriority, treatmentDurationTicks } from '../formulas';
 import { computeBlockedNeeds } from '../needs';
 import { findPath } from '../path/astar';
-import { ORTHOGONAL_STEPS, samePoint } from '../types';
+import { ORTHOGONAL_STEPS, samePoint, type GridPoint } from '../types';
 import type { Walker, World } from '../world';
 
 /**
@@ -23,7 +23,9 @@ export function updateDispatcher(world: World): void {
   processCheckIn(world);
   assignTriage(world);
   assignTreatment(world);
+  assignJobs(world); // Stage 2 (§S2.3): after assignTreatment (frozen slot)
   promoteGatheredReservations(world);
+  progressJobs(world);
   emitUrgentNeedHints(world);
 }
 
@@ -296,6 +298,166 @@ function priorityOf(world: World, patient: Patient): number {
       ? 0
       : ticksToGameMinutes(world.clock.tick - patient.waitingSince) / GAME_MINUTES_PER_HOUR;
   return effectivePriority(patient.acuity ?? BALANCE.decay.untriagedAcuity, waitedHours);
+}
+
+// ------------------------------------------------- facility jobs (Stage 2)
+
+/**
+ * Where a job is worked from (the FROZEN §S2.3 derivation): the mess tile
+ * itself when it's walkable, standable (with the same-room exception — an
+ * accident inside a treatment room is worked from that room's interior) and
+ * unclaimed; else the FIRST claim-aware standable orthogonal neighbor
+ * (`sameRoomAs: job.tile`). The adjacent-neighbor rule is what keeps a mess
+ * under a seated patient workable, so long claims starve nothing.
+ * Non-walkable targets (trashcans) always use a neighbor. Claim-awareness
+ * ignores the probing worker's own spot (Flow rule 14 — own claim doesn't
+ * count).
+ */
+function jobWorkTile(world: World, job: Job, worker: Staff): GridPoint | null {
+  if (
+    world.isWalkable(job.tile) &&
+    world.standableTile(job.tile, { sameRoomAs: job.tile }) &&
+    !world.isTileClaimed(job.tile, worker)
+  ) {
+    return job.tile;
+  }
+  for (const step of ORTHOGONAL_STEPS) {
+    const p = { col: job.tile.col + step.col, row: job.tile.row + step.row };
+    if (!world.isWalkable(p)) continue;
+    if (!world.standableTile(p, { sameRoomAs: job.tile })) continue;
+    // The neighbor must legally FACE the target across this edge (Stage-2
+    // code review MAJOR: Manhattan adjacency holds THROUGH edge-walls — an
+    // in-room mess whose own tile is claimed would otherwise be "worked"
+    // from the corridor on the far side of the wall).
+    if (!world.canApproach(p, job.tile)) continue;
+    if (world.isTileClaimed(p, worker)) continue;
+    return p;
+  }
+  return null;
+}
+
+/**
+ * Arrived AT the work tile — named by RE-DERIVING it (the derivation is
+ * deterministic and ignores the worker's own claim, so a completed walk
+ * matches its own goal). Anything else — including a dead path that stopped
+ * orthogonally adjacent ACROSS A WALL (Manhattan adjacency holds through
+ * walls, the Stage-1 vending-flip bug class) — reads as "arrived elsewhere"
+ * and requeues. If claims shifted mid-walk the derivation may now name a
+ * different tile: that also requeues (+hold) and the next assignment walks
+ * to the new tile — convergent, never a through-wall clean.
+ */
+function atJobSite(world: World, worker: Staff, job: Job): boolean {
+  const derived = jobWorkTile(world, job, worker);
+  return derived !== null && samePoint(worker.at, derived);
+}
+
+/** Requeue a job (fire/stall analogues, §4.3): staffId null, phase queued,
+ *  timer cleared; `hold` arms the retry window (a stall is a failure — the
+ *  fire path passes false: the job didn't fail). */
+function requeueJob(world: World, job: Job, opts: { hold: boolean }): void {
+  job.staffId = null;
+  job.phase = 'queued';
+  job.ticksRemaining = 0;
+  if (opts.hold) {
+    job.holdUntil = world.clock.tick + gameMinutesToTicks(BALANCE.mess.jobRetryGameMinutes);
+  }
+  world.events.emit('jobChanged', { jobId: job.id });
+}
+
+/**
+ * Job assignment (the FROZEN §S2.3 loop — pre-impl MAJOR 6, the hot-loop/
+ * starvation class). Per idle EVS (not firing): scan queued clean/empty
+ * jobs oldest-first (= lowest id; ids from takeId() are monotonic),
+ * SKIPPING jobs under a retry hold; per candidate, probe = work-tile
+ * derivation + findPath. Probe FAILURE → the job takes a retry hold and the
+ * scan CONTINUES to the next job (a held/unworkable oldest job never blocks
+ * younger workable ones; a failed probe is not re-run until its window
+ * expires). Probe SUCCESS → assign + walk.
+ */
+function assignJobs(world: World): void {
+  const workers = idleStaff(world, (s) => s.role === 'evs');
+  if (workers.length === 0 || world.jobs.size === 0) return;
+  const queued = [...world.jobs.values()]
+    .filter((j) => j.phase === 'queued' && (j.kind === 'clean' || j.kind === 'empty'))
+    .sort((a, b) => a.id - b.id); // oldest = lowest job id
+  for (const worker of workers) {
+    for (const job of queued) {
+      if (job.phase !== 'queued') continue; // taken by an earlier worker this tick
+      if (job.holdUntil > world.clock.tick) continue; // held — skip, never block
+      const workTile = jobWorkTile(world, job, worker);
+      if (
+        workTile === null ||
+        findPath(world, worker.next ?? worker.at, workTile, worker.id) === null
+      ) {
+        job.holdUntil = world.clock.tick + gameMinutesToTicks(BALANCE.mess.jobRetryGameMinutes);
+        continue; // failure → hold this job, CONTINUE to the next
+      }
+      job.staffId = worker.id;
+      job.phase = 'assigned';
+      worker.duty = { kind: 'job', jobId: job.id };
+      world.setWalkerTarget(worker, workTile);
+      world.events.emit('staffUpdated', { staffId: worker.id });
+      world.events.emit('jobChanged', { jobId: job.id });
+      break; // this worker is busy now — next worker
+    }
+  }
+}
+
+/**
+ * Job lifecycle (§S2.3): arrival flips `working` (timer via the ONE duration
+ * formula, quality 0); a stalled arrival requeues + holds; completion order
+ * is FROZEN — clean: detach the worker, then removeMess (whose orphan
+ * clause deletes the job); empty: fill = 0 → delete the job + release the
+ * worker → removeMess (which then finds no job — never a re-entrant delete
+ * of the completing job). Step-out + idle + events either way (the
+ * releaseReservation clause lives in world.releaseJobWorker).
+ * Iterates a SNAPSHOT — completion mutates the map (pre-impl MAJOR 2).
+ */
+function progressJobs(world: World): void {
+  for (const job of [...world.jobs.values()]) {
+    if (!world.jobs.has(job.id)) continue; // deleted earlier this pass
+    if (job.phase === 'queued' || job.staffId === null) continue;
+    const worker = world.staff.get(job.staffId);
+    if (!worker) {
+      // Defensive: fireStaff requeues before removal, so this shouldn't
+      // happen — but a dangling worker must never wedge the job forever.
+      requeueJob(world, job, { hold: false });
+      continue;
+    }
+    if (job.phase === 'assigned') {
+      if (!world.walkerArrived(worker)) continue;
+      if (!atJobSite(world, worker, job)) {
+        // The rule-8 stalled analogue, immediate: release + requeue + hold.
+        world.releaseJobWorker(job);
+        requeueJob(world, job, { hold: true });
+        continue;
+      }
+      job.phase = 'working';
+      job.ticksRemaining = treatmentDurationTicks(
+        job.kind === 'empty' ? BALANCE.mess.emptyGameMinutes : BALANCE.mess.cleanGameMinutes,
+        worker.skill,
+        0, // quality 0 — corridors have none (§S2.1: no new formula)
+      );
+      world.events.emit('jobChanged', { jobId: job.id });
+      continue;
+    }
+    // working
+    job.ticksRemaining -= 1;
+    if (job.ticksRemaining > 0) continue;
+    if (job.kind === 'empty') {
+      const can = world.amenityAt(job.tile.col, job.tile.row);
+      if (can) can.fill = 0;
+      world.jobs.delete(job.id);
+      world.releaseJobWorker(job);
+      world.events.emit('jobChanged', { jobId: job.id });
+      world.removeMess(job.tile); // the overflow decal — finds no job now
+    } else {
+      // clean (any mess kind): worker already detached, so removeMess's
+      // orphan clause deletes the job without a double-release.
+      world.releaseJobWorker(job);
+      world.removeMess(job.tile);
+    }
+  }
 }
 
 /** Everyone has arrived inside the room → start the timer. */

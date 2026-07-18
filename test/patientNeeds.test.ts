@@ -519,6 +519,12 @@ describe('dispatcher × breaks + terminal clears (§3.2)', () => {
     const waitingRoom = world.roomsOfType('waiting')[0]!;
     buildRestroom(world);
     const p = makePatient(world, { at: { col: 21, row: 21 } });
+    // Stage-2 re-pin (§S2.6b): the evs candidate mints shifted the seed-42
+    // stream and this patient now rolled a low wayfinding stat — they got
+    // LOST on the restroom trek, and the watchdog abandon leaves lost
+    // patients unseated by design. Lostness is noise for THIS test's
+    // premise (seat re-competition after a COMPLETED break) — pin the stat.
+    p.wayfinding = BALANCE.stats.max;
     p.waitingRoomId = waitingRoom.id;
     p.bladder = N.seekThreshold - 5;
     updatePatientNeeds(world);

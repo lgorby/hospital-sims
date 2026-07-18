@@ -191,6 +191,9 @@ export const BALANCE = {
     emptyGameMinutes: 1,
     /** Failed-probe retry hold (the dispatchHoldUntil analogue). */
     jobRetryGameMinutes: 5,
+    /** The `role:evs` hint promotes to URGENT at this many standing messes
+     *  (moved here from needs.ts — SSOT §3.1, Stage-2 code review NIT). */
+    evsUrgentMesses: 3,
   },
   rooms: {
     /** Quality bonus per tile above minimum footprint (GDD §5). */

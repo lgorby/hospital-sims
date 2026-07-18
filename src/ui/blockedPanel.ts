@@ -47,6 +47,12 @@ export class BlockedPanel {
     // while paused changes need computation the same way a room does.
     events.on('amenityPlaced', invalidate);
     events.on('amenitySold', invalidate);
+    // Amenities Stage 2 (impl plan §S2.1): mess add/remove and job lifecycle
+    // changes drive the `role:evs` need — both fire while paused (e.g. a
+    // build-command geometry sweep deletes a mess at speed 0), so they join
+    // the same invalidation list.
+    events.on('messChanged', invalidate);
+    events.on('jobChanged', invalidate);
   }
 
   mount(parent: HTMLElement): void {

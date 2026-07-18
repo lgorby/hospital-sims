@@ -58,6 +58,7 @@ export function article(label: string): 'a' | 'an' {
   return /^[AEIOU]/.test(label) || /^(X-|MRI)/.test(label) ? 'an' : 'a';
 }
 
+
 // Kind-typed so a stage rename is a compile error here, not silently dropped
 // check-in needs (review NIT).
 const CHECK_IN_STAGES = new Set<Patient['stage']['kind']>([
@@ -208,6 +209,23 @@ export function computeBlockedNeeds(world: World): BlockedNeed[] {
         label: 'Build a Restroom — patients need the restroom',
       });
     }
+  }
+
+  // EVS need (amenities Stage 2, §S2.5): mess-based, not condition-based, so
+  // it lives outside the aggregate scan like the restroom need. Urgent at
+  // ≥ EVS_URGENT_MESSES standing messes with no EVS hired; upcoming when any
+  // mess exists. `patients` carries the standing-MESS count (pre-impl MINOR
+  // 13): it drives the sort tie-break, and messes aren't patients.
+  if (!hiredRoles.has('evs') && world.messes.size > 0) {
+    needs.push({
+      key: 'role:evs',
+      kind: 'role',
+      role: 'evs',
+      patients: world.messes.size,
+      conditions: [],
+      urgent: world.messes.size >= BALANCE.mess.evsUrgentMesses,
+      label: 'Hire an EVS Worker — messes need cleaning',
+    });
   }
 
   // Total, deterministic order: urgent first, most-affected first, key tiebreak.

@@ -97,6 +97,55 @@ describe('InspectPanel (amenities Stage 1)', () => {
     expect(text).not.toContain('Treating');
   });
 
+  it('staff duty line resolves a job duty to its kind via world.jobs (Stage 2 §S2.5)', () => {
+    const { world, renderer, root, panel } = fixture();
+    // Any role works — the duty line is role-agnostic (the hire panel is
+    // data-driven; nothing here may reference the not-yet-landed evs literal).
+    const member = world.addStaffMember('nurse', 3, 100, {
+      first: 'Mo',
+      last: 'Popov',
+      full: 'Mo Popov',
+      short: 'Mo P.',
+    });
+    // Feed a fake clean job — world.jobs is the real (frozen) map; Track S's
+    // systems fill it in-game, the card only reads it.
+    world.jobs.set(77, {
+      id: 77,
+      kind: 'clean',
+      tile: { col: 4, row: 4 },
+      staffId: member.id,
+      phase: 'assigned',
+      ticksRemaining: 0,
+      holdUntil: 0,
+    });
+    member.duty = { kind: 'job', jobId: 77 };
+    renderer.selected = { kind: 'staff', id: member.id };
+    panel.update();
+    expect(bodyText(root)).toContain('Cleaning');
+
+    // The frozen format.ts fallback: a job deleted mid-frame must never crash
+    // the card — the generic record label renders instead.
+    world.jobs.delete(77);
+    panel.update();
+    const text = bodyText(root);
+    expect(text).toContain('On a facilities job');
+    expect(text).not.toContain('Cleaning');
+  });
+
+  it('trashcan card shows a live Fill N/capacity line (Stage 2 §S2.5, frame-polled)', () => {
+    const { world, renderer, root, panel } = fixture();
+    world.amenities.set('3,4', { kind: 'trashcan', tile: { col: 3, row: 4 }, fill: 3 });
+    renderer.selected = { kind: 'amenity', col: 3, row: 4 };
+    panel.update();
+    // The denominator is the sim's overflow threshold (SSOT), never a literal.
+    expect(bodyText(root)).toContain(`Fill3/${BALANCE.mess.trashcanCapacity}`);
+
+    // Frame-polled: a sim-side fill bump shows on the next update, no event.
+    world.amenities.get('3,4')!.fill = 4;
+    panel.update();
+    expect(bodyText(root)).toContain(`Fill4/${BALANCE.mess.trashcanCapacity}`);
+  });
+
   it('patient card renders Bladder + Thirst meters after Patience', () => {
     const { world, renderer, root, panel } = fixture();
     const patient = world.spawnPatient('flu');

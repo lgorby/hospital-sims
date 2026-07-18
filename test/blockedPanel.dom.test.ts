@@ -121,6 +121,39 @@ describe('BlockedPanel', () => {
     expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(true);
   });
 
+  it('messChanged/jobChanged invalidate without a tick (amenities Stage 2, §S2.1)', () => {
+    // The Stage-1 paused-staleness rule extended: a geometry sweep deletes a
+    // mess (and its job) inside a paused build command — the `role:evs` need
+    // must recompute on the events, not wait for the clock.
+    const { world, events, root, panel } = fixture();
+    const patient = world.spawnPatient('flu');
+    patient.stage = { kind: 'waitingTriage' };
+    world.tick();
+    panel.update();
+    expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(true);
+
+    // Clear the need by DIRECT mutation — no event, no tick. The panel stays
+    // (correctly) stale, proving the tick gate is closed; the assertion after
+    // each emit can only pass via that event's invalidation.
+    world.patients.delete(patient.id);
+    panel.update();
+    expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(true);
+
+    events.emit('messChanged', { col: 1, row: 1 });
+    panel.update();
+    expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(false);
+
+    // jobChanged, same shape: recreate the need silently, then emit.
+    const second = world.spawnPatient('flu');
+    second.stage = { kind: 'waitingTriage' };
+    panel.update();
+    expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(false); // stale again
+
+    events.emit('jobChanged', { jobId: 1 });
+    panel.update();
+    expect(rows(root).some((l) => l.includes('Triage Bay'))).toBe(true);
+  });
+
   it('caps visible rows at 8 + a "+N more" tail (live-drive MAJOR 2: never occlude the inspect card)', () => {
     const { world, root, panel } = fixture();
     // A wide condition spread in a bare hospital produces well over 8 needs

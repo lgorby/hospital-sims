@@ -30,6 +30,8 @@ import {
   generateCharacterTextures,
   generateTileTextures,
   IDLE_FACING,
+  MESS_VARIANTS,
+  messKey,
   PROP_RISE_PAD,
   propKey,
   shade,
@@ -99,6 +101,9 @@ export class WorldRenderer {
   private camera = new Container();
   private groundLayer = new Container();
   private roomFloorLayer = new Container();
+  /** Flat ground decals (messes) — above floors, below the depth-sorted world
+   *  (Stage 2 plan §S2.6: sortedLayer has no "actor band" to slot under). */
+  private decalLayer = new Container();
   private sortedLayer = new Container();
   private ghost = new Graphics();
   /** drawGhost input signature — rebuild only on change (see drawGhost). */
@@ -132,6 +137,8 @@ export class WorldRenderer {
   private amenityMode: AmenityId | null = null;
   /** Roomless amenity prop sprites, keyed `${col},${row}` (the tile IS the identity). */
   private amenitySprites = new Map<string, Sprite>();
+  /** Mess decal sprites, keyed `${col},${row}` — messes are one-per-tile. */
+  private messSprites = new Map<string, Sprite>();
 
   /** Current hovered tile, if in bounds — HUD readout polls this. */
   hoveredTile: TilePoint | null = null;
@@ -173,7 +180,7 @@ export class WorldRenderer {
     this.textures = generateTileTextures(this.app.renderer);
     this.characterTextures = generateCharacterTextures(this.app.renderer);
     this.sortedLayer.sortableChildren = true;
-    this.camera.addChild(this.groundLayer, this.roomFloorLayer, this.sortedLayer);
+    this.camera.addChild(this.groundLayer, this.roomFloorLayer, this.decalLayer, this.sortedLayer);
     this.app.stage.addChild(this.camera);
 
     this.buildGround();
@@ -202,6 +209,9 @@ export class WorldRenderer {
     // Roomless amenity props (Stage 1): per-change draw/remove, never per-frame.
     this.events.on('amenityPlaced', ({ col, row, kind }) => this.drawAmenity(col, row, kind));
     this.events.on('amenitySold', ({ col, row }) => this.removeAmenity(col, row));
+    // Mess decals (Stage 2): ONE event for add and remove — re-sync the tile
+    // from world.messes (the frozen messChanged contract). Per-change only.
+    this.events.on('messChanged', ({ col, row }) => this.syncMess(col, row));
 
     // Rooms that existed before the renderer (new-game start state).
     for (const roomId of this.world.rooms.keys()) this.drawRoom(roomId);
@@ -209,6 +219,10 @@ export class WorldRenderer {
     // builds the world from the save BEFORE init — mirror the rooms loop).
     for (const amenity of this.world.amenities.values()) {
       this.drawAmenity(amenity.tile.col, amenity.tile.row, amenity.kind);
+    }
+    // Messes that existed before the renderer (same ?load= path — same mirror).
+    for (const mess of this.world.messes.values()) {
+      this.syncMess(mess.tile.col, mess.tile.row);
     }
   }
 
@@ -467,6 +481,43 @@ export class WorldRenderer {
     if (this.selected?.kind === 'amenity' && this.selected.col === col && this.selected.row === row) {
       this.selected = null;
     }
+  }
+
+  /**
+   * Re-sync one tile's mess decal from `world.messes` — the frozen
+   * `messChanged` contract fires this for add AND remove (a `since` refresh
+   * redraws the identical decal; harmless, still per-change). Decals are FLAT:
+   * ground-tile placement math, no rise, and they live in `decalLayer` (above
+   * floors, below the depth-sorted world) so actors always walk over them.
+   * Variety (shape variant + mirror) hashes TILE COORDS — never the sim rng —
+   * so a tile's mess looks the same on every re-sync and after a reload.
+   */
+  private syncMess(col: number, row: number): void {
+    const key = `${col},${row}`;
+    this.messSprites.get(key)?.destroy();
+    this.messSprites.delete(key);
+    const mess = this.world.messes.get(key);
+    if (!mess) return;
+    const hash = ((Math.imul(col, 73856093) ^ Math.imul(row, 19349663)) >>> 0) >>> 4;
+    const sprite = new Sprite(this.textures.messes.get(messKey(mess.kind, hash % MESS_VARIANTS))!);
+    const { x, y } = toScreen(col, row);
+    // A decal on a PROP tile (a chair-tile vomit, an overflowing trashcan)
+    // sits behind that prop's sprite in the depth-sorted layer and reads as
+    // invisible (Stage-2 live-drive MINORs 1–2). Spill it toward the tile's
+    // FRONT edge so the splat/scraps peek out at the prop's base — still in
+    // decalLayer, still flat, still deterministic.
+    const propSpill = this.world.tileAt(col, row)?.object ? TILE_H * 0.4 : 0;
+    if ((hash & 1) === 1) {
+      // Mirror around the tile's vertical center line — free extra variety;
+      // the decal canvas spans the full tile, so flip + right-edge anchor
+      // lands exactly where the unmirrored left-edge placement would.
+      sprite.scale.x = -1;
+      sprite.position.set(x + TILE_W / 2, y + propSpill);
+    } else {
+      sprite.position.set(x - TILE_W / 2, y + propSpill);
+    }
+    this.decalLayer.addChild(sprite);
+    this.messSprites.set(key, sprite);
   }
 
   /** Mood bubble per GDD §10: 💢 impatient/AMA, 💀 critical, 💚 treated, ❓ lost. */
@@ -989,8 +1040,15 @@ export class WorldRenderer {
     // (hintLine contract), then live pricing resumes.
     if (this.amenityMode && this.hoveredTile) {
       const def = AMENITY_DEFS[this.amenityMode];
+      // Hover honesty (Stage-2 live-drive MINOR 3): the line shows the
+      // rejection reason the CLICK would give, not a price on a tile the
+      // validator refuses — hover and click must never disagree. Runs per
+      // tile crossed (the geometry key), same cadence as the ghost tint.
+      const check = validateAmenityPlace(this.world, this.amenityMode, this.hoveredTile);
       this.hintLine.price(
-        `${def.label} — $${def.cost.toLocaleString('en-US')} · click to place`,
+        check.ok
+          ? `${def.label} — $${def.cost.toLocaleString('en-US')} · click to place`
+          : `${def.label} — ${check.reason}`,
         `amenity:${this.hoveredTile.col},${this.hoveredTile.row}`,
       );
     }

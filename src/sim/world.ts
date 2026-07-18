@@ -24,6 +24,7 @@ import {
   auraCoversTile,
   candidateSalary,
   checkInCapacity,
+  cleanlinessRepDelta,
   dischargeReputationGain,
   expandPrice,
   plantCoversTile,
@@ -36,6 +37,7 @@ import { findPath, type PathGrid } from './path/astar';
 import { SeededRng } from './rng';
 import { updateDecay } from './systems/decay';
 import { updateDispatcher } from './systems/dispatcher';
+import { updateMess } from './systems/mess';
 import { updatePatientNeeds } from './systems/patientNeeds';
 import { updateEconomy } from './systems/economy';
 import { updateMovement } from './systems/movement';
@@ -259,9 +261,22 @@ export class World implements PathGrid {
 
   /** May a single orthogonal step be taken? Edge walls (room boundaries) live here. */
   canStep(from: GridPoint, to: GridPoint): boolean {
+    if (!this.tileAt(to.col, to.row)?.walkable) return false;
+    return this.canApproach(from, to);
+  }
+
+  /**
+   * `canStep` minus the destination-walkability requirement: may `from`
+   * legally FACE `to` across this edge (same room, open plan, or a door)?
+   * Exists because Manhattan adjacency holds THROUGH edge-walls (Stage-2
+   * code review MAJOR: a corridor tile is adjacent to an in-room mess across
+   * the wall — job work tiles must never be picked there; and trashcan
+   * targets are non-walkable, so plain canStep can't express "serve it").
+   */
+  canApproach(from: GridPoint, to: GridPoint): boolean {
     const tileFrom = this.tileAt(from.col, from.row);
     const tileTo = this.tileAt(to.col, to.row);
-    if (!tileFrom || !tileTo || !tileTo.walkable) return false;
+    if (!tileFrom || !tileTo) return false;
     if (tileFrom.roomId === tileTo.roomId) return true;
     if (
       tileFrom.roomId !== null &&
@@ -661,6 +676,12 @@ export class World implements PathGrid {
       return;
     }
 
+    // Geometry sweep (Stage 2, design MAJOR 4): messes (and their jobs) on
+    // the footprint are deleted BEFORE the room exists — jobs never block
+    // builds, and a corridor vomit must not be buried under a wall or prop
+    // as an uncleanable permanent reputation leak.
+    for (const tile of rectTiles(rect)) this.removeMess(tile);
+
     const id = this.takeId();
     const room: Room = {
       id,
@@ -714,6 +735,11 @@ export class World implements PathGrid {
       return;
     }
     const price = expandPrice(room.type, room.rect, rect);
+    // Geometry sweep (Stage 2, design MAJOR 4): the DELTA tiles being
+    // claimed lose their messes + jobs; the old interior is untouched.
+    for (const tile of rectTiles(rect)) {
+      if (!rectContains(room.rect, tile)) this.removeMess(tile);
+    }
     room.rect = rect;
     for (const tile of rectTiles(rect)) {
       this.tileAt(tile.col, tile.row)!.roomId = roomId; // delta tiles join; old tiles no-op
@@ -830,6 +856,9 @@ export class World implements PathGrid {
       return;
     }
     const room = this.rooms.get(roomId)!;
+    // Geometry sweep (Stage 2, design MAJOR 4): messes inside the sold room
+    // leave with it (their jobs deleted, workers released).
+    for (const tile of rectTiles(room.rect)) this.removeMess(tile);
     for (const tile of rectTiles(room.rect)) {
       const t = this.tileAt(tile.col, tile.row)!;
       t.roomId = null;
@@ -922,6 +951,21 @@ export class World implements PathGrid {
   private fireStaff(staffId: number): void {
     const member = this.staff.get(staffId);
     if (!member) return;
+    if (member.duty.kind === 'job') {
+      // Rule-7 analogue (Stage 2, §4.3): requeue the job in ANY phase —
+      // staffId null, phase queued, NO hold (the job didn't fail) — then the
+      // existing firing path. Without this branch the instant removeStaff
+      // below would leave a dangling staffId on the job.
+      const job = this.jobs.get(member.duty.jobId);
+      if (job) {
+        job.staffId = null;
+        job.phase = 'queued';
+        job.ticksRemaining = 0;
+        this.events.emit('jobChanged', { jobId: job.id });
+      }
+      this.removeStaff(member);
+      return;
+    }
     if (member.duty.kind === 'reserved') {
       const reservation = this.reservations.get(member.duty.reservationId);
       if (reservation && reservation.phase === 'active') {
@@ -947,24 +991,129 @@ export class World implements PathGrid {
   // -------------------------------------------------------- patient routing
 
   // ------------------------------------------------- messes & jobs (Stage 2)
-  // CONTRACT STUBS (impl plan §S2.1 freeze): typed, inert until Track S
-  // lands the real bodies. UI/render tracks compile against these.
 
-  /** One mess per tile (refresh `since` on repeat); mints a `clean` job iff
+  /** The job targeting this tile, if any (one job per target, §4.3). */
+  jobAt(tile: GridPoint): Job | null {
+    for (const job of this.jobs.values()) {
+      if (samePoint(job.tile, tile)) return job;
+    }
+    return null;
+  }
+
+  /**
+   * Mint a queued job iff none targets the tile (one job per target, §4.3 —
+   * the keyed check). The overflow path calls this with 'empty' BEFORE
+   * addMess (FROZEN order, pre-impl MAJOR 2), so addMess's own 'clean' mint
+   * then finds the empty job and stands down — no double-mint.
+   */
+  mintJob(kind: Job['kind'], tile: GridPoint): void {
+    if (this.jobAt(tile) !== null) return;
+    const job: Job = {
+      id: this.takeId(),
+      kind,
+      tile: { col: tile.col, row: tile.row },
+      staffId: null,
+      phase: 'queued',
+      ticksRemaining: 0,
+      holdUntil: 0,
+    };
+    this.jobs.set(job.id, job);
+    this.events.emit('jobChanged', { jobId: job.id });
+  }
+
+  /** One mess per tile (a repeat refreshes `since`); mints a `clean` job iff
    *  none targets the tile; emits `messChanged`; bumps `messRevision`. */
-  addMess(_kind: Mess['kind'], _tile: GridPoint): void {
-    // Track S: implement per impl plan §S2.2 (overflow order: empty job FIRST).
+  addMess(kind: Mess['kind'], tile: GridPoint): void {
+    const key = `${tile.col},${tile.row}`;
+    const existing = this.messes.get(key);
+    if (existing) {
+      existing.since = this.clock.tick;
+    } else {
+      this.messes.set(key, {
+        kind,
+        tile: { col: tile.col, row: tile.row },
+        since: this.clock.tick,
+      });
+    }
+    this.mintJob('clean', tile); // no-op when ANY job already targets the tile
+    this.messRevision += 1;
+    this.events.emit('messChanged', { col: tile.col, row: tile.row });
   }
 
-  /** Delete + orphan-job delete/worker-release + `messChanged` + revision. */
-  removeMess(_tile: GridPoint): void {
-    // Track S: implement per impl plan §S2.2/§S2.3 (the general orphan rule).
+  /**
+   * Delete the mess on `tile` + THE GENERAL ORPHAN RULE (§4.3, design MINOR
+   * 12): the job targeting that tile is deleted in ANY phase, its worker
+   * released (idle + the unconditional walled-room step-out). No-op when no
+   * mess exists there — geometry sweeps call this over whole footprints, and
+   * the empty-job completion path deletes its own job BEFORE calling in
+   * (never a re-entrant delete of the completing job).
+   */
+  removeMess(tile: GridPoint): void {
+    const key = `${tile.col},${tile.row}`;
+    if (!this.messes.delete(key)) return;
+    const job = this.jobAt(tile);
+    if (job) {
+      this.jobs.delete(job.id);
+      this.releaseJobWorker(job);
+      this.events.emit('jobChanged', { jobId: job.id });
+    }
+    this.messRevision += 1;
+    this.events.emit('messChanged', { col: tile.col, row: tile.row });
   }
 
-  /** Mess within BALANCE.mess.patienceRadius (Chebyshev) — signature-cached
-   *  per tick (the auraCheckedTick pattern; messRevision invalidates). */
-  hasMessNear(_p: GridPoint): boolean {
-    return false;
+  /**
+   * Detach a job's worker: duty idle, walk state cleared, and the
+   * unconditional walled-room step-out — the `releaseReservation` clause
+   * verbatim (design MAJOR 6: an EVS idling inside the restroom they just
+   * mopped would pin its sale). Emits `staffUpdated`. Safe on unassigned
+   * jobs and jobs whose worker is already detached.
+   */
+  releaseJobWorker(job: Job): void {
+    const staffId = job.staffId;
+    job.staffId = null;
+    if (staffId === null) return;
+    const member = this.staff.get(staffId);
+    if (!member || member.duty.kind !== 'job' || member.duty.jobId !== job.id) return;
+    member.duty = { kind: 'idle' };
+    member.path = [];
+    member.target = null;
+    const standing = member.next ?? member.at;
+    const room = this.roomAt(standing);
+    if (room && ROOM_DEFS[room.type].kind !== 'open') {
+      const spot = this.nearestFreeStandingTile(standing, member);
+      if (spot) this.setWalkerTarget(member, spot);
+    }
+    this.events.emit('staffUpdated', { staffId: member.id });
+  }
+
+  /** Mess-proximity cache (§4.2 channel 1): rebuilt only when `messRevision`
+   *  moves — the auraCheckedTick pattern with messRevision as the signature
+   *  (an O(1) compare, so no per-tick guard is needed on top). */
+  private messNearGrid: boolean[][] = [];
+  private messNearRevision = -1;
+
+  /** Mess within BALANCE.mess.patienceRadius (Chebyshev — a square patch,
+   *  like the plant aura). ONE flag per tile: "once, not per mess". */
+  hasMessNear(p: GridPoint): boolean {
+    if (this.messNearRevision !== this.messRevision) {
+      this.messNearRevision = this.messRevision;
+      this.messNearGrid = Array.from({ length: this.cols }, () =>
+        Array<boolean>(this.rows).fill(false),
+      );
+      const radius = BALANCE.mess.patienceRadius;
+      for (const mess of this.messes.values()) {
+        const minCol = Math.max(0, mess.tile.col - radius);
+        const maxCol = Math.min(this.cols - 1, mess.tile.col + radius);
+        const minRow = Math.max(0, mess.tile.row - radius);
+        const maxRow = Math.min(this.rows - 1, mess.tile.row + radius);
+        for (let col = minCol; col <= maxCol; col++) {
+          for (let row = minRow; row <= maxRow; row++) {
+            this.messNearGrid[col]![row] = true;
+          }
+        }
+      }
+    }
+    return this.messNearGrid[p.col]?.[p.row] ?? false;
   }
 
   /**
@@ -1041,6 +1190,9 @@ export class World implements PathGrid {
       this.events.emit('buildRejected', { reason: check.reason });
       return;
     }
+    // Geometry sweep (Stage 2, design MAJOR 4): a mess on the tile leaves
+    // before the machine lands (its job deleted, worker released).
+    this.removeMess(tile);
     const t = this.tileAt(tile.col, tile.row)!;
     t.object = kind;
     t.walkable = false; // amenity props are ALWAYS non-walkable (§3.4 rule)
@@ -1075,6 +1227,18 @@ export class World implements PathGrid {
         this.clearNeedBreak(p, { hold: true });
       }
     }
+    // Stage 2 (pre-impl MAJOR 1 — the orphaned-mess rep-leak): an overflowed
+    // can's `empty` job is deleted FIRST (releasing any worker), THEN
+    // removeMess — the overflow litter leaves WITH the can (its contents
+    // were the mess; the tile underneath is clean). Never a mess with no
+    // job and no minter left behind.
+    const job = this.jobAt(tile);
+    if (job) {
+      this.jobs.delete(job.id);
+      this.releaseJobWorker(job);
+      this.events.emit('jobChanged', { jobId: job.id });
+    }
+    this.removeMess(tile);
     const t = this.tileAt(tile.col, tile.row)!;
     t.object = null;
     t.walkable = true;
@@ -1549,6 +1713,7 @@ export class World implements PathGrid {
     updateWayfinding(this);
     updateMovement(this);
     updateTreatment(this);
+    updateMess(this); // Stage 2 (§4 / design §7 order): after treatment, before economy
     updateEconomy(this);
     // Movement may have delivered a posted greeter this tick — invalidate the
     // aura cache so post-tick queries (render overlay, next tick's systems)
@@ -1603,6 +1768,11 @@ export class World implements PathGrid {
       avgWaitGameMinutes !== null &&
       avgWaitGameMinutes < BALANCE.reputation.dayCloseWaitThresholdGameMinutes;
     if (waitBonusAwarded) this.applyReputation(BALANCE.reputation.dayCloseWaitBonus);
+    // Cleanliness reputation (Stage 2, §4.2): the ONE formula — the daily
+    // report row reads the same derivation. Beside the wait bonus, BEFORE
+    // the snapshot (closeDay order is load-bearing): the delta must land
+    // inside repDelta AND the report.
+    this.applyReputation(cleanlinessRepDelta(this.today.messTicks, this.today.arrivals));
     const report: DayReport = {
       ...this.today,
       day: this.clock.day - 1,

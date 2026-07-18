@@ -205,8 +205,14 @@ export class InspectPanel {
         this.line('Salary', `$${s.salaryPerDay}/day`) +
         this.line(
           'Duty',
-          staffDutyLabel(s.duty, this.reservationPhase(s.duty)) +
-            (s.firing ? ' (leaving after this patient)' : ''),
+          // Stage 2: job duties resolve their kind from world.jobs so the line
+          // reads "Cleaning" / "Emptying a trashcan"; the frozen format.ts
+          // fallback covers a job deleted mid-frame (S2.1 freeze).
+          staffDutyLabel(
+            s.duty,
+            this.reservationPhase(s.duty),
+            s.duty.kind === 'job' ? this.world.jobs.get(s.duty.jobId)?.kind : undefined,
+          ) + (s.firing ? ' (leaving after this patient)' : ''),
         );
       return;
     }
@@ -219,7 +225,12 @@ export class InspectPanel {
       const effectLine: Record<AmenityId, string> = {
         vending: this.line('Drinks', `$${BALANCE.needs.vendingPrice} per use`),
         plant: this.line('Effect', `Comfort aura, ${BALANCE.needs.plantAuraRadius} tiles`),
-        trashcan: this.line('Effect', 'Keeps the ER tidy'),
+        // Stage 2: `fill` is live trashcan contents (vending litter, §4.1) —
+        // frame-polled like every card field, no event needed; the capacity is
+        // the overflow threshold the sim reads (SSOT).
+        trashcan:
+          this.line('Effect', 'Keeps the ER tidy') +
+          this.line('Fill', `${amenity.fill}/${BALANCE.mess.trashcanCapacity}`),
       };
       this.body.innerHTML =
         `<div class="inspect-name">${esc(def.label)}</div>` + effectLine[amenity.kind];

@@ -4,7 +4,7 @@ import { ROOM_DEFS } from '../data/rooms';
 import type { Patient, NeedBreak } from '../entities/patient';
 import type { Room } from '../entities/room';
 import { findPath } from '../path/astar';
-import { ORTHOGONAL_STEPS, samePoint, type GridPoint } from '../types';
+import { ORTHOGONAL_STEPS, type GridPoint } from '../types';
 import type { World } from '../world';
 
 /**
@@ -121,6 +121,7 @@ function advanceBreak(
     patient.thirst = BALANCE.stats.vitalsMax;
     world.billFee(BALANCE.needs.vendingPrice, 'Vending', 'vending');
     world.today.vendingRevenue += BALANCE.needs.vendingPrice;
+    dropLitter(world, patient);
   }
   // clearNeedBreak re-runs assignWaitingSpot: the seat may be gone → the
   // standing fallback (Flow rule 4, unchanged machinery).
@@ -131,25 +132,63 @@ function orthAdjacent(a: GridPoint, b: GridPoint): boolean {
   return Math.abs(a.col - b.col) + Math.abs(a.row - b.row) === 1;
 }
 
+/**
+ * Vending-completion litter (Stage 2, §4.1 / impl plan §S2.2): the nearest
+ * NON-FULL trashcan within `litterTrashcanRadius` (Chebyshev, like the plant
+ * aura) takes the trash — `fill += 1` silently (no event; the inspect card
+ * is frame-polled). Tie-break: the FIRST minimal-distance can in
+ * `world.amenities` insertion order (placement order — save-stable, since
+ * `restoreInto` preserves it; pre-impl MINOR 11). No can in range → litter
+ * on the patient's tile.
+ *
+ * Overflow order (FROZEN — pre-impl MAJOR 2): a can REACHING
+ * `trashcanCapacity` mints the `empty` job FIRST, then addMess — addMess's
+ * one-job-per-target check then suppresses its own clean-job mint (no
+ * double-mint; the overflow decal on a non-walkable tile is fine, decals
+ * aren't collision).
+ */
+function dropLitter(world: World, patient: Patient): void {
+  const radius = BALANCE.mess.litterTrashcanRadius;
+  let best: { fill: number; tile: GridPoint } | null = null;
+  let bestDist = Infinity;
+  for (const amenity of world.amenities.values()) {
+    if (amenity.kind !== 'trashcan') continue;
+    if (amenity.fill >= BALANCE.mess.trashcanCapacity) continue; // full — skip
+    const dist = Math.max(
+      Math.abs(amenity.tile.col - patient.at.col),
+      Math.abs(amenity.tile.row - patient.at.row),
+    );
+    if (dist > radius || dist >= bestDist) continue; // strict: FIRST minimal wins
+    best = amenity;
+    bestDist = dist;
+  }
+  if (best === null) {
+    world.addMess('litter', patient.at);
+    return;
+  }
+  best.fill += 1;
+  if (best.fill >= BALANCE.mess.trashcanCapacity) {
+    world.mintJob('empty', best.tile); // FIRST (frozen order)
+    world.addMess('litter', best.tile); // finds the empty job — no clean mint
+  }
+}
+
 /** A legal vending STANDING zone (code review MAJOR 1 — the
  *  nearestFreeStandingTile `qualifies` rule): corridor or open-plan, never a
  *  walled-room interior. Walled interiors are walkable, and ORTHOGONAL_STEPS
  *  would otherwise happily pick one for a machine hugging a room's wall —
  *  the patient then paths in through the DOOR and drinks through the wall,
- *  loitering inside a treatment room (M3 no-loitering invariant). */
+ *  loitering inside a treatment room (M3 no-loitering invariant).
+ *
+ *  Stage 2 refactor note (impl plan §S2.1): the claim-time PICK moved onto
+ *  `world.standableTile` (zone + door rule, no opts — corridor-only; the
+ *  same-room exception cannot leak). THIS zone-only check stays local for
+ *  the walking→using FLIP, whose Stage-1 contract is FROZEN: the flip must
+ *  NOT gain the door rule (a patient legally standing on a door landing
+ *  mid-corridor still flips). */
 function standingZoneOk(world: World, p: GridPoint): boolean {
   const room = world.roomAt(p);
   return room === null || ROOM_DEFS[room.type].kind === 'open';
-}
-
-/** Door landings are exclusive infrastructure (Flow rules 4/14) — a vending
- *  stand must not squat on any room's door.inside/outside tile. */
-function onDoorTile(world: World, p: GridPoint): boolean {
-  for (const room of world.rooms.values()) {
-    if (!room.door) continue;
-    if (samePoint(room.door.inside, p) || samePoint(room.door.outside, p)) return true;
-  }
-  return false;
 }
 
 /**
@@ -216,7 +255,10 @@ function tryClaimVending(world: World, patient: Patient): 'claimed' | 'failed' |
     for (const step of ORTHOGONAL_STEPS) {
       const p = { col: machine.tile.col + step.col, row: machine.tile.row + step.row };
       if (!world.isWalkable(p)) continue;
-      if (!standingZoneOk(world, p) || onDoorTile(world, p)) continue;
+      // The ONE standing-zone rule (Stage 2 refactor, behavior-identical):
+      // corridor/open-plan + never a door landing. NO opts — vending stands
+      // stay corridor-only (the same-room exception cannot leak, §S2.1).
+      if (!world.standableTile(p)) continue;
       if (world.isTileClaimed(p, patient)) continue;
       stand = p;
       break;

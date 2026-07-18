@@ -62,20 +62,24 @@ describe('SSOT data integrity', () => {
     }
   });
 
-  it('every role appears in ≥1 condition step or staffs a standing-post room (GDD §4/§12)', () => {
+  it('every role appears in ≥1 condition step, staffs a standing post, or works the job queue', () => {
     const usedRoles = new Set<string>();
     for (const id of CONDITION_IDS) {
       for (const step of CONDITION_DEFS[id].steps) {
         for (const role of step.roles) usedRoles.add(role);
       }
     }
+    // Amenities Stage 2 (AMENITIES_PLAN §4.3): EVS works the facility JOB
+    // queue — dispatched via world.jobs (assignJobs), never condition steps
+    // or standing posts. A future maintenance role (Stage 3) joins this set.
+    const jobQueueRoles = new Set<string>(['evs']);
     for (const role of ROLE_IDS) {
       const standingPostSomewhere =
         ROLE_DEFS[role].standingPost &&
         ROOM_TYPES.some((type) => (ROOM_DEFS[type].staffedBy as readonly string[]).includes(role));
       expect(
-        usedRoles.has(role) || standingPostSomewhere,
-        `${role}: earns no condition step and no standing post`,
+        usedRoles.has(role) || standingPostSomewhere || jobQueueRoles.has(role),
+        `${role}: earns no condition step, no standing post, and no job-queue duty`,
       ).toBe(true);
     }
   });

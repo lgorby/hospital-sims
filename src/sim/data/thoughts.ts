@@ -51,6 +51,13 @@ export const THOUGHTS = {
     "…I couldn't hold it.",
     'This is the worst day of my life.',
   ],
+  // Stage 2: emitted at the vomit roll (mess.ts) — accidents already speak;
+  // a silent vomit read as a bug in review.
+  vomit: [
+    'Urrgh… I need a doctor…',
+    "I told them I wasn't feeling well.",
+    'Someone should clean that up…',
+  ],
 } as const;
 
 export type ThoughtKey = keyof typeof THOUGHTS;

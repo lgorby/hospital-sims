@@ -4,6 +4,7 @@ import { gameMinutesToTicks, TICKS_PER_DAY } from '../src/sim/clock';
 import { BALANCE } from '../src/sim/data/balance';
 import type { ChallengeSpec } from '../src/sim/data/challenges';
 import type { DayReport } from '../src/sim/dailyStats';
+import { cleanlinessRepDelta } from '../src/sim/formulas';
 import { setupNewGame } from '../src/sim/newGame';
 import { World } from '../src/sim/world';
 import { ChallengeController } from '../src/ui/challengeController';
@@ -206,7 +207,17 @@ describe('End-to-end reached run drives the coordinator (real World)', () => {
     expect(emitted).toHaveBeenCalledTimes(1);
     const payload = emitted.mock.calls[0]![0];
     expect(payload.context.report.waitBonusAwarded).toBe(true);
-    expect(payload.score).toBe(preClose + BALANCE.reputation.dayCloseWaitBonus);
+    // Stage-2 re-pin: closeDay now ALSO applies the cleanliness delta beside
+    // the wait bonus (before the snapshot) — this untreated day accumulates
+    // real vomit mess-ticks, so the exact score carries both terms. The
+    // assert stays non-vacuous for its original target: snapshotting before
+    // applying the bonus still fails it.
+    const report = payload.context.report;
+    expect(payload.score).toBe(
+      preClose +
+        BALANCE.reputation.dayCloseWaitBonus +
+        cleanlinessRepDelta(report.messTicks, report.arrivals),
+    );
   });
 
   it('tie-break: a bust exactly ON the goal-day midnight is a DNF (bank forecloses first)', () => {
