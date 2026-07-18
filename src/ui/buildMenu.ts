@@ -41,6 +41,9 @@ export class BuildMenu {
     private commands: CommandQueue,
     private events: EventBus,
     private bottomBar: BottomBarDropdowns,
+    /** Phase 2: a challenge run hides debug affordances (the spawn button) so
+     *  the build bar carries no inert, comparability-breaking controls. */
+    private challengeMode = false,
   ) {}
 
   mount(root: HTMLElement): void {
@@ -58,11 +61,16 @@ export class BuildMenu {
     this.staffButton = BuildMenu.button('Staff'); // wired by HirePanel via the coordinator
     this.sellButton = BuildMenu.button('Sell', () => this.toggleSell());
     this.sellButton.classList.add('sell');
-    const spawn = BuildMenu.button('Spawn Patient', () =>
-      this.commands.push({ type: 'debugSpawnPatient' }),
-    );
-    spawn.classList.add('debug');
-    bar.append(this.staffButton, this.sellButton, spawn);
+    bar.append(this.staffButton, this.sellButton);
+    // Debug spawn button: omitted in challenge mode (the World would reject its
+    // debugSpawnPatient anyway — no inert button, provably debug-free, §7).
+    if (!this.challengeMode) {
+      const spawn = BuildMenu.button('Spawn Patient', () =>
+        this.commands.push({ type: 'debugSpawnPatient' }),
+      );
+      spawn.classList.add('debug');
+      bar.appendChild(spawn);
+    }
 
     this.hintEl = document.createElement('div');
     this.hintEl.id = 'hint';

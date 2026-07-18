@@ -120,6 +120,13 @@ export class World implements PathGrid {
     readonly events: EventBus,
     /** The boot seed — display/bookkeeping only once ticks have run (saves carry rng state). */
     readonly seed: number,
+    /**
+     * Phase 2: a challenge run rejects every `debug*` command at the mutation
+     * gate (plan §7). Runtime state only — NOT `src/sim` source and NOT saved,
+     * so `save.ts`'s `new World(events, seed)` compiles untouched and a save
+     * reloaded via `?load=` is a normal (non-challenge) run.
+     */
+    readonly challengeMode = false,
   ) {
     this.rng = new SeededRng(seed);
     this.grid = Array.from({ length: this.cols }, () =>
@@ -416,6 +423,13 @@ export class World implements PathGrid {
   }
 
   private applyCommand(command: Command): void {
+    // Phase 2 (plan §7, owner ruling §10.3): a challenge run is provably
+    // debug-free — every `debug*` command is dropped here at the one mutation
+    // gate. `startsWith('debug')` covers the COMPLETE set (all debug commands
+    // are so prefixed; no non-debug command is), so a future `debug*` is
+    // auto-covered. Rejection is a pure no-op: the rejected `debug*` commands
+    // that draw `world.rng` never run, so the scored run's stream is unperturbed.
+    if (this.challengeMode && command.type.startsWith('debug')) return;
     switch (command.type) {
       case 'buildRoom':
         this.buildRoom(command.roomType, command.rect, command.doorOutside);
@@ -1169,7 +1183,12 @@ export class World implements PathGrid {
     if (this.clock.tick - this.bankruptSinceTick < graceTicks) return;
     this.gameOver = true;
     this.events.emit('gameOver', {
-      day: this.clock.day,
+      // The day that actually elapsed. At a midnight tick `clock.day` has
+      // already rolled to the next day, so report the day that just closed —
+      // otherwise "lasted N days" / the DNF "busted day N" over-count by one
+      // (final review, finding 1b). A bust can only fire well after grace, so
+      // this is never day 0.
+      day: this.clock.isMidnight ? this.clock.day - 1 : this.clock.day,
       cash: this.cash,
       reputation: this.reputation,
       treated: this.lifetimeTreated,

@@ -1,5 +1,12 @@
+import { CHALLENGE_DEFS, CHALLENGE_IDS, type ChallengeId } from '../sim/data/challenges';
 import { SaveLoadModal } from './saveLoad';
 import { hasAnySave, mostRecentSlot, navigateToLoad } from './saveStore';
+
+/** Boot a built-in challenge — a full reload onto `?challenge=<id>` (the
+ *  shareable form), mirroring the new-game `?seed=` navigation. */
+function navigateToChallenge(id: ChallengeId): void {
+  window.location.assign(`${window.location.pathname}?challenge=${id}`);
+}
 
 /**
  * Title screen (M4 new-game flow): shown when the URL carries no seed/load.
@@ -54,11 +61,35 @@ export class TitleScreen {
         else this.renderButtons(container, modal);
       });
       this.button(container, 'New Game', 'title-alt', () => this.onNewGame());
+      this.button(container, 'Challenges', 'title-alt', () => this.renderChallenges(container, modal));
       this.button(container, 'Load Game', 'title-alt', () => modal.open());
     } else {
       this.button(container, 'New Game', 'modal-continue', () => this.onNewGame());
+      this.button(container, 'Challenges', 'title-alt', () => this.renderChallenges(container, modal));
       this.button(container, 'Import Save', 'title-alt', () => modal.open());
     }
+  }
+
+  /** Phase 2 (plan §6): the curated built-in roster. Each entry boots its
+   *  `?challenge=<id>` run; Back returns to the main menu. */
+  private renderChallenges(container: HTMLElement, modal: SaveLoadModal): void {
+    container.replaceChildren();
+    for (const id of CHALLENGE_IDS) {
+      const def = CHALLENGE_DEFS[id];
+      const entry = document.createElement('button');
+      entry.className = 'title-challenge';
+      entry.setAttribute('data-ui', '');
+      const name = document.createElement('span');
+      name.className = 'title-challenge-name';
+      name.textContent = def.label;
+      const blurb = document.createElement('span');
+      blurb.className = 'title-challenge-blurb';
+      blurb.textContent = def.blurb;
+      entry.append(name, blurb);
+      entry.addEventListener('click', () => navigateToChallenge(id));
+      container.appendChild(entry);
+    }
+    this.button(container, 'Back', 'title-alt', () => this.renderButtons(container, modal));
   }
 
   private button(

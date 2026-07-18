@@ -1,7 +1,13 @@
 import { GAME_MINUTES_PER_HOUR, GAME_MINUTES_PER_TICK, gameMinutesToTicks } from './clock';
 import { BALANCE } from './data/balance';
+import {
+  SCORE_METRICS,
+  type ChallengeContext,
+  type ChallengeGoal,
+} from './data/challenges';
 import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditions';
 import { ROOM_DEFS, type RoomType } from './data/rooms';
+import { dayNet } from './dailyStats';
 import { rectTiles, type GridPoint, type Rect } from './types';
 
 /**
@@ -148,4 +154,28 @@ export function auraCoversTile(footprint: Rect, p: GridPoint, radius: number): b
     if (dc * dc + dr * dr <= radiusSq) return true;
   }
   return false;
+}
+
+/**
+ * Challenge scoring (plan §5): the ONE place a goal-metric becomes a number.
+ * `SCORE_METRICS[metric].kind` selects the source; reads existing SSOT fields
+ * only (no re-tally). Returns `null` ONLY for a daily-flow metric on a DNF
+ * (no day closed) — snapshot/cumulative metrics score on both terminals.
+ */
+export function scoreChallenge(goal: ChallengeGoal, ctx: ChallengeContext): number | null {
+  const metric = SCORE_METRICS[goal.metric];
+  switch (metric.kind) {
+    case 'snapshot':
+    case 'cumulative':
+      return ctx.terminal[metric.field];
+    case 'dailyFlow':
+      if (ctx.report === null) return null;
+      return metric.field === 'net' ? dayNet(ctx.report) : ctx.report[metric.field];
+    default: {
+      // A new SCORE_METRICS kind must extend this switch — else the compiler
+      // flags it here instead of silently returning undefined (: number | null).
+      const exhaustive: never = metric;
+      return exhaustive;
+    }
+  }
 }

@@ -91,7 +91,16 @@ export class GameLoop {
     if (this.lastTime !== null && this.speedValue > 0) {
       this.accumulator += (now - this.lastTime) * this.speedValue;
       let ticksThisFrame = 0;
-      while (this.accumulator >= TICK_MS && ticksThisFrame < MAX_TICKS_PER_FRAME) {
+      // Re-check speed each iteration: a tick can emit `dayEnded`/`gameOver`,
+      // whose overlay handler calls setSpeed(0). Without this guard the sim
+      // would run the rest of the catch-up burst behind a just-opened "paused"
+      // modal — advancing the world (and risking a second overlay, e.g.
+      // bankruptcy stacking on the reached card) while it looks stopped.
+      while (
+        this.accumulator >= TICK_MS &&
+        ticksThisFrame < MAX_TICKS_PER_FRAME &&
+        this.speedValue > 0
+      ) {
         this.world.tick();
         this.accumulator -= TICK_MS;
         ticksThisFrame += 1;

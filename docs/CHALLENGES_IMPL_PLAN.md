@@ -1,6 +1,24 @@
 # Phase 2 — Seed Challenges: implementation plan (draft v2)
 
-**Status: PLANNING (2026-07-17). No code yet.** How to build the ratified scope
+**Status: IMPLEMENTED & SHIPPED (2026-07-17).** Built per this plan through the
+full milestone workflow (freeze → Track 1 sim → review → Track 2 UI → review →
+integration live-drive → 2 final adversarial reviews → gates → commit). 223
+tests green (46 new across `test/challenge.test.ts`, `challengeController.test.ts`,
+`challengeUi.dom.test.ts`; `happy-dom` added for the UI-DOM tests). Deltas from
+this plan, folded in during build (kept here so "frozen" stays honest):
+- **`ChallengeContext` gained `day`** (the terminal day) — needed to source the
+  bust day for the DNF "busted day N" share line, where `report` is null.
+- **`ChallengeResult` gained `spec`** — so the result card and game-over screen
+  render self-contained without threading the spec (mirrors the event payload).
+- **`SCORE_METRICS` gained `unit`** ('money' | 'count') — the display format is
+  SSOT on the table; the UI never re-derives it from field names.
+- **Malformed BARE seed → title** (was: auto-roll a fresh seed) — keeps
+  `resolveBoot` pure/total and kills silent URL↔world disagreement (see §4 note).
+- New shared `src/ui/pausingOverlay.ts` (the "modal owns the clock" dance, DRY).
+- Final-review fixes: the catch-up loop halts when a tick pauses it
+  (`loop.ts`), and the `gameOver` payload reports the closed day at midnight.
+
+**Original plan below (PLANNING, 2026-07-17).** How to build the ratified scope
 in `docs/CHALLENGES_PLAN.md`. This is the *code* plan; it passed one
 pre-implementation adversarial review (2 major, 4 minor, 2 nit) — v2 folds the
 findings in. Design decisions live in CHALLENGES_PLAN; this doc is file layout,

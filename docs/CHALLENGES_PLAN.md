@@ -202,7 +202,11 @@ New precedence, all parsing in `src/sim/challenge.ts`:
      out-of-range seed) is a readable boot-failure card (`showBootFailure`),
      NEVER a fresh random roll.** This is the MAJOR-3 fix: presence of
      `challenge`/`goal` disables the roll-fresh fallback entirely.
-3. `?seed=<digits>` (no challenge/goal) — unchanged bare-seed behavior.
+3. `?seed=<digits>` (no challenge/goal) — a VALID bare seed boots that seed
+   (unchanged). **A malformed bare seed now falls through to the title screen**
+   (implementation refinement — was: auto-roll a fresh random seed). This keeps
+   `resolveBoot` pure + total and removes the silent URL↔world disagreement the
+   auto-roll caused; nothing depended on the old behavior.
 4. else → title.
 
 **Seed canonicalization (finding NIT 2):** challenge seeds — builtin and ad-hoc

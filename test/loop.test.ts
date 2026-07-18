@@ -63,6 +63,29 @@ describe('GameLoop', () => {
     expect(world.clock.tick).toBe(20);
   });
 
+  it('stops the catch-up burst the instant a tick pauses the loop', () => {
+    // A midnight overlay (daily report / challenge card) pauses mid-frame via a
+    // tick's dayEnded handler. The burst must halt at that tick, not run the
+    // rest of the owed ticks behind the "paused" modal (final review, finding 2).
+    const events = new EventBus();
+    const commands = new CommandQueue();
+    const host = new FakeHost();
+    let ticks = 0;
+    const pausingWorld = {
+      applyCommands(): void {},
+      tick(): void {
+        ticks += 1;
+        if (ticks === 3) loop.setSpeed(0); // as a midnight overlay would (deferred: runs after `loop` exists)
+      },
+    } as unknown as World;
+    const loop = new GameLoop(pausingWorld, commands, events, () => {}, host);
+    loop.start();
+    host.step(0);
+    host.step(10_000); // owes 100 ticks — but tick 3 pauses, so it must stop at 3
+    expect(ticks).toBe(3);
+    expect(loop.speed).toBe(0);
+  });
+
   it('drains commands while paused without advancing time', () => {
     const { world, commands, host, loop } = makeLoop();
     loop.start();

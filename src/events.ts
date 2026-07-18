@@ -1,3 +1,4 @@
+import type { ChallengeContext, ChallengeSpec } from './sim/data/challenges';
 import type { DayReport } from './sim/dailyStats';
 
 /**
@@ -7,6 +8,16 @@ import type { DayReport } from './sim/dailyStats';
 /** Game speed multiplier; 0 = paused. Declared here (the payload SSOT) — loop.ts re-exports it. */
 export type Speed = 0 | 1 | 2 | 3;
 
+/** Bankruptcy terminal payload (M4). Named so the challenge controller's
+ *  `onGameOver` and the game-over screen share one declaration (SSOT). */
+export interface GameOverPayload {
+  day: number;
+  cash: number;
+  reputation: number;
+  treated: number;
+  died: number;
+}
+
 export interface EventMap {
   /** Loop-layer speed changed (0 = paused). */
   speedChanged: { speed: Speed };
@@ -14,7 +25,18 @@ export interface EventMap {
   /** Midnight day-close snapshot (M4 daily report). */
   dayEnded: DayReport;
   /** Bankruptcy lose-state (M4): cash below threshold for a full game day. Sim is frozen. */
-  gameOver: { day: number; cash: number; reputation: number; treated: number; died: number };
+  gameOver: GameOverPayload;
+  /**
+   * Phase 2 challenge terminal (plan §5): emitted once, at the FIRST terminal —
+   * `dayEnded` at `goal.day` (reached) or `gameOver` before it (dnf). `score`
+   * is `null` for a daily-flow metric on a DNF. The controller once-latches.
+   */
+  challengeComplete: {
+    spec: ChallengeSpec;
+    outcome: 'reached' | 'dnf';
+    score: number | null;
+    context: ChallengeContext;
+  };
   roomBuilt: { roomId: number };
   roomSold: { roomId: number };
   /** A build/sell command failed sim-side validation (UI shows the reason). */

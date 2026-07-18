@@ -51,6 +51,9 @@ const EVENT_NAMES: Record<EventName, true> = {
   hint: true,
   reputationChanged: true,
   debugMarkerToggled: true,
+  // UI-emitted (challenge controller), never fires in a sim-only save
+  // round-trip — listed so the completeness gate stays exhaustive.
+  challengeComplete: true,
 };
 const ALL_EVENTS = Object.keys(EVENT_NAMES) as EventName[];
 

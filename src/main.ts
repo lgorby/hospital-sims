@@ -4,6 +4,8 @@ import { GameLoop } from './loop';
 import { WorldRenderer } from './render/renderer';
 import { BottomBarDropdowns } from './ui/bottomBar';
 import { BuildMenu } from './ui/buildMenu';
+import { ChallengeController } from './ui/challengeController';
+import { ChallengeResultCard } from './ui/challengeResultCard';
 import { Checklist } from './ui/checklist';
 import { DailyReportModal } from './ui/dailyReport';
 import { DebugPanel } from './ui/debugPanel';
@@ -11,17 +13,17 @@ import { GameOverScreen } from './ui/gameOver';
 import { HirePanel } from './ui/hirePanel';
 import { Hud } from './ui/hud';
 import { InspectPanel } from './ui/inspect';
+import { MidnightModalCoordinator } from './ui/midnightModal';
 import { SaveLoadModal, installAutosave } from './ui/saveLoad';
 import { isSlotName, readSlotRaw, slotLabel } from './ui/saveStore';
 import { ThoughtLog } from './ui/thoughtLog';
 import { TitleScreen } from './ui/title';
 import { Toasts } from './ui/toasts';
+import { resolveBoot, SEED_MAX } from './sim/challenge';
+import type { ChallengeSpec } from './sim/data/challenges';
 import { setupNewGame } from './sim/newGame';
 import { loadWorld } from './sim/save';
 import { World } from './sim/world';
-
-// Seeds are 31-bit non-negative ints — comfortably URL- and rng-safe.
-const SEED_LIMIT = 0x80000000;
 
 /** New game = navigate to ?seed=<random>. A full reload is the teardown-free
  *  way to boot a fresh deterministic world (and makes runs shareable). */
@@ -29,8 +31,9 @@ function startNewGame(): void {
   const url = new URL(window.location.href);
   url.searchParams.delete('load'); // a fresh run must not re-load a save
   // Math.random is fine HERE (bootstrap layer): the seed is the boundary —
-  // everything inside the sim draws from world.rng only.
-  url.searchParams.set('seed', String(Math.floor(Math.random() * SEED_LIMIT)));
+  // everything inside the sim draws from world.rng only. SEED_MAX is the one
+  // seed-bound SSOT (challenge.ts) — the roll and challenge seeds agree.
+  url.searchParams.set('seed', String(Math.floor(Math.random() * SEED_MAX)));
   window.location.assign(url.toString());
 }
 
@@ -55,8 +58,11 @@ function showBootFailure(title: string, message: string): void {
   document.getElementById('ui')!.appendChild(failure);
 }
 
-/** How to obtain the World: a fresh deterministic run, or a Phase-1 save string. */
-type Boot = { kind: 'new'; seed: number } | { kind: 'load'; raw: string };
+/** How to obtain the World: a fresh run, a Phase-1 save, or a challenge run. */
+type Boot =
+  | { kind: 'new'; seed: number }
+  | { kind: 'load'; raw: string }
+  | { kind: 'challenge'; spec: ChallengeSpec };
 
 async function bootstrap(boot: Boot): Promise<void> {
   const events = new EventBus();
@@ -74,6 +80,11 @@ async function bootstrap(boot: Boot): Promise<void> {
       return;
     }
     world = result.world;
+  } else if (boot.kind === 'challenge') {
+    // Challenge mode: a fresh deterministic run whose World rejects every
+    // debug* command (plan §7). Seed lives inside the scenario.
+    world = new World(events, boot.spec.scenario.seed, true);
+    setupNewGame(world);
   } else {
     world = new World(events, boot.seed);
     setupNewGame(world);
@@ -95,7 +106,7 @@ async function bootstrap(boot: Boot): Promise<void> {
   // GDD §9 ruling: bottom-bar panels are mutually exclusive dropdowns — the
   // coordinator is shared so no panel needs to know about the others.
   const bottomBar = new BottomBarDropdowns();
-  const buildMenu = new BuildMenu(renderer, commands, events, bottomBar);
+  const buildMenu = new BuildMenu(renderer, commands, events, bottomBar, world.challengeMode);
   buildMenu.mount(uiRoot);
   const jump = (col: number, row: number): void => renderer.jumpTo(col, row);
   new Toasts(events, world, jump).mount(uiRoot);
@@ -103,10 +114,28 @@ async function bootstrap(boot: Boot): Promise<void> {
   new ThoughtLog(events, jump, bottomBar).mount(uiRoot, document.getElementById('buildbar')!);
   const inspect = new InspectPanel(world, commands, renderer);
   inspect.mount(uiRoot);
-  new DebugPanel(renderer, commands).mount(uiRoot);
+  // A challenge run is provably debug-free (plan §7): the World rejects debug*
+  // commands, and the dev panel that would send them isn't even mounted, so a
+  // stray backtick reveals nothing.
+  if (boot.kind !== 'challenge') new DebugPanel(renderer, commands).mount(uiRoot);
   new Checklist(world, events).mount(uiRoot);
-  new DailyReportModal(loop, events).mount(uiRoot);
-  new GameOverScreen(loop, events, startNewGame).mount(uiRoot);
+
+  // Midnight overlays (plan §6): the coordinator is the SINGLE `dayEnded`
+  // owner — it opens the daily report OR (in a challenge, at goal.day) the
+  // result card, never both. A challenge run also wires the controller + card.
+  const coordinator = new MidnightModalCoordinator(events);
+  const dailyReport = new DailyReportModal(loop, events);
+  dailyReport.mount(uiRoot);
+  coordinator.setDailyReport(dailyReport);
+
+  let controller: ChallengeController | null = null;
+  if (boot.kind === 'challenge') {
+    controller = new ChallengeController(world, events, boot.spec);
+    const resultCard = new ChallengeResultCard(loop, events);
+    resultCard.mount(uiRoot);
+    coordinator.setChallenge(controller, resultCard);
+  }
+  new GameOverScreen(loop, events, startNewGame, controller).mount(uiRoot);
 
   // Phase-1 persistence: the save/load modal (HUD button opens it) and the
   // UI-side autosave subscriber (sim never touches localStorage).
@@ -129,35 +158,43 @@ function runBoot(boot: Boot): void {
   });
 }
 
-const params = new URLSearchParams(window.location.search);
-const loadParam = params.get('load');
-const seedParam = params.get('seed');
-
-if (loadParam !== null) {
-  // ?load=<slot> — full-reload load flow (mirrors the ?seed= boot contract).
-  if (!isSlotName(loadParam)) {
-    showBootFailure(
-      'This save could not be loaded',
-      `"${loadParam}" is not a save slot (expected 1, 2, 3, or auto).`,
-    );
-  } else {
-    const raw = readSlotRaw(loadParam);
+// All boot-param grammar lives in `resolveBoot` (sim, pure + tested). main.ts
+// only turns the decision into the right side effect. The `load` slot is
+// validated + read HERE (localStorage is UI-side); everything else is decided.
+const action = resolveBoot(new URLSearchParams(window.location.search));
+switch (action.kind) {
+  case 'load': {
+    // ?load=<slot> — full-reload load flow (mirrors the ?seed= boot contract).
+    if (!isSlotName(action.slot)) {
+      showBootFailure(
+        'This save could not be loaded',
+        `"${action.slot}" is not a save slot (expected 1, 2, 3, or auto).`,
+      );
+      break;
+    }
+    const raw = readSlotRaw(action.slot);
     if (raw === null) {
       showBootFailure(
         'This save could not be loaded',
-        `${slotLabel(loadParam)} is empty or unreadable in this browser. ` +
+        `${slotLabel(action.slot)} is empty or unreadable in this browser. ` +
           'Saves live in browser storage — on a new machine, use Import on the title screen.',
       );
-    } else {
-      runBoot({ kind: 'load', raw });
+      break;
     }
+    runBoot({ kind: 'load', raw });
+    break;
   }
-} else if (seedParam !== null && /^\d{1,10}$/.test(seedParam)) {
-  // Strict digits-only (M4 review #8): parseInt would silently boot '?seed=1e5'
-  // as seed 1, making the URL and the HUD chip disagree about the run's name.
-  runBoot({ kind: 'new', seed: Number.parseInt(seedParam, 10) });
-} else if (seedParam !== null) {
-  startNewGame(); // malformed seed → roll a fresh one (writes a valid integer)
-} else {
-  new TitleScreen(startNewGame).mount(document.getElementById('ui')!);
+  case 'challenge':
+    runBoot({ kind: 'challenge', spec: action.spec });
+    break;
+  case 'seed':
+    runBoot({ kind: 'new', seed: action.seed });
+    break;
+  case 'failure':
+    // A malformed challenge is a readable card, never a fresh roll (MAJOR-3).
+    showBootFailure('This challenge could not start', action.reason);
+    break;
+  case 'title':
+    new TitleScreen(startNewGame).mount(document.getElementById('ui')!);
+    break;
 }

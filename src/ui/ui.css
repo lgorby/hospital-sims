@@ -756,3 +756,73 @@ body {
 #readout:empty {
   display: none;
 }
+
+/* -------------------------------------------- Phase 2: seed challenges */
+
+/* Title-screen challenge roster: a stacked label + blurb, reusing .title-alt's
+   outline so it sits in the same button column. */
+.title-challenge {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  background: transparent;
+  color: #e8e6e0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.title-challenge:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.title-challenge-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.title-challenge-blurb {
+  font-size: 12px;
+  color: #9fb0c5;
+}
+
+/* Result-card share block: a selectable claim + link + copy button. */
+.share-box {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.share-line {
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.share-url {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  color: #9fb0c5;
+  word-break: break-all;
+  user-select: all;
+  margin-bottom: 8px;
+}
+
+.share-copy {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  background: transparent;
+  color: #e8e6e0;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.share-copy:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
