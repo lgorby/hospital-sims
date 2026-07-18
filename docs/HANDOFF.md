@@ -228,12 +228,13 @@ Both were hardened by independent adversarial reviews before any code was writte
   uses) were harness-tuned but not yet felt over long real sessions; the
   restroom-usage balance pass (OWNER DECISIONS 3) awaits the owner's feel
   check on the live build.
-- **NEXT SESSION STARTS HERE → quick passes, in order:** (1) **fun-name
-  pool expansion** (owner ask 2026-07-18): grow FIRST_NAMES/LAST_NAMES in
-  `src/sim/data/names.ts` — the draw COUNT is unchanged (picks shift, so
-  re-pin any test that pins a literal name; grep first); keep the
-  warm/Theme-Hospital-silly register. (2) patient click-highlight (thought
-  log already pans; add a selection pulse). (3) capacity/contention hints
+- **Fun-name pool expansion: DONE (2026-07-18, owner ask)** — FIRST_NAMES
+  40→72, LAST_NAMES 30→54 (~3,900 combos), same register; draw count
+  unchanged, zero test fallout (no literal name was pinned anywhere —
+  grepped and suite-verified).
+- **NEXT SESSION STARTS HERE → quick passes, in order:** (1) patient
+  click-highlight (thought log already pans; add a selection pulse).
+  (2) capacity/contention hints
   ("expand your ER or build another" — the panel's `roomChanged`
   invalidation is pre-wired). Banked NITs (fix opportunistically): the
   trap-BFS doesn't re-check existing ATRIUM footprints; room/expand ghost

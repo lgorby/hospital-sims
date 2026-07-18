@@ -1,12 +1,20 @@
 import type { SeededRng } from '../rng';
 
-/** Procedural people names (GDD §3) — deliberately warm, a little Theme-Hospital silly. */
+/** Procedural people names (GDD §3) — deliberately warm, a little
+ *  Theme-Hospital silly. Owner ask 2026-07-18: MORE fun names. Expanding
+ *  these pools changes which names seeded rng picks (intBelow(length)) but
+ *  NOT the draw count — the rng stream is otherwise untouched, and no test
+ *  pins a literal generated name (grepped before the expansion). */
 const FIRST_NAMES = [
   'Doris', 'Earl', 'Marge', 'Stanley', 'Pearl', 'Vern', 'Agnes', 'Chester',
   'Ida', 'Floyd', 'Ruthie', 'Mel', 'Opal', 'Gus', 'Blanche', 'Homer',
   'Sadie', 'Wally', 'Edna', 'Bert', 'Flo', 'Ned', 'Gladys', 'Rufus',
   'Maribel', 'Otis', 'Lucille', 'Amos', 'Twyla', 'Cyrus', 'Nadine', 'Percy',
   'Priya', 'Marcus', 'Yolanda', 'Dmitri', 'Keisha', 'Santiago', 'Mei', 'Kofi',
+  'Bernice', 'Clyde', 'Mabel', 'Horace', 'Winnie', 'Lester', 'Fanny', 'Basil',
+  'Petunia', 'Wilbur', 'Greta', 'Norbert', 'Dottie', 'Ernie', 'Prudence', 'Alvin',
+  'Roz', 'Mortimer', 'Hattie', 'Seymour', 'Bea', 'Reginald', 'Cora', 'Virgil',
+  'Ingrid', 'Ravi', 'Consuela', 'Bjorn', 'Fatima', 'Giuseppe', 'Anka', 'Tobias',
 ] as const;
 
 const LAST_NAMES = [
@@ -15,6 +23,10 @@ const LAST_NAMES = [
   'Limpkin', 'Mudd', 'Noodleman', 'Ollivander', 'Pratt', 'Quimby',
   'Rumford', 'Splint', 'Throckmorton', 'Umbridge', 'Vole', 'Wexler',
   'Yarrow', 'Zink', 'Okafor', 'Reyes', 'Nakamura', 'Petrov',
+  'Bumbleford', 'Crumpet', 'Dandywine', 'Figgins', 'Gristle', 'Higginbottom',
+  'Inkwell', 'Jitters', 'Kettleworth', 'Lollygag', 'Mumford', 'Nettlebed',
+  'Puddifoot', 'Quibble', 'Rattlesby', 'Sneed', 'Tumbler', 'Wobblesworth',
+  'Fiddlesticks', 'Ganderpoke', 'Bristlecone', 'Marmalade', 'Ozturk', 'Delacroix',
 ] as const;
 
 export interface PersonName {
