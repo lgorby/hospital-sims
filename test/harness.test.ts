@@ -269,6 +269,17 @@ describe('headless balance harness (M4)', () => {
     for (const id of expansionConditions) {
       expect(s.treatedByCondition.get(id) ?? 0, `${id} discharged`).toBeGreaterThan(0);
     }
+    // The RESPIRATORY pair, added ahead of DEPARTMENTS_PLAN §3 (pre-impl
+    // review MAJOR 4). The floor above covers only the §12 expansion
+    // conditions, so asthma + pneumonia — 25 of 148 arrival weight — had NO
+    // per-condition guard at all: exam contention could starve both to ZERO
+    // discharges while `totalTreated > 30` and `totalDied < totalTreated/2`
+    // stayed green on the other twelve. This lands BEFORE the routing change
+    // it guards, and is proven green on the OLD (`resp`-routed) build — a
+    // regression of record is worthless if it ships alongside its own change.
+    for (const id of ['asthma', 'pneumonia'] as ConditionId[]) {
+      expect(s.treatedByCondition.get(id) ?? 0, `${id} discharged`).toBeGreaterThan(0);
+    }
     // Finance state, asserted LIVE rather than assumed, so the seeded run is
     // not making a vacuous claim. (History note: the finances epic was the
     // first save bump that added no role and so kept seed 1338 un-re-pinned —

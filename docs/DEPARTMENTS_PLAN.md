@@ -1,6 +1,6 @@
-# The Departments epic — three capacity units, not one (plan v1, DRAFT)
+# The Departments epic — three capacity units, not one (plan v2)
 
-**Status: DRAFT — awaiting pre-implementation adversarial review. No code.**
+**Status: §3 (Stage 1) REVIEW-HARDENED and owner-ratified — implementing. §4 (Stage 2) still DRAFT, awaiting its own review.**
 
 Owner asks (2026-07-19):
 1. *"I did expand respiratory room but it did not add new bays"* — the bug that
@@ -52,67 +52,202 @@ The `single` rule does not disappear — an OR and an X-ray room each genuinely
 hold one patient (§1, FGI). What changes is that those rooms become **members
 of a department** that scales, instead of isolated buildings.
 
-## 3. Stage 1 — respiratory therapy: the room that should not exist
+## 3. Stage 1 - retire the respiratory therapy room
 
-**Owner-decided (2026-07-19), and the research is unambiguous.** Patients are
-not seen in a respiratory therapy room; the therapist comes to them.
+**Status: REVIEW-HARDENED v2.** Two independent pre-implementation reviews
+(code/save: 5 MAJOR + 7 MINOR + 3 NIT; design/balance: 5 MAJOR + 2 MINOR +
+1 NIT), both PROCEED WITH CHANGES. Owner re-ratified retirement 2026-07-19
+**after** being shown the evidence is weaker than v1 claimed (SS3.0).
 
-**The change follows Stage A's principle exactly — change the ROOM of existing
-steps, never lengthen chains** (`ED_PLAN` §2), which is the cheapest possible
-intervention and isolates the variable:
+### 3.0 The honest state of the evidence (design review MAJOR 4)
 
-| Condition | Step | Was | Proposed | Why |
+v1 said the research showed RT "should not be a room". **It does not.** AARC's
+document is a *staffing methodology*, and "a staffing guide contains no spatial
+capacity unit" is a fact about that document, not about architecture - absence
+of evidence, run against a source that was never about space. The reviewer also
+names a counterexample the research never sought: **pulmonary function testing
+is a genuinely room-based, appointment-scheduled RT service.**
+
+What the research DOES establish, at 3-0: nebulizer and ventilator care are
+delivered at the **bedside** by a mobile therapist, and treating several
+patients at once is prohibited. That supports the **routing** change. It does
+not, by itself, support removing the building.
+
+**The owner was shown this and chose retirement anyway (2026-07-19).** Recorded
+so no future reader mistakes it for a research conclusion: it is a game-design
+decision - patients are not treated there under the new routing, so the room
+has no purpose - taken with the evidentiary gap in full view.
+
+### 3.1 The routing change
+
+| Condition | Step | Was | Now | Why |
 |---|---|---|---|---|
-| Asthma | Nebulizer (45 min) | `resp` | `exam` | An RT delivers the neb at the patient's bedside |
-| Pneumonia | Respiratory therapy (60 min) | `resp` | `exam` | Same; the X-ray step ahead of it is unchanged |
+| Asthma | Nebulizer (45 min, $400) | `resp` | `exam` | The RT delivers the neb at the bedside |
+| Pneumonia | Respiratory therapy (60 min, $500) | `resp` | `exam` | Same; its X-ray step is unchanged |
 
-`roles: ['respTherapist']` is **unchanged**, so the therapist is still the
-binding resource — which is exactly the research's point. `respTherapist` must
-join `exam.staffedBy` (and any other host room) or the `data.test.ts`
-structural invariant (`step.roles ⊆ room.staffedBy`) fails.
+`roles: ['respTherapist']` unchanged, so `respTherapist` joins
+`exam.staffedBy` (required by the `step.roles` subset-of `room.staffedBy`
+invariant, `data.test.ts:37`).
 
-**Open: which host room?** `exam` is the conservative choice (both conditions
-are acuity 2–3). `er` is arguably right for a severe asthma attack. The review
-should rule; splitting by condition is legal and free.
+**Host is `exam`, RULED - not left open.** The ER would take Wq from 10.6 to
+**25 min** while already the busiest department and already carrying the SS5b
+nurse-capture issue; and a third role inside a `staffRatio` room entangles with
+the attention penalty and the anesthesia partial-gather hold.
 
-### 3.1 THE BLAST RADIUS — deleting a RoomType can brick live saves
+**v1's "splitting by condition is legal and free" is DELETED - it is useless.**
+Acuity is rolled per patient (`acuityMin/Max` 2-3) but `TreatmentStep.room` is
+**static per condition**, so the game cannot route a severe asthma attack
+differently from a mild one. Both reviewers caught this independently.
 
-**This is the plan's single biggest risk and it must be solved before any
-code.** `save.ts:900` validates with `asOneOf(o.type, ROOM_TYPES, ...)`, and
-`RoomType = keyof typeof ROOM_DEFS`. **Removing `resp` from `ROOM_DEFS` makes
-every existing save containing a Respiratory Therapy room refuse to load** —
-and the game is DEPLOYED (auto-deploy on push to `master`), so real player
-saves are in real browsers. That is the save-bricking class HANDOFF already
-records ("a tunable must not brick saves").
+**Stage 1 RELOCATES the room constraint; it does not implement the staff-hours
+model** (code review MINOR 8). The patient still occupies a `single` room for
+45-60 min. Do not let SS1's research be read as implemented - the honest
+staff-hours model is a later stage.
 
-Three candidate strategies, for the review to choose between:
+### 3.2 Balance - measured in weight x DURATION, not weight (both reviews, MAJOR)
 
-- **(a) Retire, don't delete.** `resp` stays in `ROOM_DEFS` and stays loadable,
-  but leaves the build menu (a `retired: true` flag, or removal from
-  `CATEGORY_LABELS` routing). No condition routes to it. Existing rooms remain
-  standing, sellable, and cosmetic. **Cheapest and safest; zero migration.**
-  Cost: a dead room type in the data table forever, and a player with one
-  wondering why it never fills — needs an inspect-card line saying so.
-- **(b) Migrate on load.** v10 `resp` rooms convert to `exam`. Risky: different
-  `minCols/minRows` (both 3×3 — compatible), different props (nebulizer vs
-  bed), different `failure` kind. A conversion that fails validation on a real
-  save is the same brick by another route.
-- **(c) Refund on load.** Convert the room to cash at sellback value and clear
-  the tiles. Honest and simple, but silently demolishes something the player
-  built — likely the worst player experience of the three.
+v1's "25 of 148 arrival weight" used the wrong denominator. Contention is
+arrivals x service time:
 
-**Recommendation: (a).** It is the only one that cannot brick a save, and the
-`isLoadableVersion` policy stays untouched.
+| Room | Weight-minutes |
+|---|---|
+| exam today | flu 30x30 + backInjury 8x30 + thyroid 6x25 = **1,290** |
+| exam after | + asthma 15x45 + pneumonia 10x60 = **2,565 (+99%)** |
+| er (post-B1) | **3,245** |
 
-### 3.2 Also in scope for Stage 1
+**But contention is NOT the risk.** Erlang-C at c=2: exam Wq **0.8 -> 4.4 min**,
+an order of magnitude below the ER's 53-min 1-bay knee (`ED_PLAN` SS5). Exam
+starts at rho 0.16 and lands at rho 0.33. The axis v1 worried about is fine.
 
-- The **harness reference build** contains a `resp` room and `respTherapist`
-  in `STANDARD_STAFF`. Both must be re-pointed, and the 5-seed probe re-run —
-  asthma (weight 15) and pneumonia (weight 10) are **25 of 148 arrival
-  weight**, so this is a real load shift onto `exam`, which currently sits at
-  ~37 visits against the ER's ~53. **This will move the numbers and might
-  re-create a bottleneck; it must be MEASURED, not assumed** (`ED_PLAN` §6).
-- 7 test files reference `'resp'`.
+**FOUR risks v1 missed, all of which must be owned:**
+
+1. **Net capacity falls 33%** - the reference build is 2 exam + 1 resp = three
+   `single` servers; delete resp and it is two. That is a server cut bundled
+   invisibly into a "routing-only" change - exactly the confounding `ED_PLAN`
+   SS5b split into arms. **The harness `resp` room becomes a THIRD EXAM ROOM**
+   (`exam` and `resp` are both 3x3 minimum, so the rect is drop-in), and the
+   probe reports **both arms**: 2 rooms (what a player who never rebuilds
+   experiences) and 3 rooms (capacity-neutral).
+2. **A $5,000 capex gate is deleted.** Serving 16.9% of arrival weight goes
+   from requiring a $5,000 room to requiring nothing - `respTherapist`
+   ($200/day) becomes an ~11.8x ROI hire with zero capital. **This is a balance
+   change and is named as one**; SS6's profit/day column detects it.
+3. **Room-capture - SS5b rotated 90 degrees.** `exam` is `single` with no
+   ratio, so a 60-min RT session blocks the whole room from doctors, and a
+   doctor's flu exam blocks the RT. SS6 must add **doctor-blocked-in-exam**
+   counters. If it rises materially the remedy is a ratio on exam or a real
+   bedside concept - not shipping and hoping.
+4. **Both conditions are referral-grade** (`acuityMin: 2` <= `referralAcuityMax`),
+   so their weights GROW with reputation (`caseMixShiftFactor: 0.5`). The load
+   onto exam is not static; it increases all game.
+
+### 3.3 The retire mechanism - v1's was not implementable
+
+**v1 offered "a `retired: true` flag, or removal from `CATEGORY_LABELS`
+routing". The second does not exist**: `CATEGORY_LABELS` is
+`Record<RoomCategory, string>` keyed by CATEGORY (`buildMenu.ts:19`), so
+removing a key would delete exam/er/dialysis/surgery from the build bar too,
+and would not compile. And a flag in `src/ui/` breaks **hard rule 1**.
+
+**Frozen:** `RETIRED_ROOMS: readonly RoomType[]` in `src/sim/data/rooms.ts`,
+read through a `roomRetired()` accessor mirroring the existing
+`roomFailure`/`roomStaffRatio` widening (`rooms.ts:413`). `buildMenu.ts:77`
+filters on it.
+
+**`world.buildRoom` stays PERMISSIVE** (code review MINOR 10): retirement is a
+build-catalog concept only. `save.test.ts:331` and `maintenance.test.ts:44`
+both build `resp` through the command path, and the v6 breakdown-rotation
+premise depends on it. A sim-side gate would kill that coverage for no gain.
+
+### 3.4 The guard that must NOT be disarmed (code review MAJOR 2)
+
+`data.test.ts:50` asserts every room type is used by >=1 condition step or is
+explicitly exempt. It goes red immediately - correctly. **Do not "fix" it by
+adding `resp` to `CONDITION_STEP_EXEMPT_ROOMS`**, whose documented meaning is
+*infrastructure* (check-in/waiting/atrium); that mislabels a treatment room and
+permanently disarms the guard for it.
+
+Amend to `used || EXEMPT.includes(t) || RETIRED.includes(t)`, and add two
+assertions that make "retired" total:
+1. **no condition step routes to a retired room** (the inverse guard);
+2. **a retired room is absent from the build menu** (`buildMenu.dom.test.ts`) -
+   the "cannot be labeled yet invisible" equivalent HANDOFF demands.
+
+### 3.5 The safety net cannot see this stage's likeliest failure (MAJOR 4)
+
+`harness.test.ts:259` applies the per-condition discharge floor to the eight
+**expansion** conditions only. **`asthma` and `pneumonia` have NO floor.** Exam
+contention could starve both to ZERO discharges - 25/148 of arrivals dying or
+walking out - while `totalTreated > 30` and `totalDied < totalTreated/2` stay
+green on the other twelve.
+
+**Land the asthma/pneumonia discharge floor as a SEPARATE COMMIT FIRST, proven
+green on the OLD routing.** It is this stage's regression of record, and it is
+worthless if it lands in the same commit as the change it guards.
+
+### 3.6 Live saves - retirement must not punish existing players
+
+Confirmed by the code review: **no code re-derives the room from the step for a
+live reservation.** `updateTreatment`/`resolveTreatmentOutcome` use
+`reservation.roomId` for billing and `stepIndex` only for fee/label;
+`promoteGatheredReservations` uses `roomId`; `validateReferences` never
+cross-checks step->room. **In-flight reservations in a resp room survive
+intact.** Repair jobs are room-id keyed and also survive.
+
+**No SAVE_VERSION bump** - and the argument is the BACKWARD direction, not "no
+shape change" (v10 bumped with no field added). Trace: a new-build save has a
+reservation with `roomId` = exam and `stepIndex` = asthma step 0. An older
+deployed build loads it, bills to `reservation.roomId`, never consults
+`step.room`, and completes correctly. A *waiting* asthma patient simply routes
+to `resp` in the old build, where `resp` is still in its menu -
+self-consistent. **No silent corruption in either direction, unlike v9's role
+addition and v10's shared `staffIds`.**
+
+Three defects retirement WOULD introduce, each fixed:
+
+1. **A broken retired room becomes a permanent unclearable urgent hint**
+   (MAJOR 5): `computeBlockedNeeds` emits an always-urgent
+   `broken:<id>:<since>` plus `role:maintenance` for a room that can never
+   treat anyone, and `applyRoomUse` never fires on it again so it never
+   self-clears. **Fix:** skip retired rooms in the broken scan and the
+   maintenance count, and clear `brokenSince` + delete any queued repair job
+   for retired rooms at restore. Regression test required.
+2. **Income display vanishes** (MINOR 6): `roomEarns` is DERIVED from
+   `CONDITION_DEFS`, so a retired room drops Income/Patients-seen from the
+   inspect card and the directory column - for a room holding real accumulated
+   `revenueTotal`. **Ruled: retired rooms KEEP their historical income
+   display** (it explains where the money went). Pin the choice;
+   `finance.test.ts:481` must drop `'resp'` from its pinned set.
+3. **Silent devaluation of a $5,000 purchase in a DEPLOYED game.** The player
+   paid $5,000; `roomSellbackRatio` is 0.5, so recovering the space costs them
+   $2,500 for a developer decision. **Ruled:** (a) a one-time explicit message
+   on loading a save containing a retired room - not a passive inspect line;
+   (b) **full-price sellback for retired room types**, so the player is made
+   whole; (c) the room stands, cosmetic, until they choose.
+
+### 3.7 Remaining items
+
+- `edLegibility.dom.test.ts:411` - the owner's "expanded resp, got nothing" bug
+  regression - uses `resp` as its fixture. **Re-point to `xray` or
+  `ultrasound`** (still-buildable `single` rooms with condition paths). Do not
+  delete or weaken it.
+- The `nebulizer` prop becomes unreachable. **Ruled: leave it.** Adding it to
+  `exam.props` consumes a tile in a 3x3 minimum and perturbs quality and
+  auto-placement.
+- Build-menu / inspect "Run by" will read *"Doctor, Nurse, Respiratory
+  Therapist"* for exam though an RT serves 2 of its 5 conditions (NIT 13).
+  Accepted for v1.
+- **No new `RoleId`, so NO fixed-seed re-pin sweep is required.** But treatment
+  completions move to different ticks, so rng ORDER shifts downstream - budget
+  for a possible harness re-pin, and note `resp` was a `mechanical`-failure
+  room carrying 25/148 of traffic while `exam` has **no `failure` def**, so
+  `harness.test.ts:254`'s organic-breakdown premise gets weaker (MINOR 11).
+- **Verified clean, do not re-derive** (NIT 15): adding `respTherapist` to
+  `exam.staffedBy` changes no behaviour. `standingPost` is false;
+  `staffRatioFor` returns 1 for an absent key; `everySlotApproachable`
+  early-returns on `single`; `capacityNeeds` is gated on `step.roles`, so a flu
+  patient cannot produce a spurious "Every Respiratory Therapist is busy".
+  **No third-role assumption exists anywhere in the code.**
 
 ## 4. Stage 2 — the department model (the owner's ask)
 
