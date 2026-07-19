@@ -386,7 +386,7 @@ describe('ED B1 §5.3 — capacity needs on the BlockedPanel', () => {
       world.clock.tick - gameMinutesToTicks(BALANCE.dispatcher.capacityHintWaitGameMinutes) - 1;
   }
 
-  it('every bay held ⇒ "expand it to add bays", never a hire hint', () => {
+  it('every bay held ⇒ expand, named with the room capacity noun', () => {
     const { world, root, blocked } = panelFixture();
     const room = buildEr(world);
     const nurse = hire(world, 'nurse', 'Ada');
@@ -402,8 +402,38 @@ describe('ED B1 §5.3 — capacity needs on the BlockedPanel', () => {
     blocked.update();
 
     const lines = rows(root);
-    expect(lines).toContain(`${ROOM_DEFS.er.label} is full — expand it to add bays`);
+    // The ER's capacity noun is "Beds", so the remedy says beds — a hardcoded
+    // "bays" was wrong for dialysis (Machines) and the waiting room (Seats).
+    expect(lines).toContain(`${ROOM_DEFS.er.label} is full — expand it to add beds`);
     expect(lines.some((l) => l.includes('hire another'))).toBe(false);
+  });
+
+  it('a FULL single-capacity room says BUILD ANOTHER, never expand (owner report)', () => {
+    // Owner, 2026-07-19: expanded Respiratory Therapy on this hint's advice
+    // and got no new capacity, and the row would not clear. `resp` is
+    // `capacity: 'single'` — expanding it buys QUALITY, never a second
+    // patient — so "expand it to add bays" was impossible advice. Only
+    // waiting/er/dialysis/restroom are perProp; every other treatment room
+    // is single, so this was wrong for the MAJORITY of rooms.
+    const { world, root, blocked } = panelFixture();
+    expect(ROOM_DEFS.resp.capacity.kind).toBe('single'); // premise, not assumed
+    world.buildRoom('resp', { col: 5, row: 20, cols: 3, rows: 3 }, { col: 8, row: 21 }, true);
+    const room = [...world.rooms.values()].find((r) => r.type === 'resp')!;
+    const rt = hire(world, 'respTherapist', 'Rhea');
+    const busy = world.spawnPatient('asthma');
+    reserve(world, room.id, busy.id, [rt.id], 'active', 0);
+    const waiting = world.spawnPatient('asthma');
+    waiting.stage = { kind: 'waiting' };
+    blockedLongEnough(world, waiting);
+    world.tick();
+    blocked.update();
+
+    const lines = rows(root);
+    expect(lines).toContain(
+      `${ROOM_DEFS.resp.label} is busy — build another one (it treats one patient at a time)`,
+    );
+    // The impossible advice must not appear in ANY form.
+    expect(lines.some((l) => l.includes('expand'))).toBe(false);
   });
 
   it('free bay + every nurse at her ratio cap ⇒ hire, never expand', () => {
@@ -430,7 +460,7 @@ describe('ED B1 §5.3 — capacity needs on the BlockedPanel', () => {
     expect(lines).toContain(
       `Every ${ROLE_DEFS.nurse.label} is busy — hire another for the ${ROOM_DEFS.er.label}`,
     );
-    expect(lines.some((l) => l.includes('expand it to add bays'))).toBe(false);
+    expect(lines.some((l) => l.includes('expand it to add'))).toBe(false);
   });
 
   it('an idle nurse under the cap ⇒ no capacity row at all (no false alarm)', () => {
@@ -484,7 +514,7 @@ describe('ED B1 §5.3 — capacity needs on the BlockedPanel', () => {
     world.tick();
     blocked.update();
     // capacityOf is 0 while closed — without the guard this would read
-    // "expand it to add bays", which is not the remedy.
+    // an expand hint, which is not the remedy.
     expect(rows(root).some((l) => l.includes('add bays'))).toBe(false);
   });
 });

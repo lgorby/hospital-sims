@@ -360,8 +360,18 @@ function capacityNeeds(world: World): BlockedNeed[] {
     if (open.length === 0) continue;
 
     const label = ROOM_DEFS[type].label;
+    const rule = ROOM_DEFS[type].capacity;
     const withSlot = open.filter((r) => world.openSlots(r) > 0);
     if (withSlot.length === 0) {
+      // THE REMEDY DEPENDS ON THE CAPACITY RULE, and getting this wrong is
+      // worse than silence — it sends the player to spend money on something
+      // that cannot help. Only waiting/ER/dialysis/restroom are `perProp`,
+      // where floor area buys slots. EVERY other treatment room is `single`:
+      // expanding one buys QUALITY, never a second patient, so the only way
+      // to treat two at once is a second room. (Reported by the owner, who
+      // expanded Respiratory Therapy on this hint's advice and correctly got
+      // no new capacity — `resp` is single, and the row rightly refused to
+      // clear because nothing had changed.)
       needs.push({
         key: `capacity:${type}`,
         kind: 'capacity',
@@ -369,7 +379,13 @@ function capacityNeeds(world: World): BlockedNeed[] {
         patients: entry.patients.size,
         conditions: [],
         urgent: true,
-        label: `${label} is full — expand it to add bays`,
+        label:
+          rule.kind === 'perProp'
+            ? // The room's OWN noun — "beds" for the ER, "machines" for
+              // dialysis, "seats" for the waiting room. A hardcoded "bays"
+              // was wrong everywhere except the ER.
+              `${label} is full — expand it to add ${rule.noun.toLowerCase()}`
+            : `${label} is busy — build another one (it treats one patient at a time)`,
       });
       continue;
     }
