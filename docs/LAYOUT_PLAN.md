@@ -83,10 +83,89 @@ utilisation is driven by arrival weight and step duration, which are
 distance-independent. It does bear on anything about queues, deaths or
 walkouts.
 
-**Recommended first action for any contract here: measure a compact-layout arm
-against the current fixture across the ED probe's existing columns.** If the
-deltas are large, the fixture needs revisiting before it is used to ratify
-another balance decision.
+### 3.1 MEASURED (2026-07-19, owner ask) — the deltas are large
+
+`test/edProbe.test.ts`, 5 seeds × 5 days, **shipped config on both arms** (no
+`withArm`), identical rooms/types/sizes/staffing/cash. Only placement differs:
+the compact arm packs the same 13 rooms into two bands with corridors on rows
+38 and 31, triage door **7 tiles** from the entrance instead of **18**.
+
+A hard guard runs before both arms and throws unless each builds exactly
+`build.length + 2` rooms. `buildRoom` rejects SILENTLY, so a compact rect that
+overlapped the pre-built reception/waiting or failed the trap-BFS would simply
+not exist, and the arm would be measuring 12 rooms against 13 while reporting a
+layout effect — the confounding `DEPARTMENTS_PLAN` §3.2 risk 1 exists to
+prevent.
+
+| metric | REFERENCE (fixture) | COMPACT | delta |
+|---|---|---|---|
+| discharged | 120.4 | **161.6** | **+34%** |
+| died | 3.2 | **1.8** | **−44%** |
+| walkouts (AMA) | 39.0 | 32.8 | −16% |
+| profit/day | $12,605 | **$20,198** | **+60%** |
+| ER visits | 46.2 | 67.2 | +45% |
+| exam visits | 61.2 | 74.8 | +22% |
+| surgeries | 10.4 | 14.8 | +42% |
+| triage starts | 130.8 | 178.0 | +36% |
+| mean wait for triage | 228.9 min | 181.4 min | −21% |
+| **payroll/day** | **3,060** | **3,060** | **0 — the control held** |
+
+**Identical payroll is the proof the arms differ only in geometry.**
+
+### 3.2 The finding inside the finding: sprawl was HIDING staff contention
+
+The blocked counters move the opposite way, and by more:
+
+| counter | REFERENCE | COMPACT | |
+|---|---|---|---|
+| OR gather blocked | 368t | **1,421t** | ×3.9 |
+| ...specifically on a nurse | 141t | **1,052t** | ×7.5 |
+| doctor blocked in exam | 11.8t | **144.6t** | ×12.3 |
+
+In the sprawling fixture, staff spend their time WALKING, so they are rarely
+contended — the queue forms at the corridor, not at the roster. Compact the
+hospital and throughput rises 34%, at which point **the staff become the
+binding constraint and the contention the game is designed around finally
+appears.** ED_PLAN §7.2's "movable bottleneck" is real, but the reference
+fixture was largely suppressing it.
+
+This is the important part for future work: the fixture does not merely shift
+the numbers, it changes WHICH RESOURCE BINDS. A remedy tuned against the
+sprawling fixture is tuned against a walking-bound hospital.
+
+### 3.3 What this does and does not invalidate
+
+**Does NOT invalidate — `DEPARTMENTS_PLAN` §4.3 and the decision to block
+Departments Stage 2a.** Imaging utilisation is driven by arrival weight and
+step duration, both distance-independent. Compact raises throughput ~34%, so
+X-ray utilisation moves roughly 6.2% → ~8%: still an order of magnitude short
+of a saturated scanner. **A second imaging suite still cannot pay back, and
+Stage 2a stays blocked.**
+
+**Directionally safe but UNDERSTATED — `DEPARTMENTS_PLAN` §3.8's room-capture
+result** (doctor-blocked-in-exam 27t → 564t for a non-rebuilder). §3.2 shows
+that counter runs ×12 higher in a compact build, so the effect is larger than
+recorded, not smaller. The conclusion holds; the magnitude is a floor.
+
+**Needs re-reading — `ED_PLAN` §5b.** The nurse-capture measurement and the
+anti-capture guard tuned against it were measured on the walking-bound fixture,
+where `noNurse` is 141t versus 1,052t compact. The guard may be tuned against
+a regime the player never occupies. **This does not mean it is wrong** — it
+means it was ratified on one point of a variable nobody knew was ±34%.
+
+### 3.4 Recommendation
+
+Do NOT simply replace the fixture: a compact build is as unrepresentative in
+one direction as the sprawling one is in the other, and swapping it would
+silently re-baseline every historical number. Instead:
+
+1. **State the layout with every future balance measurement.** A number without
+   its layout is not reproducible.
+2. **Run both arms for any decision sensitive to throughput, deaths or
+   contention.** A remedy that only works at one point on the layout axis is
+   not a remedy.
+3. Keep `REFERENCE_BUILD` as the historical baseline so past numbers stay
+   comparable, and keep `COMPACT_BUILD` beside it as the contention arm.
 
 ## 4. What a contract must settle
 

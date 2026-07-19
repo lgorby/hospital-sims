@@ -114,15 +114,25 @@ revisited.
 
 ### Open threads, highest-value first
 
-0. **MEASUREMENT VALIDITY — read `LAYOUT_PLAN` §3 before ratifying any balance
-   decision.** `REFERENCE_BUILD` is the fixture behind EVERY balance number
-   this project has recorded (`DEPARTMENTS_PLAN` §3.8, `ED_PLAN` §5b, §4.3).
-   Its triage door is 18 tiles from the entrance, and moving it to 3 tiles is
-   worth **+28% triage throughput** — so the fixture's layout is itself a large
-   uncontrolled variable. Demand-side arithmetic (§4.3's imaging utilisation)
-   is unaffected, being distance-independent; anything about queues, deaths or
-   walkouts is not. **Recommended: measure a compact-layout arm before the
-   fixture ratifies another decision.**
+0. **MEASUREMENT VALIDITY — MEASURED, and the deltas are large. Read
+   `LAYOUT_PLAN` §3 before ratifying any balance decision.** `REFERENCE_BUILD`
+   is the fixture behind EVERY balance number this project has recorded. A
+   compact arm (same 13 rooms, same staffing, **identical payroll** — only
+   placement differs, triage door 7 tiles out instead of 18) measured:
+   **discharged +34%, died −44%, profit/day +60%.**
+   **The finding inside the finding (§3.2): sprawl was HIDING staff
+   contention.** The blocked counters move the OTHER way and by more — OR
+   gather blocked ×3.9, blocked-on-nurse ×7.5, doctor-blocked-in-exam ×12.3.
+   In the fixture, staff mostly WALK, so they are rarely contended; compact the
+   hospital and the staff become the binding constraint. The fixture does not
+   just shift numbers, **it changes which resource binds.**
+   Consequences (§3.3): §4.3 and the Departments block **stand** (imaging is
+   demand-driven and distance-independent; ~6.2% → ~8% is still nowhere near
+   saturated). §3.8's room-capture result is directionally safe but its
+   magnitude is a FLOOR. **`ED_PLAN` §5b needs re-reading** — the nurse-capture
+   guard was tuned where `noNurse` is 141t against 1,052t compact.
+   §3.4 recommends keeping BOTH arms rather than swapping the fixture, and
+   stating the layout with every future measurement.
 1. **The layout lesson** — `docs/LAYOUT_PLAN.md` (SCOPING DRAFT, owner ask
    2026-07-19). Distance is a first-order throughput cost the game never
    teaches: a triage reservation holds its room and its nurse for a mean 40.8

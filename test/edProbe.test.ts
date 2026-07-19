@@ -40,6 +40,43 @@ const REFERENCE_BUILD: RoomSpec[] = [
   { type: 'surgery', rect: { col: 30, row: 20, cols: 4, rows: 4 }, door: { col: 32, row: 24 } },
 ];
 
+/**
+ * THE MEASUREMENT-VALIDITY ARM (`LAYOUT_PLAN` §3, owner ask 2026-07-19).
+ *
+ * REFERENCE_BUILD is the fixture behind every balance number this project has
+ * recorded (DEPARTMENTS_PLAN §3.8, ED_PLAN §5b, §4.3). Its triage door sits 18
+ * tiles from the entrance (20,39), and the utilisation probe measured that one
+ * placement as worth +28% triage throughput — so the fixture's SPRAWL is a
+ * large uncontrolled variable in all of them.
+ *
+ * This arm holds EVERYTHING else constant — same 13 rooms, same types, same
+ * sizes, same staffing, same cash — and only packs them close to the entrance
+ * in two bands with corridors on rows 38 and 31, reached by the clear column-20
+ * channel. Triage door is 7 tiles out instead of 18: compact but not optimal,
+ * which is the point. This is meant to be a plausible player layout, not a
+ * best case engineered to maximise the delta.
+ *
+ * If the deltas here are large, the fixture must be revisited before it
+ * ratifies another balance decision.
+ */
+const COMPACT_BUILD: RoomSpec[] = [
+  // Band A — rows 34-37, doors onto the row-38 corridor.
+  { type: 'restroom', rect: { col: 5, row: 35, cols: 2, rows: 3 }, door: { col: 5, row: 38 } },
+  { type: 'exam', rect: { col: 8, row: 35, cols: 3, rows: 3 }, door: { col: 9, row: 38 } },
+  { type: 'er', rect: { col: 12, row: 34, cols: 3, rows: 4 }, door: { col: 13, row: 38 } },
+  { type: 'triage', rect: { col: 26, row: 36, cols: 2, rows: 2 }, door: { col: 26, row: 38 } },
+  { type: 'exam', rect: { col: 28, row: 35, cols: 3, rows: 3 }, door: { col: 29, row: 38 } },
+  { type: 'exam', rect: { col: 32, row: 35, cols: 3, rows: 3 }, door: { col: 33, row: 38 } },
+  // Band B — rows 27-30, doors onto the row-31 corridor.
+  { type: 'xray', rect: { col: 5, row: 27, cols: 3, rows: 4 }, door: { col: 6, row: 31 } },
+  { type: 'ultrasound', rect: { col: 9, row: 28, cols: 2, rows: 3 }, door: { col: 9, row: 31 } },
+  { type: 'ct', rect: { col: 12, row: 27, cols: 4, rows: 4 }, door: { col: 13, row: 31 } },
+  { type: 'mri', rect: { col: 17, row: 27, cols: 4, rows: 4 }, door: { col: 18, row: 31 } },
+  { type: 'nucMed', rect: { col: 22, row: 27, cols: 3, rows: 4 }, door: { col: 23, row: 31 } },
+  { type: 'dialysis', rect: { col: 26, row: 27, cols: 3, rows: 4 }, door: { col: 27, row: 31 } },
+  { type: 'surgery', rect: { col: 30, row: 27, cols: 4, rows: 4 }, door: { col: 31, row: 31 } },
+];
+
 const EXPANSION_WING: readonly RoomType[] = [
   'ultrasound', 'ct', 'mri', 'nucMed', 'dialysis', 'surgery',
 ];
@@ -344,5 +381,34 @@ describeProbe('ED Stage B1 probe (ED_IMPL_PLAN §6b)', () => {
       throw new Error('two-exam arm did not drop exactly one room');
     }
     table('resp routing, 2 exam rooms (no rebuild)', seeds.map((s) => run(s, 5, twoExam)));
+
+    // LAYOUT_PLAN §3 — measurement validity. Both arms run at SHIPPED config
+    // (no withArm), identical rooms/staffing/cash; only the placement differs.
+    //
+    // The guard is not optional: `buildRoom` REJECTS silently (it emits
+    // `buildRejected` and returns), so a compact rect that overlaps the
+    // pre-built reception/waiting, orphans a door, or fails the trap-BFS would
+    // simply not exist — and the arm would then be measuring 12 rooms against
+    // 13 while reporting a layout effect. That is precisely the confounding
+    // DEPARTMENTS_PLAN §3.2 risk 1 exists to prevent.
+    for (const [name, build] of [
+      ['REFERENCE (fixture)', REFERENCE_BUILD],
+      ['COMPACT', COMPACT_BUILD],
+    ] as const) {
+      const probeWorld = new World(new EventBus(), 1337);
+      setupNewGame(probeWorld);
+      probeWorld.cash += 10_000_000;
+      for (const spec of build) probeWorld.buildRoom(spec.type, spec.rect, spec.door);
+      // 2 pre-built (reception + waiting) + the arm's rooms.
+      const expected = build.length + 2;
+      if (probeWorld.rooms.size !== expected) {
+        const got = [...probeWorld.rooms.values()].map((r) => r.type).sort().join(',');
+        throw new Error(
+          `${name} layout invalid: expected ${expected} rooms, built ${probeWorld.rooms.size} [${got}]`,
+        );
+      }
+    }
+    table('LAYOUT: reference fixture (triage door 18 tiles out)', seeds.map((s) => run(s, 5, REFERENCE_BUILD)));
+    table('LAYOUT: compact (triage door 7 tiles out)', seeds.map((s) => run(s, 5, COMPACT_BUILD)));
   }, 600_000);
 });
