@@ -1,7 +1,8 @@
 # Handoff — Hospital Simms
 
 **Last updated:** 2026-07-19 — docs restructured (see below); Departments
-Stage 2a in progress.
+Stage 2a BLOCKED by measurement; the layout lesson opened
+(`docs/LAYOUT_PLAN.md`).
 
 ## Read order
 
@@ -12,6 +13,7 @@ pass. Three companions carry the weight it used to:
 |---|---|---|
 | `docs/INVARIANTS.md` | The do-not-regress list — every rule an adversarial review established, each backed by a regression test. | **Before changing sim behaviour.** |
 | `docs/CHANGELOG.md` | Shipped work: the per-commit table and completed epics, including superseded scoping kept for provenance. | On demand, when you need *why* a decision was made. |
+| `docs/LAYOUT_PLAN.md` | The layout lesson — distance as a hidden throughput cost, plus §3's measurement-validity warning about the balance fixture. | Before any balance work. |
 | `docs/GAME_DESIGN.md` · `docs/TECH_PLAN.md` | The two contracts — design (Flow rules 1–14, rosters, balance) and architecture (sim/render split, §3.1 SSOT, §2.6 art contract). | Before writing code. |
 
 Both contracts were hardened by independent adversarial review before any code
@@ -112,21 +114,45 @@ revisited.
 
 ### Open threads, highest-value first
 
-1. **The capacity-hint defect** — IN PROGRESS, own milestone (owner call
-   2026-07-19). A one-room X-ray at 7.4% utilisation that is briefly busy tells
-   the player *"build another one"* — an $8,000 recommendation for transient
-   contention, recoverable at 50%. This is a **live defect on the deployed
-   build**, independent of departments. **Measure how often it actually fires
-   before changing wording.** A reviewer proposed removing the `continue` at
-   `needs.ts:375` so the staff branch also runs; that is contested and probably
-   wrong — if no room has a free slot, hiring a tech genuinely does not help.
-2. **The imaging-demand balance pass** — the prerequisite for Departments
+0. **MEASUREMENT VALIDITY — read `LAYOUT_PLAN` §3 before ratifying any balance
+   decision.** `REFERENCE_BUILD` is the fixture behind EVERY balance number
+   this project has recorded (`DEPARTMENTS_PLAN` §3.8, `ED_PLAN` §5b, §4.3).
+   Its triage door is 18 tiles from the entrance, and moving it to 3 tiles is
+   worth **+28% triage throughput** — so the fixture's layout is itself a large
+   uncontrolled variable. Demand-side arithmetic (§4.3's imaging utilisation)
+   is unaffected, being distance-independent; anything about queues, deaths or
+   walkouts is not. **Recommended: measure a compact-layout arm before the
+   fixture ratifies another decision.**
+1. **The layout lesson** — `docs/LAYOUT_PLAN.md` (SCOPING DRAFT, owner ask
+   2026-07-19). Distance is a first-order throughput cost the game never
+   teaches: a triage reservation holds its room and its nurse for a mean 40.8
+   game-min against 9.6 min of treatment, and **88.8% of that is a nurse who
+   has already arrived, standing in the room waiting for the patient to walk**.
+   §4 lists what a contract must settle. Two things already FALSIFIED and
+   recorded so they are not retried: `newGame.ts` is NOT broken (its doors are
+   7 tiles out; the 18-tile triage is a test fixture, and the GDD makes "Build
+   a Triage Bay" the first checklist item by design), and a distance tiebreaker
+   in `availableStaff` measured as a wash and was reverted.
+2. **The capacity-hint defect** — own milestone (owner call 2026-07-19), now
+   MEASURED (commits `10d2609`, `2adcd4e`). The reviewer's imaging scenario is
+   NOT a live defect: `capacity:xray` fires 0.4% of ticks, because
+   `capacityHintWaitGameMinutes: 45` suppresses the transient flash. **The real
+   defect is triage: `capacity:triage` is shown 85% of all ticks** saying
+   "build another one" while triage rooms are ACTIVE only 17.3% of the time,
+   and in 68% of those ticks a nurse was IDLE. The slot is consumed by a
+   GATHER, not by treatment. That also settles the contested `continue` at
+   `needs.ts:375` in the reviewer's favour, against my objection: my argument
+   ("if no room has a free slot, hiring cannot help") holds for a genuinely
+   occupied room and fails for a gather-held one, which is the majority case.
+   Remedy still needs its own review — and note it interacts with (1), since
+   the honest remedy may be about the walk rather than the wording.
+3. **The imaging-demand balance pass** — the prerequisite for Departments
    Stage 2. `DEPARTMENTS_PLAN` §4.4 scopes it. Goal: a state where ONE scanner
    genuinely saturates. **Build the per-room/per-role utilisation counter in
    `edProbe` FIRST** — it does not exist (the probe's only load sampling is
    hardcoded to the ER), and §6 named it as a required column without anyone
    noticing there was nothing to read it from.
-3. **Departments Stage 2a — ⛔ BLOCKED behind (2).** Contracted, reviewed twice,
+4. **Departments Stage 2a — ⛔ BLOCKED behind (3).** Contracted, reviewed twice,
    both **NOT READY**, stopped by measurement. Imaging rooms are idle 93–96% of
    the day, so a second suite can never pay back, and the epic's self-described
    "strongest design argument" — the movable machine-vs-tech bottleneck — does
@@ -134,12 +160,12 @@ revisited.
    the 24 review findings are the v2 spec in `DEPARTMENTS_IMPL_PLAN` §9.
    **§4.1's shape ("a department is a SET of ordinary Rooms") survived review
    intact** — what is missing is a reason to build a second suite.
-4. **The Stage-1 capex risk** (`DEPARTMENTS_PLAN` §3.8 point 3) — see the
-   watch items above. Unmeasured, not proven safe. Pairs naturally with (2):
+5. **The Stage-1 capex risk** (`DEPARTMENTS_PLAN` §3.8 point 3) — see the
+   watch items above. Unmeasured, not proven safe. Pairs naturally with (3):
    both are capital questions a 5-day probe cannot see.
-5. **Staff lounge** (owner ask) — scoped below. Collides with ED B1's nurse
+6. **Staff lounge** (owner ask) — scoped below. Collides with ED B1's nurse
    capture: a ratio nurse who never idles would never get a break.
-6. **`ED_PLAN` §3b/§4** — Stage B2 (ED entrance/ambulance arrivals) and Stage C
+7. **`ED_PLAN` §3b/§4** — Stage B2 (ED entrance/ambulance arrivals) and Stage C
    (ungate the CT dependency: ER → CT → ER). Both still DRAFT.
 
 > **The lesson from Stage 2a, worth keeping at eye level.** The epic asked
