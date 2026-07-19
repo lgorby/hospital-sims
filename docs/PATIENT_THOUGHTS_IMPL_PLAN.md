@@ -1,10 +1,45 @@
 # Click a patient, read THEIR thoughts
 
-**Status:** CONTRACT DRAFT (2026-07-19). Awaiting 2 independent adversarial
-pre-implementation reviews. **No code until findings are folded in.**
-**Origin:** owner ask 2026-07-18, scoped in `docs/HANDOFF.md`. Owner chose
-shape **(b), the sim ring buffer**, 2026-07-19.
-**Save impact:** **SAVE_VERSION 11 → 12.** Deployed and one-way. See §3.
+**Status:** PARTIALLY SHIPPED — needs a rewrite for the remaining half. The
+LIVE-bubble half of the owner's ask SHIPPED (`f9ecbbb`, in-world thought bubbles,
+render-only). This doc covers the CARD-HISTORY half (the last N thoughts on the
+inspect card). **Reviewed 2026-07-19; the decisions below OVERRIDE the original
+draft body — read them before touching §3-§8, which still argue the old bump.**
+
+> ## SETTLED DECISIONS (fold into a rewrite; the draft body §3-§8 is STALE)
+> - **NO SAVE_VERSION BUMP.** The draft's headline cost is GONE. Verified: the
+>   save reader is key-by-key over `asRecord` (`save.ts:407-410`), which does no
+>   unknown-key check, so an older deployed build silently ignores an added
+>   `thoughts` field, and the ring is INERT state no old build can corrupt itself
+>   with. Every bump in the `save.ts:33-138` policy log is owed to a concrete
+>   old-build FAILURE; a dropped thought ring has none. So the field is additive,
+>   no gate, `SAVE_VERSION` stays 11. (This is what makes it a small feature.)
+> - **Eviction: DEDUPE BY KEY** (owner call). A pure-recency 3-ring is dominated
+>   by lost/rescued pairs + restroom/vending spam and evicts the critical/
+>   complication thoughts a player actually wants. Dedupe-by-key: a repeated
+>   thought replaces its predecessor rather than consuming a second slot.
+> - **`thoughtText(key, patientId, tick)` goes in `src/sim/data/thoughts.ts`**,
+>   beside `conditionElective`/`roomFailure`/the other table accessors — NOT
+>   `formulas.ts` (TECH_PLAN §3.1 names "one pure fn in sim/", not formulas).
+> - **Store `{key, tick}`, not text or key-alone.** Text is a pure function of
+>   `(key, patientId, tick)`; storing the pair re-derives it exactly. This makes
+>   the `THOUGHTS` arrays **append-only and order-frozen** once shipped (a reorder
+>   silently rewrites what saved patients "said") — needs an INVARIANTS entry.
+> - Back-compat regression must use the REAL downgrade helper
+>   (`save.test.ts:840-860`, which DELETES fields), NOT the version-stamp tamper
+>   lines at `:534/544/552` (that made a regression vacuous elsewhere).
+> - Call-site count for `emitThought` is **11**, not the "9" the draft says.
+> - **Lower priority now** — the live surface (bubbles) already delivers the RCT
+>   moment; the card history is a nice-to-have, not urgent.
+
+**Origin:** owner ask 2026-07-18. Owner chose shape **(b), the sim ring buffer**.
+**Save impact (CORRECTED):** **NONE — SAVE_VERSION stays 11.** The §3 argument
+below is superseded.
+
+---
+
+_Original draft below (§1-§8), retained for the design detail; its save-bump
+argument (§3) and its "9 call sites" are SUPERSEDED by the box above._
 
 ---
 
