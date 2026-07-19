@@ -2,8 +2,17 @@
 
 Isometric hospital tycoon (RollerCoaster Tycoon × Theme Hospital). TypeScript + PixiJS v8 + Vite, fixed-timestep deterministic sim, DOM-overlay UI.
 
-**Read `docs/HANDOFF.md` first** — current state, invariants, and next steps.
-Design contract: `docs/GAME_DESIGN.md`. Architecture contract: `docs/TECH_PLAN.md`.
+**Read `docs/HANDOFF.md` first** — orientation: current state, open threads,
+gotchas. It is deliberately short enough to read in one pass; keep it that way.
+
+Then, as needed:
+- `docs/INVARIANTS.md` — the do-not-regress list. **Read before changing sim
+  behaviour.** Every entry came from an adversarial review and has a regression
+  test behind it.
+- `docs/CHANGELOG.md` — shipped work and the provenance of past decisions.
+- `docs/GAME_DESIGN.md` — design contract (Flow rules 1–14, rosters, balance).
+- `docs/TECH_PLAN.md` — architecture contract (sim/render split, §3.1 SSOT,
+  §2.6 art contract).
 
 ## Commands
 
