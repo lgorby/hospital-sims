@@ -2,7 +2,7 @@ import type { CommandQueue } from '../commands';
 import type { WorldRenderer, Selection } from '../render/renderer';
 import { validateRoomSell } from '../sim/build';
 import { AMENITY_DEFS, type AmenityId } from '../sim/data/amenities';
-import { CONDITION_DEFS } from '../sim/data/conditions';
+import { CONDITION_DEFS, conditionElective } from '../sim/data/conditions';
 import { ROOM_DEFS, roomRetired } from '../sim/data/rooms';
 import { ROLE_DEFS } from '../sim/data/roles';
 import { BALANCE } from '../sim/data/balance';
@@ -223,6 +223,10 @@ export class InspectPanel {
       this.body.innerHTML =
         `<div class="inspect-name">${esc(p.name.full)}, ${p.age} ${mood}${p.lost ? ' ❓lost' : ''}</div>` +
         this.line('Condition', CONDITION_DEFS[p.condition].label) +
+        // A referral arrives pre-triaged and never passes through a triage
+        // bay. Unlabelled, a patient with an acuity and no triage history
+        // reads as a bug (OUTPATIENT_IMPL_PLAN §3.7).
+        (conditionElective(p.condition) ? this.line('Source', 'Referral (outpatient)') : '') +
         this.line('Acuity', p.acuity === null ? 'not triaged' : `${p.acuity}`) +
         this.bar('Health', p.health, '#57bb6a') +
         this.bar('Patience', p.patience, '#e0a800') +

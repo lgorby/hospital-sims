@@ -1,6 +1,39 @@
 # The layout milestone — implementation contract
 
-**Status:** DRAFT, awaiting two independent pre-implementation reviews.
+> # ⚠ PART B IS CUT. DO NOT IMPLEMENT §3 OR §5's TESTS 10–23.
+>
+> Both pre-implementation reviews returned against this document (code:
+> NOT READY, 12 MAJOR; design: IMPLEMENT AFTER FIXES, cut Part B) and **both
+> independently concluded Part B should not ship**. It has not been revised —
+> revise before implementing.
+>
+> **Why Part B is dead.** Its two named beneficiaries cannot receive the
+> benefit: `assignJobsForRole` is typed `'evs' | 'maintenance'` so a freed
+> nurse can never take a job, and only `receptionist`/`greeter` have
+> `standingPost: true`. Test 11 — written specifically to prove Part B was not
+> a relabel — **cannot be written as specified**. Nurses are already 35% idle,
+> and the release is largest in the sprawling layout where nobody needs them.
+> It also introduces an abandon LIVELOCK (a `reserved` patient is AMA-
+> ineligible, so patience freezes while health decays, and Flow rule 6
+> re-queues them at HIGHER priority), blinds ED_PLAN §5b's guard entirely
+> (`blockedDemand` only counts patients in WAITING stages), destroys
+> priority-ordered arbitration and the soft hold, and leaks through
+> close/break/sell.
+>
+> **Part A survives but needs fixes before implementing:** the ghost is
+> TICK-keyed not input-keyed (so `findPath` would run 10×/s forever, not on
+> input); `findPath` to an unbuilt rect paths THROUGH where the wall will be —
+> the exact error Part A criticised Manhattan for; `heldByWalk` is a phase
+> test, not a distance test, so it fires on well-built hospitals and punishes
+> correct play; `needs.ts` cannot import `dispatcher.ts` (documented cycle) so
+> the arrival predicate must be hoisted; and `walkGameMinutes` cannot live in
+> `formulas.ts` without duplicating `PATIENT_TILES_PER_TICK`.
+>
+> The measurements this was built on are sound and stand — see
+> `docs/LAYOUT_PLAN.md`.
+
+**Status:** SUPERSEDED IN PART — Part B cut by review; Part A needs a v2.
+Was: DRAFT, awaiting two independent pre-implementation reviews.
 **Parent:** `docs/LAYOUT_PLAN.md` (the scoping draft and the measurements).
 **Owner scope decision (2026-07-19):** teaching **plus** releasing the staffer
 during the patient's walk. The reservation-model rewrite (LAYOUT_PLAN §4.1c —

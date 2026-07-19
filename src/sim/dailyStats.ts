@@ -18,6 +18,15 @@ export interface DayTally {
   treated: number;
   died: number;
   leftAma: number;
+  /**
+   * Elective referrals seen / no-showed (OUTPATIENT_IMPL_PLAN §3.7). Split out
+   * because the two streams have opposite reputation economics — a referral
+   * discharge earns +2 and a no-show costs 2 — so a merged Arrived/Treated row
+   * cannot tell the player whether their clinic is paying for itself. These
+   * are SUBSETS of `arrivals`/`treated`/`leftAma`, not additions to them.
+   */
+  electiveTreated: number;
+  electiveNoShow: number;
   /** Wrong-turn episodes (a patient can contribute several). */
   lostEpisodes: number;
   /** Treatment fees billed. */
@@ -48,6 +57,8 @@ export function emptyDayTally(): DayTally {
     treated: 0,
     died: 0,
     leftAma: 0,
+    electiveTreated: 0,
+    electiveNoShow: 0,
     lostEpisodes: 0,
     revenue: 0,
     payroll: 0,

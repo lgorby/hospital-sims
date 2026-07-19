@@ -515,6 +515,8 @@ const TALLY_KEYS = Object.keys(emptyDayTally()) as (keyof DayTally)[];
 const TALLY_KEY_VERSIONS: Partial<Record<keyof DayTally, number>> = {
   vendingRevenue: 4,
   messTicks: 5,
+  electiveTreated: 11,
+  electiveNoShow: 11,
 };
 
 function writeTally(tally: DayTally): DayTally {

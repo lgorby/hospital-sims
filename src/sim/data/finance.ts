@@ -73,6 +73,8 @@ export const NON_CASH_TALLY_KEYS = [
   'treated',
   'died',
   'leftAma',
+  'electiveTreated',
+  'electiveNoShow',
   'lostEpisodes',
   'messTicks',
   'repDelta',

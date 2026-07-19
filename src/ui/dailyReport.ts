@@ -20,6 +20,19 @@ export function appendDailyReportSections(card: HTMLElement, report: DayReport):
   modalRow(patients, 'Treated', String(report.treated), report.treated > 0 ? 'good' : '');
   modalRow(patients, 'Died', String(report.died), report.died > 0 ? 'bad' : '');
   modalRow(patients, 'Left untreated', String(report.leftAma), report.leftAma > 0 ? 'warn' : '');
+  // Referrals are a SUBSET of the rows above, shown only once a clinic exists
+  // (the stream is room-gated, so zero means the player has no scanner and the
+  // row would be noise). The two streams have opposite reputation economics —
+  // +2 a discharge against -2 a no-show — so a merged Arrived/Treated row
+  // cannot answer "is my clinic paying for itself?".
+  if (report.electiveTreated > 0 || report.electiveNoShow > 0) {
+    modalRow(
+      patients,
+      'Referrals',
+      `${report.electiveTreated} seen · ${report.electiveNoShow} no-show`,
+      report.electiveNoShow > report.electiveTreated ? 'warn' : '',
+    );
+  }
   modalRow(patients, 'Got lost', `${report.lostEpisodes}×`);
 
   const moneySection = modalSection(card, 'Money');

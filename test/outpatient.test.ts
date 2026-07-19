@@ -111,6 +111,24 @@ describe('outpatient stream — lifecycle', () => {
     expect(world.stageViolations).toEqual([]);
   });
 
+  it('a referral spawned OFF-STREAM is still pre-triaged (debug/test paths)', () => {
+    // Regression, found by live-drive. `debugSpawnPatient` calls
+    // `spawnPatient(condition)` with no acuity, so a debug-spawned referral
+    // used to arrive with acuity null; `processCheckIn` then routed it to
+    // `waiting` and tripped the semantic invariant that makes the stage-table
+    // widening safe. Fixed at the CONSTRUCTOR, not the caller, so every spawn
+    // path is covered. Fails with the default removed.
+    const { world } = fixture();
+    world.applyCommands({
+      drain: () => [{ type: 'debugSpawnPatient' as const, condition: 'mriScan' as const }],
+    } as never);
+    const referral = [...world.patients.values()].find((p) => p.condition === 'mriScan')!;
+    expect(referral.acuity).toBe(CONDITION_DEFS.mriScan.acuityMax);
+
+    for (let i = 0; i < 4 * TICKS_PER_GAME_HOUR; i++) world.tick();
+    expect(world.stageViolations).toEqual([]);
+  });
+
   it('an EMERGENCY still routes through waitingTriage — the branch does not leak', () => {
     const { world } = fixture();
     const flu = world.spawnPatient('flu');

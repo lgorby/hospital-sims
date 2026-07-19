@@ -1640,7 +1640,14 @@ export class World implements PathGrid {
       name: generateName(this.rng),
       age: generateAge(this.rng),
       condition,
-      acuity: opts.acuity ?? null,
+      // An ELECTIVE condition is pre-triaged BY CONSTRUCTION, whatever spawned
+      // it. Defaulting here rather than at the caller closes a whole class:
+      // `debugSpawnPatient` (and any test fixture) would otherwise mint a
+      // referral with acuity null, which `processCheckIn` then routes to
+      // `waiting` — tripping the very invariant that makes the stage-table
+      // widening safe. Found by live-drive; the headless suite missed it
+      // because nothing else spawns an elective off-stream.
+      acuity: opts.acuity ?? (conditionElective(condition) ? CONDITION_DEFS[condition].acuityMax : null),
       health: BALANCE.stats.vitalsMax,
       patience: BALANCE.stats.vitalsMax,
       wayfinding: this.rng.intInRange(BALANCE.stats.min, BALANCE.stats.max),
@@ -2016,6 +2023,7 @@ export class World implements PathGrid {
     this.setPatientStage(patient, { kind: 'leaving', reason: 'ama' });
     patient.lost = null; // exits clear lostness (M3-gate ruling)
     this.today.leftAma += 1;
+    if (conditionElective(patient.condition)) this.today.electiveNoShow += 1;
     // An elective no-show is not an abandoned emergency
     // (OUTPATIENT_IMPL_PLAN §3.6). Flat `amaLoss` against the +2 an elective
     // discharge earns puts break-even at a 20% walkout rate, and the measured
@@ -2041,6 +2049,9 @@ export class World implements PathGrid {
     this.setPatientStage(patient, { kind: 'leaving', reason: 'discharged' });
     patient.lost = null; // exits clear lostness (M3-gate ruling)
     this.today.treated += 1;
+    // Subset counter, not an addition: the daily report needs to separate a
+    // clinic that pays for itself from one that does not (§3.7).
+    if (conditionElective(patient.condition)) this.today.electiveTreated += 1;
     this.lifetimeTreated += 1;
     this.applyReputation(dischargeReputationGain(patient.acuity ?? BALANCE.decay.untriagedAcuity));
     this.setWalkerTarget(patient, BALANCE.map.entrance);
