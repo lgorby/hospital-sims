@@ -1,7 +1,75 @@
 # Staff Shifts — Stage 1 CONTRACT (two-shift coverage)
 
-**Status:** CONTRACT DRAFT (2026-07-19). Awaiting 2 independent adversarial
-pre-implementation reviews. **No code until findings are folded in.**
+**Status:** **NOT READY (2026-07-19, both reviews).** Six MAJORs across two
+lenses. The epic is harder than this draft assumed in two independent ways —
+economic and mechanical — and the reframe needs an owner decision (see the
+block below). **No code.**
+
+> ## REVIEW OUTCOME — the two ways this draft is wrong
+>
+> ### A. ECONOMICALLY INERT (design review, arithmetic verified)
+> **2× payroll does not bite.** Reference roster $3,060/day against ~$12,200/day
+> profit — **payroll is ~20% of revenue**, and a doctor bills ~$3,750/day-shift
+> for a $300 salary. Doubling payroll still leaves ~$9,170/day profit. So "24/7
+> costs a punishing 2×" — the owner's premise and the reason I called this a
+> whole-economy rebalance — is **false at current tuning.** Likely measured
+> outcome: a NON-CHOICE (24/7 strictly better, still hugely profitable).
+> - Root cause: the game's economy has **labor at ~20% of revenue**; reality
+>   (research §9) is ~55%. Shifts as a cost mechanic cannot bite until that gap
+>   closes — which is a real M4 fee/arrival rebalance, not a footnote.
+> - I ALSO repeated the observation mistake: pointed the probe at the mature,
+>   cash-rich REFERENCE arm (where affordability is trivial) and named SOLVENCY
+>   as the deciding metric (passes vacuously). The real decision lives in the
+>   EARLY game; the real metrics are **incremental night-shift ROI** and
+>   **night-staff utilisation**, on a starter build.
+> - Night is ACTIVE harm, not passive: patients spawn regardless of coverage
+>   (`spawn.ts:81`), so ~30% of arrivals — over half of it the **18:30–22:00
+>   evening rush** — rot at a closed hospital, die/AMA, and spiral reputation.
+>   I framed the risk backwards ("day-only too safe").
+> - Confirmed RIGHT: the arrival peak sits inside the day window (§9 Q4 holds).
+>
+> ### B. MECHANICALLY UNDERSPECIFIED (code review, verified against source)
+> Taking a staffer off-shift cleanly is far more than "AND `onShift` into the
+> dispatch filters":
+> 1. **Gathering promotion is not gated.** `promoteGatheredReservations`
+>    (`dispatcher.ts:811-834`) promotes a gathering bay to active whenever
+>    patient+staff are in the room — never consulting `onShift`. So an off-shift
+>    nurse still STARTS AND COMPLETES treatment, and the headline ratio-nurse
+>    case works BOTH bays past shift end. My "finish then leave like `firing`"
+>    model is FALSE — `firing` actively CANCELS gathering; `onShift` exclusion
+>    cancels nothing. This negates the feature.
+> 2. **No trigger sends staff home.** `releaseReservation` has no `onShift`
+>    branch; there is no `updateStaff` sweep in the tick loop. Off-shift staff go
+>    idle and stand there forever. Walk-home is NEW machinery.
+> 3. **Off-floor is new STATE, not field-free.** Payroll needs staff in
+>    `world.staff` (to charge), but `isTileClaimed` (`world.ts:338`) and the
+>    renderer (`renderer.ts:459,836`) also iterate all staff — so off-shift staff
+>    still claim tiles and render. Can't `removeStaff` (stops payroll, no re-mint
+>    path). Needs a new home/off-floor marker beyond `shift`, with its own save
+>    migration + `isTileClaimed`/renderer exclusions. §5's "only `shift`" and
+>    §11's "no render work" are both false.
+> 4. **Clock starts at MIDNIGHT (night); first staffer auto-assigns `day`** →
+>    off-shift for ticks 0–1200. A new game cannot check anyone in for the first
+>    6 game-hours, and `edRatio`'s 1200-tick characterization inverts (its lone
+>    day nurse is off the whole window). A premise change, not a re-tune.
+> 5. `onShift` window constants (360/1110/1080/390) are balance numbers with no
+>    `data/balance.ts` home (SSOT). Plus: the toggle must go through the
+>    CommandQueue (not `staffUpdated`); `readStaff` needs `saveVersion` threaded.
+>
+> ### THE REFRAME (needs an owner call — see the session report)
+> Stage 1 as drafted is both inert and heavy. The honest options are a scope
+> decision, not a fix: (i) lead with the ECONOMY re-tune (make labor ~50% of
+> cost) so shifts bite, measured on the early-game arm; (ii) reframe shifts as a
+> FATIGUE/quality mechanic first (research: errors rise on 12h, staff PREFER
+> them — a real trade-off) rather than a cost mechanic; (iii) a lighter shift
+> model that does not send staff off-floor. Do not iterate the contract until the
+> framing is chosen.
+
+---
+
+_Original draft below, retained for provenance; superseded by the reframe above._
+
+**Status (superseded):** CONTRACT DRAFT (2026-07-19).
 **Parent:** `docs/SHIFTS_PLAN.md` — this is Stage 1 of 3.
 **Owner ask (Stage-1 slice):** *"a 12.5 hour shift limit (30 minutes for
 lunches)… rotation of staff every 12 hours so there will be some overlap."*
