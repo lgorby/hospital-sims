@@ -1,9 +1,11 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-19 — **the OUTPATIENT STREAM shipped and is LIVE
-(SAVE_VERSION 11, one-way)**; docs restructured; Departments Stage 2a still
-blocked; the layout lesson opened (`docs/LAYOUT_PLAN.md`) with its Part B cut
-by review.
+**Last updated:** 2026-07-19 (late) — **THOUGHT BUBBLES shipped** (render-only,
+committed not pushed); three epics diagnosed and NONE buildable yet (observation
+banked at v4, shifts + economy-rebalance both NOT READY). **The next concrete
+task is building the EARLY-GAME PROBE — see START HERE.** ~18 commits ahead of
+origin, all held from deploy by owner. Prior: outpatient stream LIVE
+(SAVE_VERSION 11, one-way); Departments Stage 2a still blocked.
 
 ## Read order
 
@@ -124,41 +126,99 @@ revisited.
 
 ## Next
 
-### START HERE (session handoff, 2026-07-19 late — BUBBLES + OBSERVATION-MEASURE session)
+### START HERE (session handoff, 2026-07-19 late — BUBBLES + THREE MEASURED DIAGNOSES)
 
-**Everything committed, NOT PUSHED** (owner held the deploy). Working tree clean,
-690 tests, all gates green on `master`.
+**Everything committed, NOT PUSHED** (owner held the deploy all session). Working
+tree clean, 690 tests, all gates green on `master`. ~18 commits ahead of origin.
+
+**► THE NEXT CONCRETE TASK: build the EARLY-GAME PROBE.** Everything below funnels
+to this. The economy rebalance blocks shifts, the economy rebalance's numbers
+must be measured on an early-game arm that does not exist yet, and the last three
+contracts all died the SAME way — measuring the flattering arm. Build the probe
+FIRST, then write numbers. Spec is in the box at the bottom of this block.
 
 | commit | what |
 |---|---|
-| `8ec700d` | The measurement layer — COMPACT arm in `utilisationProbe`, per-condition floors in `harness.test.ts`. GREEN ON THE PRE-CHANGE BUILD. |
-| `2288399` | Three contracts + six adversarial reviews. |
-| `f9ecbbb` | **SHIPPED: in-world thought bubbles.** Render-only, no save cost. The card-history HALF is still open (task: rewrite PATIENT_THOUGHTS, no bump needed). |
-| `2ceccda`…`36a8f68` | OBSERVATION v2→v3→NOT READY, and the measurement scaffold's findings. |
+| `f9ecbbb` | **SHIPPED: in-world thought bubbles.** Render-only, no save cost. Card-history HALF still open (task: rewrite PATIENT_THOUGHTS, NO bump needed — `asRecord` ignores unknown keys). |
+| `8ec700d`,`2288399` | Measurement layer + three contracts & six reviews. |
+| `2ceccda`…`36a8f68` | OBSERVATION v2→v3→NOT READY + its measurement scaffold. |
+| `df4e7f8`…`20beb91` | SHIFTS plan + Stage-1 contract → NOT READY. |
+| `1a246f5`,`12a3d12` | ECONOMY rebalance plan + Stage-1 contract → NOT READY. |
 
-**OBSERVATION — BANKED AT v4 (owner call).** Five review rounds; still not
-buildable. The v3 review found the deciding defect by re-running the probe with
-a column I'd omitted: **the ward discharges only 33–38% of its patients** — I
-anchored on 68% occupancy, which was throttled inflow, not health. Diagnosis: a
-**bed-throughput ceiling** (2 beds × 360-min ≈ 8/day vs 11 arrivals/day). Salvage
-(exam-room assessment) tested and FAILED at 38.8%. **v4 must match rate to bed
-capacity (~0.3, or shorter stays, or more beds) and actually measure revenue.**
-Full v4 requirements + the falsified claims are in `OBSERVATION_PLAN.md`'s status
-block. **The prototype + sweep probe live on branch `observation-measurement`**
-(NOT merged — throwaway, but it is the v4 starting point; do not delete it).
-Sound results worth keeping: expansion binds at elevated demand ($3k 3rd bed
-pays back ~1.4 days); the nurseTech never contends.
+**THREE EPICS DIAGNOSED, NONE BUILDABLE YET — all blocked on the SAME lesson:**
 
-**NOW STARTING: the STAFF-SHIFTS epic** (owner ask, the biggest on the board).
-12.5h shifts (12h + 30min lunch), rotation every 12h with overlap. **Staff work
-24/7 today**, so shifts mean ~2× headcount for the same coverage → payroll
-roughly DOUBLES against an M4-tuned economy. A whole-economy rebalance, not a
-feature. Couples to the STAFF LOUNGE (a lunch break is a shift concept) and the
-NURSE-TECH role (both scoped as tasks). Research + code map running; plan next.
+1. **OBSERVATION — banked at v4 (owner call).** Ward discharges only 33–38% of
+   patients (a bed-throughput ceiling), found only by printing the discharge
+   column I'd omitted while leaning on 68% occupancy. v4 must match rate to bed
+   capacity + measure revenue. Prototype/probe on branch `observation-measurement`
+   (NOT merged; the v4 starting point — do not delete). Details in
+   `OBSERVATION_PLAN.md` status block.
 
-**LESSON THIS SESSION, in one line:** measure the DECIDING metric, not the
-flattering one. Observation's 68% occupancy looked healthy and hid a 38%
-discharge rate. Always print the number that would falsify the feature.
+2. **STAFF-SHIFTS — NOT READY, blocked on the economy (owner: "economy re-tune
+   first, then shifts").** Two problems: (A) 2× payroll DOESN'T BITE — payroll is
+   ~20% of revenue, so shifts are economically inert until the margin tightens;
+   (B) taking staff off-floor is heavy new machinery — gathering promotion isn't
+   gated (an off-shift nurse still completes treatment), no walk-home trigger
+   exists, and "off-floor" is new save state colliding with payroll/tiles/render,
+   and the clock starts at midnight so a day-assigned starter is off-shift for the
+   opening 6h. The economy re-tune fixes (A); (B) is still a separate rewrite.
+   Full findings in `SHIFTS_STAGE1_CONTRACT.md` review block; staging in
+   `SHIFTS_PLAN.md`.
+
+3. **ECONOMY REBALANCE — NOT READY, THE CURRENT CRITICAL PATH.** Root cause of
+   everything: **the game runs an ~82% operating margin** (REFERENCE: $3,060
+   payroll / $14,184 profit / $17,244 revenue; measured, `edProbe`). Payroll is
+   the ONLY recurring cost — no utilities, no running costs, and a breakdown costs
+   only the tech's TIME, no cash. At 82% margin NO cost decision can matter, which
+   is why shifts/running-costs/the-finance-ledger/bankruptcy are all inert. The
+   plan (`ECONOMY_REBALANCE_PLAN.md`) collapses the margin via a cost TAXONOMY
+   (owner asks: utilities heat/AC/water/gas, repairs, equipment replacement).
+   The Stage-1 contract (`ECONOMY_STAGE1_CONTRACT.md`) — three levers (cut fees
+   ~50%, size-scaled utilities, per-repair costs) — came back NOT READY.
+
+**THE LESSON, now proven THREE TIMES in one session — read this before writing any
+balance number:** measure the DECIDING metric on the BINDING arm, never the
+flattering one. Observation: 68% occupancy hid a 38% discharge rate. Shifts:
+"reference build affordable" hid the early-game decision. Economy: a utility tuned
+to leave the MATURE build at 15% margin GUARANTEES the early-game starter runs
+negative from day one (fixed per-room cost ÷ ~5× lower starter revenue-per-room).
+**Every contract that deferred/asserted numbers off the mature build was wrong.
+Build the early-game measurement FIRST; derive numbers from the solvency floor.**
+
+> ## ► THE PROBE TO BUILD NEXT (economy Stage-1 v2 prerequisite)
+>
+> A `test/economyProbe.test.ts` (gated like `edProbe`, `OBS_PROBE`/`ED_PROBE`
+> precedent) with, critically, an **EARLY-GAME ARM that does not exist today**:
+> - **Early-game arm:** starter rooms only (reception+waiting from
+>   `setupNewGame`, + a triage + 1 exam + 1 ER), starting cash $50,000, rep 300,
+>   a minimal roster (1 nurse, 1 doctor, the receptionist), run ~10 game-days.
+>   This is the BINDING arm — where the rebalance bankrupts a new player or not.
+> - **Also the REFERENCE and COMPACT arms** (mature) for the ceiling check.
+> - **Report SEPARATELY per arm** (the levers are LINEAR, so this lets you solve
+>   the fee scale analytically instead of a 3-D sweep): revenue/day, payroll/day,
+>   **utilities/day, repairs/day**, margin, cash trajectory, per-room P&L for
+>   MRI/nucMed/CT/OR (protect the LIVE outpatient milestone — per-tile utilities
+>   must not make them net losses), and time-to-first-expansion.
+> - **A SHOCK arm** (design MAJOR 2): inject a death cluster or start at rep ~150,
+>   and assert the tight-margin hospital's cash SURVIVES and CLIMBS BACK — level
+>   is not enough, tight margins have extreme operating leverage.
+> - **Prototype the levers behind the probe** (fee scale factor, per-room-hour
+>   utilities scaled by footprint tiles + room type, per-repair cost by type),
+>   on a branch — reuse the `observation-measurement` branch's cost-injection
+>   pattern (in-place `BALANCE as {…}` casts, the `edProbe withArm` precedent).
+>
+> **Falsification bounds the design reviewer already wrote (adopt these):**
+> (a) early-game starter reaches positive daily net by ~day 5–7 and never
+> bankrupts under reasonable play; (b) an over-built/over-hired config crosses
+> −$10k in bounded time AND 2× payroll drops the mature margin below ~30% (the
+> shifts check); (c) mature well-run steady-state ~10–25% with a single
+> death-cluster self-recovering. **A per-ARM band, not one reference number.**
+>
+> **Then** derive the fee/utility/repair magnitudes from the early-game floor,
+> write ECONOMY Stage-1 v2 with those numbers + the code-review fixes (the
+> `TALLY_KEY_VERSIONS: {utilities:12, repairs:12}` one-liner at `save.ts:515` is
+> MANDATORY or every v11 save bricks on load), review, THEN implement.
+> Full v2 requirements: `ECONOMY_STAGE1_CONTRACT.md` review block.
 
 **SIX independent adversarial reviews ran this session (two per contract, split
 lenses). NONE of the three contracts shipped as drafted.** That is the workflow
