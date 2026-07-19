@@ -124,16 +124,41 @@ revisited.
 
 ## Next
 
-### START HERE (session handoff, 2026-07-19 late — THOUGHT BUBBLES session)
+### START HERE (session handoff, 2026-07-19 late — BUBBLES + OBSERVATION-MEASURE session)
 
-**Three commits, NOT PUSHED** (owner held the deploy). Working tree clean,
-690 tests, all gates green.
+**Everything committed, NOT PUSHED** (owner held the deploy). Working tree clean,
+690 tests, all gates green on `master`.
 
 | commit | what |
 |---|---|
-| `8ec700d` | The measurement layer — COMPACT arm in `utilisationProbe`, elective-completion + per-condition + active-only-role counters, chestPain/fracture discharge floors in `harness.test.ts`. Landed GREEN ON THE PRE-CHANGE BUILD. |
-| `2288399` | Three contracts + their six adversarial reviews. Two parked, one to rewrite. |
-| `f9ecbbb` | **SHIPPED: in-world thought bubbles.** Render-only, no save cost. |
+| `8ec700d` | The measurement layer — COMPACT arm in `utilisationProbe`, per-condition floors in `harness.test.ts`. GREEN ON THE PRE-CHANGE BUILD. |
+| `2288399` | Three contracts + six adversarial reviews. |
+| `f9ecbbb` | **SHIPPED: in-world thought bubbles.** Render-only, no save cost. The card-history HALF is still open (task: rewrite PATIENT_THOUGHTS, no bump needed). |
+| `2ceccda`…`36a8f68` | OBSERVATION v2→v3→NOT READY, and the measurement scaffold's findings. |
+
+**OBSERVATION — BANKED AT v4 (owner call).** Five review rounds; still not
+buildable. The v3 review found the deciding defect by re-running the probe with
+a column I'd omitted: **the ward discharges only 33–38% of its patients** — I
+anchored on 68% occupancy, which was throttled inflow, not health. Diagnosis: a
+**bed-throughput ceiling** (2 beds × 360-min ≈ 8/day vs 11 arrivals/day). Salvage
+(exam-room assessment) tested and FAILED at 38.8%. **v4 must match rate to bed
+capacity (~0.3, or shorter stays, or more beds) and actually measure revenue.**
+Full v4 requirements + the falsified claims are in `OBSERVATION_PLAN.md`'s status
+block. **The prototype + sweep probe live on branch `observation-measurement`**
+(NOT merged — throwaway, but it is the v4 starting point; do not delete it).
+Sound results worth keeping: expansion binds at elevated demand ($3k 3rd bed
+pays back ~1.4 days); the nurseTech never contends.
+
+**NOW STARTING: the STAFF-SHIFTS epic** (owner ask, the biggest on the board).
+12.5h shifts (12h + 30min lunch), rotation every 12h with overlap. **Staff work
+24/7 today**, so shifts mean ~2× headcount for the same coverage → payroll
+roughly DOUBLES against an M4-tuned economy. A whole-economy rebalance, not a
+feature. Couples to the STAFF LOUNGE (a lunch break is a shift concept) and the
+NURSE-TECH role (both scoped as tasks). Research + code map running; plan next.
+
+**LESSON THIS SESSION, in one line:** measure the DECIDING metric, not the
+flattering one. Observation's 68% occupancy looked healthy and hid a 38%
+discharge rate. Always print the number that would falsify the feature.
 
 **SIX independent adversarial reviews ran this session (two per contract, split
 lenses). NONE of the three contracts shipped as drafted.** That is the workflow
