@@ -1,6 +1,6 @@
 import { describe, it } from 'vitest';
 
-import { TICKS_PER_DAY } from '../src/sim/clock';
+import { GAME_MINUTES_PER_TICK, TICKS_PER_DAY } from '../src/sim/clock';
 import { ROLE_DEFS, type RoleId } from '../src/sim/data/roles';
 import { ROOM_DEFS, type RoomType } from '../src/sim/data/rooms';
 import { EventBus } from '../src/events';
@@ -255,6 +255,180 @@ describeProbe('Utilisation probe (DEPARTMENTS_PLAN §4.4)', () => {
       );
       const flag = key.split(':').length > 2 ? '      ' : pct(wrong, 1);
       console.log(`${key.padEnd(30)}${pct(share, 1)}  ${flag}  "${label}"`);
+    }
+    console.log('');
+  });
+
+  /**
+   * The triage-throughput thread (owner ask 2026-07-19), opened by the hint
+   * measurement above: `capacity:triage` is shown 85% of ticks while triage
+   * rooms are ACTIVE only 17.3% of the time, and in 68% of those ticks a
+   * nurse was idle. That gap is the question — where does the time go?
+   *
+   * Hypothesis under test: the GATHER dominates the treatment. Triage is 10
+   * game-minutes (balance.ts:86), the entrance is (20,39) and the reference
+   * triage door is (12,29) — 18 tiles at ~2.1 game-min/tile. If the gather is
+   * several times the treatment, then triage throughput is bounded by WALKING,
+   * and neither "build another triage bay" nor "hire another nurse" is the
+   * first-order remedy: moving triage next to the entrance is.
+   */
+  it('prints the triage gather-vs-treat split and the nurse time budget', () => {
+    const seeds = [1337, 1338, 1339];
+    const days = 5;
+
+    interface Split {
+      gatherTicks: number[];
+      activeTicks: number[];
+      waitPatient: number;
+      waitStaff: number;
+      waitBoth: number;
+      nurse: Map<string, number>;
+      queueSamples: number;
+      queueSum: number;
+      peakQueue: number;
+    }
+
+    const runs: Split[] = seeds.map((seed) => {
+      const events = new EventBus();
+      const world = new World(events, seed);
+      setupNewGame(world);
+      world.cash += REFERENCE_BUILD
+        .filter((r) => EXPANSION_WING.includes(r.type))
+        .reduce((sum, r) => sum + ROOM_DEFS[r.type].cost, 0);
+      for (const spec of REFERENCE_BUILD) world.buildRoom(spec.type, spec.rect, spec.door);
+      for (const { role, count } of STAFF) {
+        for (let i = 0; i < count; i++) {
+          world.addStaffMember(role, 3, ROLE_DEFS[role].salaryPerDay);
+        }
+      }
+
+      const s: Split = {
+        gatherTicks: [],
+        activeTicks: [],
+        waitPatient: 0,
+        waitStaff: 0,
+        waitBoth: 0,
+        nurse: new Map(),
+        queueSamples: 0,
+        queueSum: 0,
+        peakQueue: 0,
+      };
+      // reservationId -> ticks seen in each phase, for triage reservations only.
+      const seen = new Map<
+        number,
+        { gather: number; active: number; waitPatient: number; waitStaff: number; waitBoth: number }
+      >();
+
+      for (let i = 0; i < TICKS_PER_DAY * days; i++) {
+        world.tick();
+
+        for (const room of world.rooms.values()) {
+          if (room.type !== 'triage') continue;
+          for (const res of world.reservationsOn(room.id)) {
+            let rec = seen.get(res.id);
+            if (rec === undefined) {
+              rec = { gather: 0, active: 0, waitPatient: 0, waitStaff: 0, waitBoth: 0 };
+              seen.set(res.id, rec);
+            }
+            if (res.phase === 'active') {
+              rec.active += 1;
+            } else {
+              rec.gather += 1;
+              // WHO is the room waiting for? Same arrival predicate the
+              // promotion uses (dispatcher.ts:816-817), so this decomposition
+              // cannot drift from the thing it explains.
+              const inRoom = (w: { at: GridPoint }): boolean =>
+                world.isInsideRoom(w.at, room);
+              const patient = world.patients.get(res.patientId);
+              const staffHere = res.staffIds.every((id) => {
+                const m = world.staff.get(id);
+                return m !== undefined && world.walkerArrived(m) && inRoom(m);
+              });
+              const patientHere =
+                patient !== undefined && world.walkerArrived(patient) && inRoom(patient);
+              if (staffHere && !patientHere) rec.waitPatient += 1;
+              else if (patientHere && !staffHere) rec.waitStaff += 1;
+              else if (!patientHere && !staffHere) rec.waitBoth += 1;
+            }
+          }
+        }
+
+        // Where does a nurse's day actually go?
+        for (const staff of world.staff.values()) {
+          if (staff.role !== 'nurse') continue;
+          let bucket = staff.duty.kind as string;
+          if (staff.duty.kind === 'reserved') {
+            // Split the reserved bucket: walking to the room vs treating in it.
+            const res = world.reservations.get(staff.duty.reservationId);
+            // NOTE: "in a gather" is NOT all walking. The decomposition below
+            // shows 88.8% of triage gather ticks are a staffer who has already
+            // ARRIVED, standing in the room waiting for the patient. Do not
+            // read this bucket as travel time.
+            bucket = res?.phase === 'active' ? 'treating' : 'in a gather (mostly waiting)';
+          }
+          s.nurse.set(bucket, (s.nurse.get(bucket) ?? 0) + 1);
+        }
+
+        const queued = [...world.patients.values()].filter(
+          (p) => p.stage.kind === 'waitingTriage',
+        ).length;
+        s.queueSum += queued;
+        s.queueSamples += 1;
+        if (queued > s.peakQueue) s.peakQueue = queued;
+      }
+
+      for (const rec of seen.values()) {
+        // Completed reservations only — one still gathering at the last tick
+        // would understate the gather, which is the number under test.
+        if (rec.active > 0) {
+          s.gatherTicks.push(rec.gather);
+          s.activeTicks.push(rec.active);
+          s.waitPatient += rec.waitPatient;
+          s.waitStaff += rec.waitStaff;
+          s.waitBoth += rec.waitBoth;
+        }
+      }
+      return s;
+    });
+
+    const flatGather = runs.flatMap((r) => r.gatherTicks);
+    const flatActive = runs.flatMap((r) => r.activeTicks);
+    const avg = (xs: number[]): number =>
+      xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length;
+    const toMin = (ticks: number): string => (ticks * GAME_MINUTES_PER_TICK).toFixed(1);
+
+    console.log(`\n=== TRIAGE: GATHER vs TREAT (${seeds.length} seeds x ${days} days) ===`);
+    console.log(`completed triage reservations   ${flatActive.length}`);
+    console.log(`mean GATHER (walk/wait)         ${toMin(avg(flatGather))} game-min`);
+    console.log(`mean ACTIVE (treatment)         ${toMin(avg(flatActive))} game-min`);
+    const ratio = avg(flatActive) === 0 ? 0 : avg(flatGather) / avg(flatActive);
+    console.log(`gather : treat                  ${ratio.toFixed(2)} : 1`);
+    console.log(
+      `mean waitingTriage queue        ` +
+        `${avg(runs.map((r) => r.queueSum / Math.max(1, r.queueSamples))).toFixed(2)}` +
+        `   peak ${Math.max(...runs.map((r) => r.peakQueue))}`,
+    );
+
+    // THE decomposition. If the room is mostly awaiting the PATIENT, then the
+    // slot is held during a walk nobody can shorten by hiring or building, and
+    // the remedy is layout (or not holding the slot during the walk at all).
+    const wp = runs.reduce((a, r) => a + r.waitPatient, 0);
+    const ws = runs.reduce((a, r) => a + r.waitStaff, 0);
+    const wb = runs.reduce((a, r) => a + r.waitBoth, 0);
+    const wt = Math.max(1, wp + ws + wb);
+    console.log(`\n=== WHO IS THE TRIAGE ROOM WAITING FOR? (share of gather ticks) ===`);
+    console.log(`staff there, awaiting PATIENT   ${((100 * wp) / wt).toFixed(1)}%`);
+    console.log(`patient there, awaiting STAFF   ${((100 * ws) / wt).toFixed(1)}%`);
+    console.log(`awaiting BOTH                   ${((100 * wb) / wt).toFixed(1)}%`);
+
+    console.log(`\n=== NURSE TIME BUDGET (share of nurse-ticks) ===`);
+    const buckets = [...new Set(runs.flatMap((r) => [...r.nurse.keys()]))].sort();
+    const totals = runs.map((r) => [...r.nurse.values()].reduce((a, b) => a + b, 0));
+    for (const b of buckets) {
+      const share = avg(
+        runs.map((r, i) => ((r.nurse.get(b) ?? 0) / Math.max(1, totals[i] ?? 1)) * 100),
+      );
+      console.log(`${b.padEnd(24)}${share.toFixed(1).padStart(6)}%`);
     }
     console.log('');
   });
