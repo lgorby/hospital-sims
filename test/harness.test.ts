@@ -290,6 +290,21 @@ describe('headless balance harness (M4)', () => {
     for (const id of ['asthma', 'pneumonia'] as ConditionId[]) {
       expect(s.treatedByCondition.get(id) ?? 0, `${id} discharged`).toBeGreaterThan(0);
     }
+    // The X-RAY CONSUMERS, added ahead of the OBSERVATION epic and IMAGING §4B
+    // (IMAGING_4B pre-impl review MAJOR 9). `chestPain` and `fracture` are 25
+    // of 148 arrival weight and had NO per-condition guard — the same hole the
+    // asthma/pneumonia pair above was added to close, and for the same class
+    // of change. It matters specifically here because X-Ray is a SINGLE-slot
+    // room and `effectivePriority` ages by wait: once chest pain consumes the
+    // X-ray (either epic routes it there), an acuity-1 patient carrying an
+    // accumulated wait outranks a FRESH acuity-3 fracture at that one slot, and
+    // fracture's X-ray is step 0 — so a preempted fracture is blocked at the
+    // very start of its chain while the aggregate floors stay green.
+    // Lands BEFORE the routing change it guards, proven green on the OLD
+    // (chestPain = single ER step) build. See :287-289 for the rule.
+    for (const id of ['chestPain', 'fracture'] as ConditionId[]) {
+      expect(s.treatedByCondition.get(id) ?? 0, `${id} discharged`).toBeGreaterThan(0);
+    }
     // Finance state, asserted LIVE rather than assumed, so the seeded run is
     // not making a vacuous claim. (History note: the finances epic was the
     // first save bump that added no role and so kept seed 1338 un-re-pinned —
