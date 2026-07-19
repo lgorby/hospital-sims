@@ -129,8 +129,13 @@ revisited.
    Consequences (§3.3): §4.3 and the Departments block **stand** (imaging is
    demand-driven and distance-independent; ~6.2% → ~8% is still nowhere near
    saturated). §3.8's room-capture result is directionally safe but its
-   magnitude is a FLOOR. **`ED_PLAN` §5b needs re-reading** — the nurse-capture
-   guard was tuned where `noNurse` is 141t against 1,052t compact.
+   magnitude is a FLOOR. **`ED_PLAN` §5b RE-MEASURED — the guard SURVIVES** (§5b.1).
+   It earns MORE compact than on the fixture it was tuned against (profit
+   +6.6% vs +3.1%, surgeries +14%); no action needed on the deployed build.
+   But §5b's "improve rather than trade off" claim is layout-specific and was
+   corrected: compact, it IS a trade — walkouts move the wrong way (30.2 →
+   32.8) while surgeries and profit rise. The toggle was validated by
+   reproducing §5b's recorded "before" column to the decimal.
    §3.4 recommends keeping BOTH arms rather than swapping the fixture, and
    stating the layout with every future measurement.
 1. **The layout lesson** — `docs/LAYOUT_PLAN.md` (SCOPING DRAFT, owner ask

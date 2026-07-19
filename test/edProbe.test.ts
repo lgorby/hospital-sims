@@ -345,6 +345,32 @@ function withArm(arm: 'baseline' | 'density' | 'b1', fn: () => void): void {
   }
 }
 
+/**
+ * Disable ED_PLAN §5b's anti-capture guard WITHOUT touching `src/`.
+ *
+ * The guard fires on `load > 0 && starvedOutside(starved, role, roomType) &&
+ * rolePool > 1` (dispatcher.ts). `starved` comes from `starvingDemand` ->
+ * `blockedDemand`, which counts only patients who have waited past
+ * `capacityHintWaitGameMinutes`. Push that threshold beyond the run length and
+ * `blockedDemand` is always empty, so `starvedOutside` is always false and the
+ * guard can never fire — exactly equivalent to deleting the condition.
+ *
+ * `blockedDemand` has exactly TWO consumers (verified): this guard, and
+ * `capacityNeeds` in needs.ts. The latter produces hint ROWS only and mutates
+ * nothing but `hintedOnce`, so suppressing it cannot move a sim outcome. The
+ * in-place data-table mutation matches `withArm`'s existing approach.
+ */
+function withoutAntiCaptureGuard(fn: () => void): void {
+  const disp = BALANCE.dispatcher as { capacityHintWaitGameMinutes: number };
+  const saved = disp.capacityHintWaitGameMinutes;
+  disp.capacityHintWaitGameMinutes = 1_000_000_000;
+  try {
+    fn();
+  } finally {
+    disp.capacityHintWaitGameMinutes = saved;
+  }
+}
+
 // A MEASUREMENT INSTRUMENT, not a test: it prints a table and asserts nothing,
 // and a full 3-arm × 5-seed × 5-day sweep takes ~135s — which would triple the
 // cost of the per-milestone `npm test` gate forever (post-impl review MAJOR 2).
@@ -408,7 +434,25 @@ describeProbe('ED Stage B1 probe (ED_IMPL_PLAN §6b)', () => {
         );
       }
     }
-    table('LAYOUT: reference fixture (triage door 18 tiles out)', seeds.map((s) => run(s, 5, REFERENCE_BUILD)));
-    table('LAYOUT: compact (triage door 7 tiles out)', seeds.map((s) => run(s, 5, COMPACT_BUILD)));
+    // 2x2: the ED_PLAN §5b anti-capture guard x layout. The guard was ratified
+    // on the reference fixture alone, where LAYOUT_PLAN §3.2 shows staff are
+    // rarely contended because they are mostly WALKING. This asks whether it
+    // still earns its place once the hospital is compact and the nursing pool
+    // is genuinely contended (noNurse 141t -> 1052t).
+    //
+    // SELF-CHECK, and the reason this toggle can be trusted: the
+    // REFERENCE/GUARD-OFF arm must reproduce §5b's recorded "before guard"
+    // column (surgeries 8.6, discharged 120.2, died 3.4, walkouts 43.2,
+    // drBlockedExam 27.4t, profit 12,229). If it does not, the toggle is not
+    // disabling what it claims to and every number below is void.
+    for (const [layoutName, build] of [
+      ['REFERENCE', REFERENCE_BUILD],
+      ['COMPACT', COMPACT_BUILD],
+    ] as const) {
+      table(`§5b GUARD ON  · ${layoutName}`, seeds.map((s) => run(s, 5, build)));
+      withoutAntiCaptureGuard(() => {
+        table(`§5b GUARD OFF · ${layoutName}`, seeds.map((s) => run(s, 5, build)));
+      });
+    }
   }, 600_000);
 });

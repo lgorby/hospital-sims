@@ -299,9 +299,56 @@ Short-staffed (1 nurse + 1 doctor), to test the ratio's own claim:
    | Profit/day | 12,229 | **12,605** | 12,323 |
 
    Surgeries are restored to the baseline, and deaths, walkouts and profit all
-   IMPROVE rather than trade off. The 1-nurse arm is bit-for-bit its pre-guard
+   IMPROVE rather than trade off. **(See §5b.1 — that last clause is
+   LAYOUT-SPECIFIC and does not hold on a compact hospital.)** The 1-nurse arm is bit-for-bit its pre-guard
    self (deaths 10.6, surgeries 1.6, discharges 69.2) — the bound makes the
    guard inert there by design.
+
+   ### §5b.1 RE-MEASURED against a compact layout (2026-07-19)
+
+   Prompted by `LAYOUT_PLAN` §3.2: the guard was ratified on the reference
+   fixture alone, where staff are rarely contended because they are mostly
+   WALKING (`noNurse` 141t vs 1,052t compact). If the guard were tuned to a
+   regime the player never occupies, that would matter — it is shipped and
+   deployed. So it was re-run as a 2×2, guard × layout, 5 seeds × 5 days.
+
+   **The toggle is validated, not assumed.** The guard is disabled by pushing
+   `capacityHintWaitGameMinutes` past the run length, so `blockedDemand` is
+   always empty and `starvedOutside` can never be true (its only other consumer
+   is `capacityNeeds`, which produces hint rows and cannot move a sim outcome).
+   The REFERENCE/GUARD-OFF arm reproduces the "before guard" column above **to
+   the decimal** — 8.6 / 120.2 / 3.4 / 43.2 / 27.4t / 12,229. Had it not, every
+   number below would be void.
+
+   | | REF off | REF **on** | COMPACT off | COMPACT **on** |
+   |---|---|---|---|---|
+   | Surgeries | 8.6 | **10.4** | 13.0 | **14.8** |
+   | Discharged | 120.2 | **120.4** | 162.6 | **161.6** |
+   | Died | 3.4 | **3.2** | 1.8 | **1.8** |
+   | Walkouts | 43.2 | **39.0** | 30.2 | **32.8** |
+   | Dr-blocked-in-exam | 27.4t | **11.8t** | 169.2t | **144.6t** |
+   | Profit/day | 12,229 | **12,605** | 18,947 | **20,198** |
+
+   **VERDICT: the guard survives, and it earns MORE on a compact hospital than
+   on the fixture it was tuned against** — profit +6.6% compact versus +3.1%
+   reference, surgeries +14%, doctor-blocked-in-exam down 15%. No action is
+   needed on the deployed build.
+
+   **But the "improve rather than trade off" claim above is layout-specific and
+   is hereby corrected.** On a compact hospital the guard becomes a genuine
+   TRADE: surgeries and profit up, but **walkouts move the wrong way (30.2 →
+   32.8)** and discharges are flat-to-slightly-down (162.6 → 161.6). That is
+   the mechanism working as designed — pulling nurses back out of ED ratio
+   extension costs some ED throughput and buys higher-value surgical
+   throughput — but on the sprawling fixture the ED was never busy enough for
+   the cost to show. Under real contention it does.
+
+   **Noise caveat, stated rather than buried:** 5 seeds. The surgery delta
+   (+1.8) is the same magnitude the original ratification treated as real, and
+   the profit delta (+1,250/day) is large. The discharge delta (−1.0) is within
+   noise and should NOT be read as a real cost. The walkout delta (+2.6) sits
+   between the two — directionally consistent with the mechanism, but it wants
+   more seeds before anyone tunes against it.
 
    Found by adversarial review before commit (verdict DO NOT COMMIT, 3 MAJOR):
    the phantom-demand bug, the unbounded lean regression, and — via mutation
