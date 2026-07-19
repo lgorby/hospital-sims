@@ -139,8 +139,68 @@ while keeping the throughput-capped starter growing. v2 numbers must therefore:
 - **Consider a gentler mature target (~25–30%, not 15%)** so the fee trim can stay
   survivable for the starter.
 
-Remaining v2 steps (from the sequence above): derive the concrete rates from these
-streams, re-run the shock + per-room P&L at the derived numbers, then write v2.
+### The DERIVED v2 numbers (measured, then adversarially reviewed — 2 rounds)
+
+The analytical solve exposed that a FLAT per-tile utility is regressive against
+low-VOLUME rooms (CT/xray go net-negative at any rate that collapses the mature
+margin) AND the starter. So the probe gained a **usage-scaled** component (per
+ACTIVE room-hour — a room holding ≥1 reservation) and per-room data for all 7
+equipment rooms. A first candidate used a FLAT usage rate; review round 2 proved
+that too was an artifact (a flat rate is bounded by the weakest earner, so it
+can't tax the fat rooms — surgery kept +$1,527/day). The final candidate uses a
+**per-type** rate = a fixed FRACTION of each room's measured revenue-per-active-
+hour, so every room keeps the same margin and none goes negative.
+
+**DERIVED-PERTYPE — the recommended Stage-1 levers:**
+- **`feeScale = 0.68`** (a ~32% fee trim, baked into `conditions.ts`) — starter-safe.
+- **HVAC base `$0.05`/tile/game-hour, ALL rooms** (always-on; negligible, thematic).
+- **Usage `= 0.52 × (room's revenue-per-active-hour)`, EQUIPMENT rooms only**
+  (xray/ct/mri/nucMed/ultrasound/surgery/dialysis), charged per active room-hour.
+  Basic clinical rooms pay $0 usage — this is what protects the throughput-starved
+  starter (its triage/exam/ER are heavily active). The `0.52` leaves each room
+  ~24% of its scaled revenue as margin (imaging still worth building).
+- **Repairs** per-type on breakdown — modest, thematic, NOT a margin lever
+  (the starter has no breakable room; mature repairs ≈ $552/day).
+
+**Verified outcomes (5 seeds, all reconciled by the reviewer):**
+| arm | BASELINE | DERIVED-PERTYPE | note |
+|---|---|---|---|
+| EARLY-GAME (starter) | 53% | **26.7%** | +$211/day, ALL 5 seeds +$153–371, 0/5 bankrupt |
+| REFERENCE (mature) | 83.8% | **32.3%** | every room net-positive (xray +$42 … surgery +$477) |
+| COMPACT (mature) | 88.2% | **40.8%** | busier ⇒ earns more margin (the LAYOUT lesson, economic) |
+| SHOCK (mature, rep→50 @day6) | — | **29.2%** | NO TROUGH — see caveat 2 |
+| REFERENCE 2× payroll | — | **6.4%** | 32%→6%: cost now BITES hard (the shifts unblock) |
+
+**Three caveats a v2 contract MUST carry (all measured, none laundered):**
+1. **The mature "floor" is ~32% (REFERENCE), NOT ~15%.** A true 15–20% is
+   unreachable in Stage 1 without either loss-making equipment or a per-patient
+   VARIABLE cost (consumables per treatment step — the taxonomy's running-costs
+   row). That is the **Stage-2** lever. 84%→32% is still a real ~2.6× collapse
+   where cost decisions bite (2× payroll → 6.4%).
+2. **The operating-leverage risk (§ REVIEW MAJOR 2) does NOT materialise at ~30%.**
+   A harsh rep→50 shock (≈45% arrival cut) produced NO cash trough on any seed —
+   fixed costs are only ~25% of revenue and usage-utility itself falls with
+   activity, so the build stays profitable through the shock. Recovery-from-trough
+   is therefore untested and only becomes a risk at a much tighter margin (the 2×
+   payroll arm at 6.4%). If a v2 wants that risk to exist, it needs the Stage-2
+   variable cost.
+3. **The per-type rate has LAYOUT sensitivity.** Rates derived from REFERENCE
+   activity leave all REFERENCE rooms positive, but on the busier COMPACT build
+   CT/ultrasound dip slightly negative (−$127/−$30). A shipped per-type rate needs
+   a safety margin (lower `k`, or rates set from the busier arm), and this must be
+   re-checked on both layout arms — the LAYOUT_PLAN §3 discipline.
+
+**Also for the implementer:** "active" = reservation-HELD hours (dispatch → walk →
+treat → complete), not pure equipment-in-use — a defensible "room in service"
+proxy, but state it; a metered-power model would gate on an occupied stage. And
+`utilPerActiveHour` is a live per-hour computation (no save state) beside payroll
+in `economy.ts`; the new `utilities`/`repairs` `FINANCE_CATEGORIES` rows are the
+only SAVE_VERSION-12 cost (the `TALLY_KEY_VERSIONS` one-liner remains MANDATORY).
+
+**Remaining before implementation:** pick the mature-margin target (32% as
+measured, or push `k` with a layout-safe margin), decide Stage-1-vs-Stage-2 for
+the per-patient consumable, then write the v2 contract body + regressions and run
+the standard pre-impl review on it.
 
 ---
 

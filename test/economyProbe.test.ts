@@ -103,7 +103,15 @@ const REPAIR_COST = ratesByType((t) => {
 interface Levers {
   label: string;
   feeScale: number;
+  /** Always-on base draw (HVAC/lighting), $/tile/game-hour. Keep small — a flat
+   *  per-tile rate is regressive against low-VOLUME rooms (CT earns little but is
+   *  16 tiles) AND the starter. */
   utilPerTileHour: Record<RoomType, number>;
+  /** Usage draw, $ per ACTIVE room-hour (a room holding ≥1 reservation). This is
+   *  the main size/scale lever: a busy MRI pays a lot, an idle CT little, so it
+   *  tracks revenue instead of punishing low-volume rooms — the design-MAJOR-3
+   *  "scale utilities by USE" remedy. */
+  utilPerActiveHour: Record<RoomType, number>;
   repairCost: Record<RoomType, number>;
 }
 
@@ -115,14 +123,61 @@ const BASELINE: Levers = {
   label: 'BASELINE (today)',
   feeScale: 1,
   utilPerTileHour: ZERO_UTIL,
+  utilPerActiveHour: ZERO_UTIL,
   repairCost: ZERO_REPAIR,
 };
 
-/** The contract §3 ballpark: cut fees ~half, add utilities + repairs. */
+/** The contract §3 ballpark: cut fees ~half, add FLAT per-tile utilities + repairs.
+ *  Retained to show WHY flat per-tile fails (CT goes net-negative). */
 const BALLPARK: Levers = {
-  label: 'BALLPARK (fee×0.5 +util +repair)',
+  label: 'BALLPARK (fee×0.5 +flat-util +repair)',
   feeScale: 0.5,
   utilPerTileHour: UTIL_PER_TILE_HOUR,
+  utilPerActiveHour: ZERO_UTIL,
+  repairCost: REPAIR_COST,
+};
+
+/** Equipment rooms — carry the usage-scaled utility; basic clinical rooms don't
+ *  (protecting the throughput-starved starter, whose triage/exam/ER are active). */
+const EQUIP: readonly RoomType[] = ['xray', 'ct', 'mri', 'nucMed', 'ultrasound', 'surgery', 'dialysis'];
+
+/**
+ * DERIVED from the raw streams (levers are linear): a ~32% fee trim (starter-safe),
+ * a tiny always-on per-tile HVAC base, and a per-ACTIVE-hour usage charge on
+ * EQUIPMENT only — sized to the weakest OUTPATIENT-driven room (nucMed) staying
+ * net-positive. Target: starter stays solvent & grows; mature collapses from ~84%
+ * to the measured room-positive/starter-safe FLOOR (~40%), where 2× payroll bites.
+ */
+const DERIVED_FLAT: Levers = {
+  label: 'DERIVED-FLAT (fee×0.68 +HVAC0.05 +usage130flat +repair)',
+  feeScale: 0.68,
+  utilPerTileHour: ratesByType(() => 0.05),
+  utilPerActiveHour: ratesByType((t) => (EQUIP.includes(t) ? 130 : 0)),
+  repairCost: REPAIR_COST,
+};
+
+/**
+ * Measured full-fee revenue per ACTIVE room-hour (REFERENCE arm) — the basis for
+ * a PER-TYPE usage rate. A FLAT rate is bounded below by the weakest earner
+ * (xray $156), so it can't tax the fat rooms (surgery $720) without sinking xray.
+ * A per-type rate = k × (this) charges each room the same FRACTION of its hourly
+ * take, so every room keeps the same margin and none goes negative — and k can go
+ * higher, reaching a tighter mature floor. (Review finding 1.)
+ */
+const REV_PER_ACTIVE_HR: Partial<Record<RoomType, number>> = {
+  mri: 314, ct: 318, nucMed: 257, xray: 156, ultrasound: 211, dialysis: 216, surgery: 720,
+};
+
+/** k = fraction of each equipment room's hourly take taken as usage utility.
+ *  0.52 leaves equipment ~ (0.68−0.52)/0.68 ≈ 24% of its scaled revenue as margin —
+ *  meaningful profit (imaging still worth building), while collapsing the mature
+ *  margin further than the flat rate and keeping EVERY room net-positive. */
+const PERTYPE_K = 0.52;
+const DERIVED_PERTYPE: Levers = {
+  label: `DERIVED-PERTYPE (fee×0.68 +HVAC0.05 +usage${PERTYPE_K}×rev/hr +repair)`,
+  feeScale: 0.68,
+  utilPerTileHour: ratesByType(() => 0.05),
+  utilPerActiveHour: ratesByType((t) => Math.round(PERTYPE_K * (REV_PER_ACTIVE_HR[t] ?? 0))),
   repairCost: REPAIR_COST,
 };
 
@@ -152,6 +207,11 @@ interface Probe {
   breaksByType: Map<RoomType, number>;
   tilesByType: Map<RoomType, number>;
   revenueByType: Map<RoomType, number>;
+  /** Ticks a room of this type held ≥1 reservation (÷TICKS_PER_GAME_HOUR = active
+   *  room-hours). Summed over all rooms of the type. */
+  activeTicksByType: Map<RoomType, number>;
+  /** The usage (active-hour) portion of utilitiesTotal, for the reporting split. */
+  usageTotal: number;
   cashAtStart: number;
   cashEnd: number;
   minCash: number;
@@ -205,6 +265,8 @@ function runEconomy(seed: number, arm: Arm, levers: Levers): Probe {
     breaksByType: new Map(),
     tilesByType: new Map(),
     revenueByType: new Map(),
+    activeTicksByType: new Map(),
+    usageTotal: 0,
     cashAtStart: world.cash,
     cashEnd: 0,
     minCash: world.cash,
@@ -247,17 +309,35 @@ function runEconomy(seed: number, arm: Arm, levers: Levers): Probe {
   events.on('patientLeftAma', () => (p.leftAma += 1));
 
   const totalTicks = TICKS_PER_DAY * arm.days;
+  const hourlyActive = new Map<RoomType, number>(); // active-room-ticks in the current hour
   for (let i = 0; i < totalTicks; i++) {
     world.tick();
+    // Usage sampling: a room is ACTIVE this tick if it holds ≥1 reservation.
+    // NB this is reservation-HELD time (dispatch → walk → treat → complete), not
+    // pure equipment-in-use time — a committed room draws prep/HVAC, so it is a
+    // defensible "room in service" proxy, but the contract should state it
+    // (review finding 4): a metered-power model would gate on an occupied stage.
+    const activeRooms = new Set<number>();
+    for (const res of world.reservations.values()) activeRooms.add(res.roomId);
+    for (const roomId of activeRooms) {
+      const t = roomType.get(roomId);
+      if (t === undefined) continue;
+      hourlyActive.set(t, (hourlyActive.get(t) ?? 0) + 1);
+      p.activeTicksByType.set(t, (p.activeTicksByType.get(t) ?? 0) + 1);
+    }
     if (world.clock.tick % TICKS_PER_GAME_HOUR === 0) {
-      let util = 0;
+      let base = 0;
       for (const room of world.rooms.values()) {
-        const t = room.type;
-        const rect = room.rect;
-        util += rect.cols * rect.rows * levers.utilPerTileHour[t];
+        base += room.rect.cols * room.rect.rows * levers.utilPerTileHour[room.type];
       }
-      world.cash -= util;
-      p.utilitiesTotal += util;
+      let usage = 0;
+      for (const [t, ticks] of hourlyActive) {
+        usage += (ticks / TICKS_PER_GAME_HOUR) * levers.utilPerActiveHour[t];
+      }
+      hourlyActive.clear();
+      world.cash -= base + usage;
+      p.utilitiesTotal += base + usage;
+      p.usageTotal += usage;
     }
     if (world.cash < p.minCash) p.minCash = world.cash;
     if (world.bankruptSinceTick !== null) p.bankrupted = true;
@@ -278,7 +358,9 @@ function runEconomy(seed: number, arm: Arm, levers: Levers): Probe {
 // --------------------------------------------------------------------------
 // Reporting — per arm, averaged over seeds, with the raw streams up front.
 // --------------------------------------------------------------------------
-const PL_TYPES: readonly RoomType[] = ['mri', 'nucMed', 'ct', 'surgery'];
+// ALL equipment rooms (not just the original 4) — a per-type utility rate must
+// keep the WEAKEST-earning room (xray/ct) net-positive, so all must be visible.
+const PL_TYPES: readonly RoomType[] = ['mri', 'nucMed', 'ct', 'xray', 'ultrasound', 'dialysis', 'surgery'];
 const EXPANSION_TRIGGER = ROOM_DEFS.er.cost; // "can a new player afford another ER?"
 
 function report(arm: Arm, levers: Levers, rows: Probe[]): void {
@@ -357,35 +439,58 @@ function report(arm: Arm, levers: Levers, rows: Probe[]): void {
     );
   }
   if (arm.shock) {
-    // Post-shock trough over the close-of-day cash from the shock day onward.
-    const trough = (r: Probe): number => Math.min(...r.cashTrajectory.slice(arm.shock!.atDay - 1));
-    const recovered = rows.filter((r) => r.cashEnd > trough(r)).length;
+    // trajectory[atDay-1] is the PRE-shock close (cash is pushed, THEN rep is cut).
+    // A real trough must appear AFTER that (slice atDay onward); comparing to it
+    // distinguishes "dipped then recovered" from "never dipped" (review finding 2).
+    const shockCash = (r: Probe): number => r.cashTrajectory[arm.shock!.atDay - 1] ?? r.cashAtStart;
+    const postTrough = (r: Probe): number => Math.min(...r.cashTrajectory.slice(arm.shock!.atDay));
+    const dipped = rows.filter((r) => postTrough(r) < shockCash(r)).length;
+    const recovered = rows.filter((r) => postTrough(r) < shockCash(r) && r.cashEnd > postTrough(r)).length;
     console.log(
-      `  SHOCK@day ${arm.shock.atDay} (rep→${arm.shock.reputation}): trough $${avg(trough).toFixed(0)} → ` +
-        `end $${avg((r) => r.cashEnd).toFixed(0)} | recovered ${recovered}/${n}`,
+      `  SHOCK@day ${arm.shock.atDay} (rep→${arm.shock.reputation}): cash@shock $${avg(shockCash).toFixed(0)} → ` +
+        `post-trough $${avg(postTrough).toFixed(0)} → end $${avg((r) => r.cashEnd).toFixed(0)} | ` +
+        `dipped ${dipped}/${n} | recovered-from-dip ${recovered}/${n}` +
+        (dipped === 0 ? ' (NO TROUGH — margin cushions the shock; recovery untested)' : ''),
     );
   }
+  // Per-seed net/day — the averaged profit line can hide a seed bleeding without
+  // bankrupting; this shows the spread (review finding 5).
+  console.log(
+    '  per-seed net/d: ' +
+      rows.map((r) => `${r.seed} $${((r.cashEnd - r.cashAtStart) / r.days).toFixed(0)}`).join('  '),
+  );
   // Per-room-type P&L — protect the LIVE outpatient milestone: utilities must
-  // not turn a just-populated imaging/OR room into a net loss.
+  // not turn a just-populated imaging/OR room into a net loss. util = base
+  // (tiles × tileRate × 24, per-day-constant) + usage (active-hours × usageRate).
+  const activeHrs = (r: Probe, t: RoomType): number => (r.activeTicksByType.get(t) ?? 0) / TICKS_PER_GAME_HOUR;
   const plParts = PL_TYPES.map((t) => {
     const rev = avg((r) => perDay((r.revenueByType.get(t) ?? 0) * levers.feeScale, r));
-    // Footprint is per-day-constant, so tiles × rate × 24 IS the daily charge —
-    // no perDay (dividing by days would understate it days-fold).
-    const util = avg((r) => (r.tilesByType.get(t) ?? 0) * levers.utilPerTileHour[t] * HOURS_PER_DAY);
+    const util = avg(
+      (r) =>
+        (r.tilesByType.get(t) ?? 0) * levers.utilPerTileHour[t] * HOURS_PER_DAY +
+        perDay(activeHrs(r, t) * levers.utilPerActiveHour[t], r),
+    );
     const rep = avg((r) => perDay((r.breaksByType.get(t) ?? 0) * levers.repairCost[t], r));
-    return `${t} $${(rev - util - rep).toFixed(0)} (rev ${rev.toFixed(0)} -util ${util.toFixed(0)} -rep ${rep.toFixed(0)})`;
+    return `${t} $${(rev - util - rep).toFixed(0)} (rev ${rev.toFixed(0)} -u ${util.toFixed(0)} -r ${rep.toFixed(0)})`;
   });
   console.log('  per-room P&L/d: ' + plParts.join(' | '));
   // The raw, lever-independent streams for the analytical solve.
   const tileHours = avg((r) => [...r.tilesByType.values()].reduce((s, v) => s + v, 0) * HOURS_PER_DAY);
   const breaksDay = avg((r) => perDay([...r.breaksByType.values()].reduce((s, v) => s + v, 0), r));
+  const usageDay = avg((r) => perDay(r.usageTotal, r));
   console.log(
-    `  RAW: grossRev/d $${avg((r) => perDay(r.grossTreatment + r.grossOutpatient, r)).toFixed(0)} | tile-hours/d ${tileHours.toFixed(0)} | breakdowns/d ${breaksDay.toFixed(2)}`,
+    `  RAW: grossRev/d $${avg((r) => perDay(r.grossTreatment + r.grossOutpatient, r)).toFixed(0)} | tile-hours/d ${tileHours.toFixed(0)} | usage-util/d $${usageDay.toFixed(0)} | breakdowns/d ${breaksDay.toFixed(2)}`,
   );
-  // Per-type footprint (constant across seeds) — enough to re-derive utilities at
-  // any candidate rate for EVERY room type, not just the P&L set (finding 7).
+  // Per-type footprint (constant) + active room-hours/day (the usage lever base)
+  // — enough to re-derive BOTH utility components at any rate for every type.
   console.log(
     '  tiles/type: ' + [...rows[0]!.tilesByType.entries()].map(([t, v]) => `${t} ${v}`).join(' '),
+  );
+  console.log(
+    '  active-hrs/d: ' +
+      [...rows[0]!.activeTicksByType.keys()]
+        .map((t) => `${t} ${avg((r) => perDay(activeHrs(r, t), r)).toFixed(1)}`)
+        .join(' '),
   );
   if (avg((r) => r.repairsTotal) === 0 && avg((r) => r.grossOutpatient) === 0) {
     console.log(
@@ -416,9 +521,18 @@ describeProbe('Economy Stage-1 probe (ECONOMY_STAGE1_CONTRACT §4)', () => {
     ];
 
     for (const arm of arms) {
-      for (const levers of [BASELINE, BALLPARK]) {
+      for (const levers of [BASELINE, DERIVED_PERTYPE]) {
         report(arm, levers, seeds.map((s) => runEconomy(s, arm, levers)));
       }
+    }
+
+    // WHY per-type: on REFERENCE, show the two rejected flat structures — flat
+    // per-tile (BALLPARK: CT/xray net-negative) and flat per-active-hour
+    // (DERIVED-FLAT: xray still net-negative, surgery barely taxed). Both are
+    // dominated by DERIVED-PERTYPE above.
+    const ref: Arm = { name: 'REFERENCE (mature)', build: REFERENCE_BUILD, staff: matureStaffRoster(), days: 5 };
+    for (const levers of [BALLPARK, DERIVED_FLAT]) {
+      report(ref, levers, seeds.map((s) => runEconomy(s, ref, levers)));
     }
 
     // THE SHOCK ARM (finding 1): NOT a low static rep — that reduces arrivals and
@@ -426,19 +540,22 @@ describeProbe('Economy Stage-1 probe (ECONOMY_STAGE1_CONTRACT §4)', () => {
     // a MATURE build under the tightened economy to steady state, then collapses
     // reputation mid-run (a death cluster's mechanism), and asks whether cash
     // TROUGHS and CLIMBS BACK — level is not enough at high operating leverage.
+    // A HARSH shock (rep→50 ≈ 45% arrival cut) under the tightened per-type
+    // economy — where operating leverage is real — so the trough is a genuine
+    // test, not the vacuous "cash never dipped" the 40% economy produced.
     const shockArm: Arm = {
-      name: 'SHOCK (mature, rep→100 @day6)',
+      name: 'SHOCK (mature, rep→50 @day6)',
       build: REFERENCE_BUILD,
       staff: matureStaffRoster(),
       days: 12,
-      shock: { atDay: 6, reputation: 100 },
+      shock: { atDay: 6, reputation: 50 },
     };
-    report(shockArm, BALLPARK, seeds.map((s) => runEconomy(s, shockArm, BALLPARK)));
+    report(shockArm, DERIVED_PERTYPE, seeds.map((s) => runEconomy(s, shockArm, DERIVED_PERTYPE)));
 
-    // The 2× payroll check (the direct shifts unblock): does doubling labor drop
-    // the mature margin below ~30%? Reported on REFERENCE under the ballpark.
+    // The 2× payroll check (the direct shifts unblock): under the tightened
+    // economy, does doubling labor drop the mature margin hard (cost now bites)?
     const dblStaff = matureStaffRoster().map((s) => ({ ...s, count: s.count * 2 }));
     const dblArm: Arm = { name: 'REFERENCE 2× payroll', build: REFERENCE_BUILD, staff: dblStaff, days: 5 };
-    report(dblArm, BALLPARK, seeds.map((s) => runEconomy(s, dblArm, BALLPARK)));
+    report(dblArm, DERIVED_PERTYPE, seeds.map((s) => runEconomy(s, dblArm, DERIVED_PERTYPE)));
   }, 600_000);
 });

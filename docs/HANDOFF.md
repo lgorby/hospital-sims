@@ -142,16 +142,21 @@ ahead" claim was stale; corrected in Current state above).
 `edProbe`). It was adversarially reviewed (READY-WITH-FIXES, all 8 findings
 folded) and its numbers are in `ECONOMY_STAGE1_CONTRACT.md` (MEASURED block).
 
-**► THE NEXT CONCRETE TASK: DERIVE the ECONOMY Stage-1 v2 numbers** from the
-probe's raw per-arm streams (the levers are linear, so solve analytically — no
-sweep). The probe proved the naïve Stage-1 unwinnable: the same fee-cut + flat
-per-tile utilities that leave the mature build at 20–41% put the throughput-capped
-starter at **−67%**, and CT goes net-negative. v2 must concentrate utilities on
-EQUIPMENT rooms (imaging/OR — the starter owns none), trim fees gentler than 50%,
-and treat starting cash as a co-lever. Then re-run the shock + per-room P&L at the
-derived numbers, write v2, review, THEN implement. Full direction: the MEASURED
-block in `ECONOMY_STAGE1_CONTRACT.md`. The original probe spec is in the box at
-the bottom of this block, retained for provenance.
+**► THE v2 NUMBERS ARE DERIVED + REVIEWED** (2 review rounds; findings folded).
+The recommended Stage-1 levers are in `ECONOMY_STAGE1_CONTRACT.md` → "The DERIVED
+v2 numbers": **feeScale 0.68**, a tiny per-tile HVAC base, and a **per-type
+usage utility** (0.52 × each equipment room's revenue-per-active-hour) — which
+collapses the mature margin 84%→**32%** with EVERY room net-positive and the
+1-nurse starter solvent (27%, all seeds positive). Three measured caveats carry
+forward: the ~15% target is INFEASIBLE in Stage 1 (needs a Stage-2 per-patient
+consumable), the operating-leverage/shock risk does NOT materialise at ~30%, and
+the per-type rate is layout-sensitive (recheck on both arms).
+
+**► THE NEXT CONCRETE TASK: write the ECONOMY Stage-1 v2 CONTRACT BODY** — pick
+the mature target (32% as measured, or push `k` with a layout-safe margin), decide
+Stage-1-vs-Stage-2 for the per-patient consumable, then the v2 §-by-§ contract +
+regressions, run the standard pre-impl review, THEN implement. The original probe
+spec is in the box at the bottom of this block, retained for provenance.
 
 | commit | what |
 |---|---|
