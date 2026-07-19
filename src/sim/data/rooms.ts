@@ -330,7 +330,7 @@ export const ROOM_DEFS = {
     minRows: 4,
     cost: 20_000,
     floorColor: 0x9fd0b0,
-    staffedBy: ['surgeon', 'nurse'],
+    staffedBy: ['surgeon', 'nurse', 'anesthesiologist'],
     capacity: { kind: 'single' },
     failure: { kind: 'mechanical' },
     props: [

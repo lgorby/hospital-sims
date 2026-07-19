@@ -31,6 +31,22 @@ export const ROLE_DEFS = {
   // shifting EVERY fixed-seed trajectory — the Stage-3 re-pin pass (impl
   // plan §S3.8) landed together with this entry.
   maintenance: { label: 'Maintenance Tech', salaryPerDay: 140, color: 0xe07a3f, standingPost: false },
+  // ANESTHESIA_PLAN §2 (owner ask: "the game actually needs to model
+  // anesthesiology"). Crimson — clear of the teal/green clinical cluster, of
+  // evs brown and of maintenance orange. The one standing red OBJECT in the
+  // world is the vending machine (PROP_STYLE.vending 0xc44b4b), so this was
+  // colour-checked in frame WITH one. Salary sits between nurse and surgeon:
+  // it is the brake that stops "just hire three" being free, and it is why
+  // §4 raises surgery fees. NOTE: adding a role mints constructor candidates
+  // (~12 seeded rng draws before tick 0), shifting EVERY fixed-seed
+  // trajectory — the re-pin sweep (§6) landed together with this entry, the
+  // evs/maintenance precedent.
+  anesthesiologist: {
+    label: 'Anesthesiologist',
+    salaryPerDay: 420,
+    color: 0xc1121f,
+    standingPost: false,
+  },
 } as const;
 
 export type RoleId = keyof typeof ROLE_DEFS;

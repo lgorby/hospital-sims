@@ -307,13 +307,14 @@ The owner asked for a wider hospital: surgery, a fuller imaging suite (ultrasoun
 | MRI | 4×4 | $18,000 | MRI bore, shield screen, control desk | Rad Tech |
 | Nuclear medicine | 3×4 | $16,000 | Gamma camera, hot-lab bench | Rad Tech |
 | Dialysis | 3×4 | $9,000 | Dialysis chairs ×2, machine | Nurse |
-| Operating room | 4×4 | $20,000 | OR table, anesthesia cart, scrub sink | Surgeon + Nurse |
+| Operating room | 4×4 | $20,000 | OR table, anesthesia cart, scrub sink | Surgeon + Nurse + Anesthesiologist |
 
 ### New roles
 | Role | Works in | Salary/day | Notes |
 |---|---|---|---|
 | Sonographer | Ultrasound | $180 | The cheap imaging on-ramp |
-| Surgeon | Operating room | $500 | Dual-staff with a nurse — the second assignment-system stress test after chest pain |
+| Surgeon | Operating room | $500 | Leads the OR's THREE-role gather (surgeon + nurse + anesthesiologist) — the assignment system's hardest case |
+| Anesthesiologist | Operating room | $420 | Added 2026-07-18 so the OR is modelled rather than run on a spare nurse. Surgery is its only consumer, so it idles between cases — the price is the brake on over-hiring |
 
 **Rad Tech becomes a deliberate multi-room bottleneck** (X-ray, CT, MRI, nuclear medicine): one tech cannot staff two scanners at once, so scaling imaging means hiring techs — the imaging mirror of the doctor-generalist bottleneck (§4). Dialysis reuses the Nurse (as in real units), deepening nurse demand rather than adding a fourth niche role.
 
@@ -324,15 +325,15 @@ The owner asked for a wider hospital: surgery, a fuller imaging suite (ultrasoun
 | Back injury | 4 | MRI (Rad Tech) → Exam (Doctor) | $$$ | 8 |
 | Thyroid disorder | 4 | Nuclear medicine (Rad Tech) → Exam (Doctor) | $$$ | 6 |
 | Kidney failure | 2 | Dialysis (Nurse) | $$$ | 6 |
-| Gallstones | 3 | Ultrasound (Sonographer) → Operating room (Surgeon + Nurse) | $$$$ | 6 |
+| Gallstones | 3 | Ultrasound (Sonographer) → Operating room (Surgeon + Nurse + Anesthesiologist) | $$$$ | 6 |
 | Head injury | 2 | CT (Rad Tech) → ER bay (Doctor + Nurse) | $$$$ | 5 |
-| Appendicitis | 2 | Ultrasound (Sonographer) → Operating room (Surgeon + Nurse) | $$$$$ | 5 |
+| Appendicitis | 2 | Ultrasound (Sonographer) → Operating room (Surgeon + Nurse + Anesthesiologist) | $$$$$ | 5 |
 | Stroke | 1 | CT (Rad Tech) → ER bay (Doctor + Nurse) | $$$$$ | 4 |
 
 Design notes:
 - **The ER gets busier without a new room kind:** head injury and stroke both terminate in the existing ER bay — the owner's "rooms in the ER" ask is served first by traffic; dedicated trauma/resus variants and ICU holding stay §11 item 6.
 - **Late-game by case mix, not by lockout:** the new roster is referral-heavy (six of eight at acuity ≤ 3, four at acuity ≤ 2), so §3's reputation case-mix shift naturally makes expansion rooms matter as the hospital's rep grows; low base weights (48 added against the existing 100) keep the early game recognizably V1.
-- **Appendicitis/gallstones are the new longest chains** (imaging → OR with two staff) — the congestion showcase; a lost post-ultrasound appendicitis patient wandering while their surgeon waits is the expansion's "quiet emergency."
+- **Appendicitis/gallstones are the new longest chains** (imaging → OR with THREE staff since 2026-07-18) — the congestion showcase; a lost post-ultrasound appendicitis patient wandering while their surgeon waits is the expansion's "quiet emergency."
 - **UI prerequisite:** the §9 dropdown/category ruling ships before or with this roster — 14 room types do not fit a flat strip.
 - **Save compatibility:** new rooms/roles/conditions extend the `as const` data tables; per `PERSISTENCE_PLAN.md` rule 6 this is a `SAVE_VERSION` bump (new enum values in saves), with a migration decision for old saves at implementation time.
 

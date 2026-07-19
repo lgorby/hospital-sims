@@ -225,7 +225,12 @@ describe('computeBlockedNeeds — enumeration', () => {
     // All urgent; 2-patient needs before the 1-patient need; key breaks the
     // tie. room:restroom (amenities Stage 1) trails as an UPCOMING row —
     // patients exist, none below the bladder threshold, no restroom built.
+    // `role:anesthesiologist` leads on the key tie-break (ANESTHESIA_PLAN §5)
+    // — this is the pipeline naming the OR's third role with NO code change,
+    // asserted rather than assumed: both surgery patients need it, so it
+    // shares the 2-patient rank with role:surgeon and sorts first by key.
     expect(needKeys(world)).toEqual([
+      'role:anesthesiologist',
       'role:surgeon',
       'room:surgery',
       'room:dialysis',

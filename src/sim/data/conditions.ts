@@ -145,9 +145,12 @@ export const CONDITION_DEFS = {
       {
         label: 'Surgery',
         room: 'surgery',
-        roles: ['surgeon', 'nurse'],
-        durationGameMinutes: 120,
-        fee: 1_500,
+        roles: ['surgeon', 'nurse', 'anesthesiologist'],
+        // ANESTHESIA_PLAN §4: shorter + dearer to pay for the third salary.
+        // 120 → 90 min, $1,500 → $2,000 (the case also bills a $250
+        // ultrasound first, so total case revenue is 1,750 → 2,250).
+        durationGameMinutes: 90,
+        fee: 2_000,
       },
     ],
   },
@@ -181,9 +184,11 @@ export const CONDITION_DEFS = {
       {
         label: 'Surgery',
         room: 'surgery',
-        roles: ['surgeon', 'nurse'],
-        durationGameMinutes: 100,
-        fee: 1_800,
+        roles: ['surgeon', 'nurse', 'anesthesiologist'],
+        // ANESTHESIA_PLAN §4: 100 → 80 min, $1,800 → $2,300 (total case
+        // revenue 2,050 → 2,550 with the ultrasound step).
+        durationGameMinutes: 80,
+        fee: 2_300,
       },
     ],
   },

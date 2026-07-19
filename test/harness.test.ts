@@ -84,6 +84,13 @@ const STANDARD_STAFF: { role: RoleId; count: number }[] = [
   // wear accrues per use, breakdowns occur organically (MTBF ≈31/≈45 uses),
   // and the envelope must stay green with one tech cycling repairs.
   { role: 'maintenance', count: 1 },
+  // ANESTHESIA_PLAN §4 (pre-impl review MAJOR 1): the OR is a THREE-role
+  // gather now, so the reference build must actually hire one — without it
+  // gallstones and appendicitis discharge ZERO for every seed and the
+  // per-condition asserts below fail unconditionally. This is a ROSTER
+  // change, not a re-pin. Roster payroll $2,640 → $3,060/day (+16%), a real
+  // tightening of the operating envelope the balance pass must absorb.
+  { role: 'anesthesiologist', count: 1 },
 ];
 
 interface RunSummary {
@@ -262,12 +269,13 @@ describe('headless balance harness (M4)', () => {
     for (const id of expansionConditions) {
       expect(s.treatedByCondition.get(id) ?? 0, `${id} discharged`).toBeGreaterThan(0);
     }
-    // Finances (FINANCE_PLAN §11.9): the FIRST save bump that adds NO role, so
-    // topUpCandidates stays a no-op and nothing draws world.rng differently —
-    // seed 1338 is deliberately NOT re-pinned. This assertion is the guard: if
-    // it goes red, an rng-order change was introduced and must be FOUND, not
-    // papered over with a new seed. The finance state is asserted live rather
-    // than assumed, so the un-re-pinned seed isn't a vacuous claim.
+    // Finance state, asserted LIVE rather than assumed, so the seeded run is
+    // not making a vacuous claim. (History note: the finances epic was the
+    // first save bump that added no role and so kept seed 1338 un-re-pinned —
+    // ANESTHESIA_PLAN §6 ended that, because a new RoleId mints constructor
+    // candidates and shifts every seeded stream from tick 0. The seed was
+    // re-pinned deliberately there; a red seed is still a finding to be
+    // FOUND, but "a role was added" is now a legitimate cause.)
     expect(w.history).toHaveLength(5); // one entry per closed day, under cap
     expect(w.history.length).toBeLessThanOrEqual(BALANCE.finance.historyCapDays);
     expect(w.lifetime.revenue).toBeGreaterThan(0);

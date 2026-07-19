@@ -565,13 +565,22 @@ describe('load border (audit #8: garbage dies here)', () => {
     // surgeon candidate, leaving the dispatcher hinting for an unhirable role.
     const save = parsedSmallSave();
     save.saveVersion = 1;
-    save.candidates = save.candidates.filter(
-      (c) => c.role !== 'sonographer' && c.role !== 'surgeon',
-    );
-    // Premise: the fixture genuinely lacks the new roles entirely.
-    expect(save.candidates.length).toBe(
-      (ROLE_IDS.length - 2) * BALANCE.hiring.candidatesPerRole,
-    );
+    // Every role minted AFTER v1 must be filtered out, or this fixture is not
+    // a v1 save. Pre-impl review MAJOR 4 (ANESTHESIA_PLAN §7): the list and
+    // the premise assert below must both be BY NAME. The old premise counted
+    // `(ROLE_IDS.length - 2) * candidatesPerRole`, which stays arithmetically
+    // true as the roster grows — so adding a role left the fixture holding
+    // candidates a real v1 save could never have, green but no longer testing
+    // the pre-role case at all. That is the guard for THIS test's own bug
+    // (an unhirable surgeon the dispatcher kept hinting for), hollowed out.
+    const POST_V1_ROLES = ['sonographer', 'surgeon', 'evs', 'maintenance', 'anesthesiologist'];
+    save.candidates = save.candidates.filter((c) => !POST_V1_ROLES.includes(c.role));
+    // Premise: the fixture genuinely lacks each of those roles, by name.
+    for (const role of POST_V1_ROLES) {
+      expect(save.candidates.some((c) => c.role === role), `v1 fixture must lack ${role}`).toBe(
+        false,
+      );
+    }
     const result = loadOf(save);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -759,6 +768,24 @@ describe('load border referential integrity (review MAJOR 1)', () => {
  *  income counters, the amenity's revenueTotal, and the world's lifetime /
  *  lifetimeTreatedBase / history). v7 added NO role, so the candidate pool is
  *  untouched — this is the first bump whose migration tops up nothing. */
+/**
+ * Premise check for every backward fixture (review MAJOR 4): assert the roles
+ * a fixture is supposed to LACK, by name. The old form multiplied
+ * `ROLE_IDS.length - N` by candidatesPerRole, which stays arithmetically true
+ * as the roster grows — so each new role silently left these fixtures holding
+ * candidates the version under test could never have had, green while no
+ * longer testing the migration at all.
+ */
+function expectPoolLacks(fixture: Record<string, unknown>, roles: string[]): void {
+  const pool = fixture.candidates as { role: string }[];
+  for (const role of roles) {
+    expect(pool.some((c) => c.role === role), `fixture must lack ${role}`).toBe(false);
+  }
+  // …and genuinely holds the roles it SHOULD, so the filter can't pass by
+  // emptying the pool entirely.
+  expect(pool.some((c) => c.role === 'nurse')).toBe(true);
+}
+
 function v6Fixture(): Record<string, unknown> {
   const save = JSON.parse(smallSave()) as Record<string, unknown>;
   save.saveVersion = 6;
@@ -767,10 +794,18 @@ function v6Fixture(): Record<string, unknown> {
     delete r.revenueTotal;
     delete r.visitsTotal;
   }
-  for (const a of save.amenities as Record<string, unknown>[]) delete a.revenueTotal;
+  for (const a of save.amenities as Record<string, unknown>[]) {
+    delete a.revenueTotal;
+    delete a.revenueToday; // v8
+  }
   delete save.lifetime;
   delete save.lifetimeTreatedBase;
   delete save.history;
+  // The anesthesiologist role arrived at v9, so a real v6 pool cannot hold
+  // its candidates (review MAJOR 4).
+  save.candidates = (save.candidates as { role: string }[]).filter(
+    (c) => c.role !== 'anesthesiologist',
+  );
   return save;
 }
 
@@ -784,8 +819,10 @@ function v5Fixture(): Record<string, unknown> {
     delete r.brokenSince;
   }
   for (const j of save.jobs as Record<string, unknown>[]) delete j.roomId;
+  // Roles minted at v6 or later cannot exist in a v5 pool (review MAJOR 4 —
+  // by name, never by a count derived from ROLE_IDS.length).
   save.candidates = (save.candidates as { role: string }[]).filter(
-    (c) => c.role !== 'maintenance',
+    (c) => !['maintenance', 'anesthesiologist'].includes(c.role),
   );
   return save;
 }
@@ -798,7 +835,12 @@ function v4Fixture(): Record<string, unknown> {
   delete save.messes;
   delete save.jobs;
   delete (save.today as Record<string, unknown>).messTicks;
-  save.candidates = (save.candidates as { role: string }[]).filter((c) => c.role !== 'evs');
+  // Roles minted at v5 or later cannot exist in a v4 pool (review MAJOR 4 —
+  // filter BY NAME so a future role addition cannot leave this fixture
+  // silently holding candidates a real v4 save never had).
+  save.candidates = (save.candidates as { role: string }[]).filter(
+    (c) => !['evs', 'maintenance', 'anesthesiologist'].includes(c.role),
+  );
   return save;
 }
 
@@ -886,10 +928,7 @@ describe('v4 → v5 migration (amenities Stage 2, §S2.4)', () => {
     // (§S2.6b): topUpCandidates mints evs candidates on every v≤4 load, so
     // a v4 save can no longer round-trip byte-identically BY DESIGN.
     const fixture = v4Fixture();
-    expect(
-      (fixture.candidates as unknown[]).length,
-      'premise: the fixture genuinely lacks evs AND maintenance candidates',
-    ).toBe((ROLE_IDS.length - 2) * BALANCE.hiring.candidatesPerRole);
+    expectPoolLacks(fixture, ['evs', 'maintenance', 'anesthesiologist']);
     const result = loadOf(fixture);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -921,10 +960,7 @@ describe('v4 → v5 migration (amenities Stage 2, §S2.4)', () => {
 describe('v5 → v6 migration (amenities Stage 3, §S3.5)', () => {
   it('a genuine v5 fixture LOADS: wear 0 / in service, job roomId null, maintenance pool topped up', () => {
     const fixture = v5Fixture();
-    expect(
-      (fixture.candidates as unknown[]).length,
-      'premise: the fixture genuinely lacks maintenance candidates',
-    ).toBe((ROLE_IDS.length - 1) * BALANCE.hiring.candidatesPerRole);
+    expectPoolLacks(fixture, ['maintenance', 'anesthesiologist']);
     const result = loadOf(fixture);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -1354,11 +1390,9 @@ describe('v6 → v7 migration (finances, FINANCE_PLAN §9.7)', () => {
     // (re-review MAJOR N2 — the whole point of the field).
     const imported = 400;
     fixture.lifetimeTreated = imported;
-    // v7 added NO role, so the pool is complete and topUpCandidates is a
-    // strict no-op — the first bump with no candidate churn.
-    expect((fixture.candidates as unknown[]).length).toBe(
-      ROLE_IDS.length * BALANCE.hiring.candidatesPerRole,
-    );
+    // A v6 pool predates the anesthesiologist (v9), so topUpCandidates must
+    // mint it on load — asserted by name below rather than by a count.
+    expectPoolLacks(fixture, ['anesthesiologist']);
 
     const result = loadOf(fixture);
     expect(result.ok).toBe(true);
@@ -1389,6 +1423,28 @@ describe('v6 → v7 migration (finances, FINANCE_PLAN §9.7)', () => {
     expect(resaved.lifetimeTreatedBase).toBe(imported);
     expect(resaved.history).toEqual([]);
     expect(resaved.rooms.every((r) => r.revenueTotal === 0 && r.visitsTotal === 0)).toBe(true);
+  });
+
+  // ANESTHESIA_PLAN §7/§8.10. Its own test because hiring charges the hire
+  // fee, which would perturb the lifetime-counter assertions above.
+  it('tops a pre-role save up so the anesthesiologist is actually HIREABLE', () => {
+    const fixture = v6Fixture();
+    expectPoolLacks(fixture, ['anesthesiologist']);
+    const result = loadOf(fixture);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const w = result.world;
+
+    const offered = w.candidates.filter((c) => c.role === 'anesthesiologist');
+    expect(offered.length).toBe(BALANCE.hiring.candidatesPerRole);
+    // Through the CommandQueue — the public mutation API — so this proves the
+    // real player path, not merely that a pool entry exists. The v1→v2
+    // surgeon bug was exactly a role the dispatcher hinted for and no pool
+    // could offer.
+    const queue = new CommandQueue();
+    queue.push({ type: 'hireStaff', candidateId: offered[0]!.id });
+    w.applyCommands(queue);
+    expect([...w.staff.values()].some((st) => st.role === 'anesthesiologist')).toBe(true);
   });
 
   it('a genuine v3 fixture still loads through the v7 reader (transitive migration)', () => {

@@ -28,7 +28,7 @@ import { World, type Mess, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 9;
 
 /**
  * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
@@ -95,6 +95,17 @@ export const SAVE_VERSION = 8;
  * of 0, which is also the honest value: a v7 save recorded no such number,
  * and the running day's takings are unknowable after the fact. Like v7 this
  * adds NO role, so the harness seed stays un-re-pinned.
+ *
+ * v8 → v9 (ANESTHESIA_PLAN §7): adds the `anesthesiologist` ROLE.
+ * `topUpCandidates` mints its candidates on every v≤8 load (the evs/
+ * maintenance precedent), so no payload shape changes and the migration is a
+ * no-op beyond that top-up. The BUMP EXISTS FOR THE OTHER DIRECTION (pre-impl
+ * review MINOR): role fields are validated with `asOneOf(o.role, ROLE_IDS)`,
+ * so a save written here and opened by an older DEPLOYED build (Vercel
+ * auto-deploys; a cached tab suffices) would die on an unknown role with a
+ * confusing shape error instead of the clean "newer than this game
+ * understands" refusal. Every prior role addition shipped with a bump and so
+ * had that guard; skipping it would have been the first regression of it.
  * Anything below 1 or above SAVE_VERSION is refused.
  */
 export function isLoadableVersion(version: number): boolean {

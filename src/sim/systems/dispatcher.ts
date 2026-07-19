@@ -271,6 +271,19 @@ function assignTreatment(world: World): void {
     .filter((p) => p.acuity !== null)
     .sort((a, b) => priorityOf(world, a) - priorityOf(world, b));
 
+  // Partial-gather soft hold (ANESTHESIA_PLAN §4 lever 4): staff secured by a
+  // higher-priority patient whose gather then FAILED stay off-limits for the
+  // rest of this pass. Without it, a multi-role step that is one role short
+  // hands the staff it did find to a lower-priority single-role patient later
+  // in the SAME loop — then next tick the missing role is free and one of the
+  // others is gone. With two roles that needs two coincidences to starve; with
+  // three (the OR) it needs three, and `assignTriage` has first refusal on
+  // nurses every tick. `dispatchHoldUntil` does NOT cover this: it arms only
+  // after a CANCELLATION, never after a failed gather, so nothing else ages
+  // surgery's claim. Purely local — nothing is committed, the set dies with
+  // the pass, and all-or-nothing is untouched (Flow rules 7/8).
+  const heldForHigherPriority = new Set<number>();
+
   for (const patient of waiting) {
     const def = CONDITION_DEFS[patient.condition];
     const step = def.steps[patient.stepIndex];
@@ -283,11 +296,19 @@ function assignTreatment(world: World): void {
     // All-or-nothing (tech plan §5): every required role or nothing at all.
     const chosen: Staff[] = [];
     for (const role of step.roles) {
-      const member = idleStaff(world, (s) => s.role === role && !chosen.includes(s))[0];
+      const member = idleStaff(
+        world,
+        (s) => s.role === role && !chosen.includes(s) && !heldForHigherPriority.has(s.id),
+      )[0];
       if (!member) break;
       chosen.push(member);
     }
-    if (chosen.length !== step.roles.length) continue;
+    if (chosen.length !== step.roles.length) {
+      // Hold what this patient DID secure: they outrank everyone left in the
+      // list, so giving their staff away below is the starvation.
+      for (const member of chosen) heldForHigherPriority.add(member.id);
+      continue;
+    }
     makeReservation(world, 'treatment', patient, room, chosen, patient.stepIndex);
   }
 }

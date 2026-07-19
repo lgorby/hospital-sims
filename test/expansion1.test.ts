@@ -154,12 +154,17 @@ describe('dual-staff OR (GDD §12: the second assignment-system stress test)', (
   } as const;
   const surgeryStep = CONDITION_DEFS.appendicitis.steps[1]!;
 
-  it('a surgery reservation gathers surgeon + nurse simultaneously (all-or-nothing)', () => {
+  // ANESTHESIA_PLAN §3: the OR is a THREE-role gather now (surgeon + nurse +
+  // anesthesiologist). The assertions below all derive from
+  // `surgeryStep.roles`, so they scale with the roster rather than pinning a
+  // count — only the HIRING needed updating.
+  it('a surgery reservation gathers all three OR roles simultaneously (all-or-nothing)', () => {
     const t = setup(7);
     t.queue.push(SURGERY_ROOM);
     t.apply();
     const surgeon = t.world.addStaffMember('surgeon', 5, 500);
     const nurse = t.world.addStaffMember('nurse', 5, 150);
+    const anesthetist = t.world.addStaffMember('anesthesiologist', 5, 420);
     // Post-ultrasound appendicitis: stepIndex 1 is the OR step (test fixture
     // stage assignment is allowed; sim code must use setPatientStage).
     const patients = [1, 2].map(() => {
@@ -192,22 +197,28 @@ describe('dual-staff OR (GDD §12: the second assignment-system stress test)', (
     expect(t.world.reservations.size).toBe(0);
     expect(surgeon.duty.kind).toBe('idle');
     expect(nurse.duty.kind).toBe('idle');
+    expect(anesthetist.duty.kind).toBe('idle');
   });
 
-  it('one missing role (no surgeon) means NO reservation — the nurse is never held', () => {
+  it('one missing role (no surgeon) means NO reservation — the others are never held', () => {
     const t = setup();
     t.queue.push(SURGERY_ROOM);
     t.apply();
+    // Hire TWO of the three so exactly ONE role is missing — otherwise this
+    // test would silently weaken to "two missing roles" when the OR gained
+    // its third (the point is a PARTIAL gather never commits).
     const nurse = t.world.addStaffMember('nurse', 5, 150);
+    const anesthetist = t.world.addStaffMember('anesthesiologist', 5, 420);
     const patient = t.world.spawnPatient('gallstones');
     patient.stage = { kind: 'waiting' };
     patient.acuity = 3;
-    patient.stepIndex = 1; // gallstones' OR step (surgeon + nurse)
+    patient.stepIndex = 1; // gallstones' OR step
     patient.waitingSince = t.world.clock.tick;
 
     for (let i = 0; i < 10; i++) t.world.tick();
     expect(t.world.reservations.size).toBe(0);
     expect(nurse.duty.kind).not.toBe('reserved');
+    expect(anesthetist.duty.kind).not.toBe('reserved');
   });
 });
 
