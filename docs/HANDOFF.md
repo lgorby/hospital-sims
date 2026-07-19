@@ -13,6 +13,7 @@ pass. Three companions carry the weight it used to:
 |---|---|---|
 | `docs/INVARIANTS.md` | The do-not-regress list — every rule an adversarial review established, each backed by a regression test. | **Before changing sim behaviour.** |
 | `docs/CHANGELOG.md` | Shipped work: the per-commit table and completed epics, including superseded scoping kept for provenance. | On demand, when you need *why* a decision was made. |
+| `docs/IMAGING_PLAN.md` | Why radiology is empty — the research, the chain inversion, and the missing outpatient channel. Blocks Departments Stage 2a. | Before any imaging or Departments work. |
 | `docs/LAYOUT_PLAN.md` | The layout lesson — distance as a hidden throughput cost, plus §3's measurement-validity warning about the balance fixture. | Before any balance work. |
 | `docs/GAME_DESIGN.md` · `docs/TECH_PLAN.md` | The two contracts — design (Flow rules 1–14, rosters, balance) and architecture (sim/render split, §3.1 SSOT, §2.6 art contract). | Before writing code. |
 
@@ -161,7 +162,21 @@ revisited.
    occupied room and fails for a gather-held one, which is the majority case.
    Remedy still needs its own review — and note it interacts with (1), since
    the honest remedy may be about the walk rather than the wording.
-3. **The imaging-demand balance pass** — the prerequisite for Departments
+3. **The imaging-demand balance pass** — `docs/IMAGING_PLAN.md` (SCOPING
+   DRAFT, owner ask 2026-07-19, research-backed). **The owner's ER->radiology
+   instinct is CONFIRMED**: research says radiology is a service the ED orders
+   MID-STAY and the patient returns from, not a gateway — and every game chain
+   runs imaging -> ER, which is backwards and caps imaging demand. **But the
+   bigger finding is §2.3: MRI is ~83% ELECTIVE/OUTPATIENT, and this game has
+   exactly one demand channel (emergency walk-ins), so MRI and nucMed can
+   never be busy no matter how chains are routed.** Also: 45.3% of arrivals
+   already get imaging (about right vs reality) — the error is five co-equal
+   rooms in proportions reality does not have (MRI ~12x over-weighted,
+   nucMed is not an ED modality at all). **§2.5 records what the research did
+   NOT answer**: room occupancy times, scanner throughput and technologist
+   ratios — so step durations and the radTech ratio cannot be
+   evidence-calibrated and must be measured in-game.
+   *(Superseded framing below — the prerequisite for Departments)*
    Stage 2. `DEPARTMENTS_PLAN` §4.4 scopes it. Goal: a state where ONE scanner
    genuinely saturates. **Build the per-room/per-role utilisation counter in
    `edProbe` FIRST** — it does not exist (the probe's only load sampling is
