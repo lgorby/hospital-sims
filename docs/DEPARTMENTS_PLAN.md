@@ -302,6 +302,49 @@ a min-size walled room with its own door and its own machine.
 `surgery`. **Does NOT apply to** `dialysis`, `waiting`, `restroom`, `er` —
 those are area-scaled open floors and are already correct.
 
+### 4.0 HOW TO TAKE THIS TO REVIEW (read first — §4 is NOT review-ready)
+
+**Do not send §4 to a pre-implementation review as it stands.** It is a design
+sketch: a direction, an applies-to list, and five open questions. Every review
+this epic has run found MAJORs because the document made CONCRETE, CHECKABLE
+CLAIMS ABOUT CODE — exact signatures, file:line call sites, frozen orders of
+operations (see `ED_IMPL_PLAN.md`, and §3 of this file). That is what let a
+reviewer answer "`CATEGORY_LABELS` is keyed by CATEGORY, so your retire
+mechanism would delete four other rooms and would not compile." A sketch earns
+design opinions; a contract earns defects.
+
+**The order that has worked, three times:**
+
+1. **MAP THE CODE FIRST** (an `Explore` agent, ~1 pass). Stage 2's blast radius
+   is mostly UI/render/build, not sim — the opposite of B1. Ask for exact
+   signatures and bodies for: `src/sim/build.ts` (`validateRoomBuild`,
+   `validateRoomExpand`, the reachability BFS), `src/sim/world.ts`
+   (`buildRoom`, `expandRoom`, `sellRoom`, prop placement, `roomsOfType`),
+   `src/render/placement.ts` (`minRectAt`/`growRect` — the auto-placement
+   precedent), `src/render/renderer.ts` + `drawRoom`/`wallGraphic` (how walls
+   between ADJACENT rooms render today — the "reads as one block" question
+   lives here), `src/ui/inspect.ts` (one card for a group), and `save.ts` if
+   §4.2 Q1 lands on stored state.
+2. **WRITE THE CONTRACT** as `docs/DEPARTMENTS_IMPL_PLAN.md` — the frozen
+   signatures, the call sites, the save decision, and a numbered TEST LIST.
+   Answer §4.2's five open questions IN it rather than deferring them again.
+3. **THEN REVIEW IT**, two independent lenses in parallel, as every stage here
+   has: one code/contract/save-safety, one design/balance/player-experience.
+   Tell each to verify every claim against the actual source and to rank
+   MAJOR/MINOR/NIT with a concrete failure scenario per finding.
+4. Fold findings → implement → MEASURE (§6) → post-implementation review →
+   fix ALL findings with a regression each → gates → commit.
+
+**Two things worth handing the reviewers explicitly**, because they are the
+traps this epic has already sprung:
+- **The economy** (§5). Stage 1 deleted a $5,000 capex gate and the 5-day probe
+  could not see it; Stage 2 adds buildings, so it is the same question in the
+  other direction. Ask specifically whether suites make capacity too cheap.
+- **Measurement honesty.** ED_PLAN §5b's probe falsified a design decision that
+  the model AND both reviewers had agreed on, and a reviewer falsified the
+  model's own reading of the research. Reason from measurements, not from this
+  document.
+
 ### 4.1 Implementation shape — reuse Rooms, do NOT invent internal walls
 
 Two paths; the plan picks the cheap one deliberately.

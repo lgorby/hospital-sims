@@ -401,8 +401,11 @@ commit table above and in `docs/ED_PLAN.md` §5b / `docs/DEPARTMENTS_PLAN.md` §
    walkouts and profit all improving. See `ED_PLAN` §5b item 5 for the full
    measurement and the review that caught three MAJORs before commit.
 2. **Departments Stage 2** — the owner's "OR is a collection of operating
-   rooms / X-ray is a collection of rooms" ask. `DEPARTMENTS_PLAN` §4 is DRAFT
-   and needs its OWN pre-implementation review. Chosen shape avoids internal
+   rooms / X-ray is a collection of rooms" ask. `DEPARTMENTS_PLAN` §4 is a
+   DRAFT SKETCH and is **not review-ready** — **read §4.0 first**: map the code,
+   turn §4 into a `DEPARTMENTS_IMPL_PLAN.md` contract with real signatures and
+   a test list, and review THAT. Reviewing the sketch earns design opinions;
+   only a contract earns defects. Chosen shape avoids internal
    wall edges: a department is a SET of ordinary Rooms, so the dispatcher needs
    no change (`roomsOfType` already returns them).
 3. **The Stage-1 capex risk** (`DEPARTMENTS_PLAN` §3.8 point 3): serving 17% of
