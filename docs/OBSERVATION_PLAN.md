@@ -92,6 +92,64 @@ the `data.test.ts` / `edRatio.test.ts` coverage guards auto-satisfy.
 
 ---
 
+## 0.2 MEASURED (2026-07-19) — the scaffold ran; my asserted numbers were wrong BOTH ways
+
+The v2 design review said "measure before asserting a third time." I built the
+v3 spine as a throwaway prototype (branch `observation-measurement`: separate
+arrival channel, `nurseTech` role, `tia`/`syncope` natives, observation room)
+and ran a sweep probe (`test/observationProbe.test.ts`, REFERENCE arm, 5 seeds ×
+5 days). **The data overturns my v2 assertions in both directions.**
+
+Baseline emergency arrivals with the channel OFF: **43.0/day.**
+
+| obs rate | rep | obs arr/day | **bed occupancy** | peak beds | **tech peak load** | emerg arr/day | AMA/day |
+|---|---|---|---|---|---|---|---|
+| 0.5 | base | 11.2 | **67.9%** | 2 | **2** | 33.4 | 14.1 |
+| 0.5 | MAX | 24.4 | 64.2% | 2 | 2 | 67.5 | 60.6 |
+| 1.0 | base | 16.7 | **76.3%** | 2 | 2 | 27.0 | 16.5 |
+| 1.0 | MAX | 47.6 | 73.2% | 2 | 2 | 69.9 | 87.3 |
+| 1.5 | base | 22.9 | **79.0%** | 2 | 2 | 24.0 | 21.5 |
+| 1.5 | MAX | 71.4 | 74.1% | 2 | 2 | 68.0 | 110.4 |
+
+**Finding 1 — the separate channel produces ~4× the volume the v2 weight model
+did, so occupancy is ~68%, not the 33% I asserted.** v2's `2.7 obs/day` came from
+redistributing the fixed budget; the separate channel is additive and yields
+11–23/day. My v2 arithmetic wasn't just miscalibrated, it used a number 4× too
+low. **Two beds run at 68–79% occupancy — a healthy band — and peak to 2 (full)
+regularly.** Expansion DOES bind here, especially at rate ≥1.0. v2 MAJOR 2's
+"expansion never pays" is FALSE under the separate-channel model.
+
+**Finding 2 — the tech never binds. `tech peak load` is 2 against a ratio of 6,
+at every rate.** One $100/day nurseTech covers the whole foreseeable ward — so
+the capacity lever that binds is BEDS (capital), and the tech is cheap, ample
+support. That is a clean design: buy beds, one tech runs them. It also confirms
+v2 MAJOR 2's tech observation — but reframes it as a feature, not a flaw.
+
+**Finding 3 — the ER-assessment step is the real cost, and it is NOT what either
+of us predicted.** At floating reputation, adding the channel drops emergency
+arrivals 43 → 33 (rate 0.5) → 24 (rate 1.5). NOT weight redistribution (that is
+fixed) — the mechanism is: both natives carry an `er` assessment step, that
+extra ER load spikes AMA, AMA tanks floating reputation, and the reputation
+multiplier suppresses ALL arrivals. At PINNED reputation the emergency number
+holds (67.5 at rate 0.5 MAX ≈ the un-perturbed rate), which isolates the cause
+to the reputation spiral driven by ER contention. **The ED-hub chain the owner
+asked for is exactly what generates the cost.**
+
+**What this means for v3's balance (now grounded, not asserted):**
+- Ship at **rate ~0.5** and **2 starting beds** (67.9% occupancy — room to grow,
+  not saturated on day one).
+- **The ER step must be lightened** — shorter, or single-role, or the channel
+  gated behind ER headroom — or it drags the whole hospital at floating rep.
+  This is the real design problem, and it is measured, not guessed.
+- `staffRatio: { nurseTech: 6 }` is fine — arguably generous, since load never
+  exceeds 2. Beds are the sole capital lever.
+- The revert set's guard #1 (nurse/ER load) is the one that matters; the probe
+  shows exactly where the harm lands.
+
+**Not yet measured (v3 owes it):** the COMPACT arm (LAYOUT_PLAN §3.4), a bed
+sweep (does a 3rd bed pay at rate 1.0?), and the ER-step-lightening options
+head-to-head. The scaffold is on the branch, ready to extend.
+
 ## 1. Why this exists
 
 Three problems collapse into one feature, and unlike v1 this version actually
