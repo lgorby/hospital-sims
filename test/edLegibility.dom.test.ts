@@ -410,19 +410,24 @@ describe('ED B1 §5.3 — capacity needs on the BlockedPanel', () => {
 
   it('a FULL single-capacity room says BUILD ANOTHER, never expand (owner report)', () => {
     // Owner, 2026-07-19: expanded Respiratory Therapy on this hint's advice
-    // and got no new capacity, and the row would not clear. `resp` is
-    // `capacity: 'single'` — expanding it buys QUALITY, never a second
-    // patient — so "expand it to add bays" was impossible advice. Only
-    // waiting/er/dialysis/restroom are perProp; every other treatment room
-    // is single, so this was wrong for the MAJORITY of rooms.
+    // and got no new capacity, and the row would not clear. The room was
+    // `capacity: 'single'` — expanding buys QUALITY, never a second patient —
+    // so "expand it to add bays" was impossible advice, and it was wrong for
+    // the MAJORITY of rooms (only waiting/er/dialysis/restroom are perProp).
+    //
+    // The fixture moved from `resp` to `xray` when DEPARTMENTS_PLAN §3 retired
+    // the respiratory room: the RULE under test is about single-capacity
+    // rooms, not about that one room, so it is re-pointed rather than deleted
+    // or weakened to a room with no condition path (which would have made it
+    // vacuous — `capacityNeeds` only reports rooms patients are routed to).
     const { world, root, blocked } = panelFixture();
-    expect(ROOM_DEFS.resp.capacity.kind).toBe('single'); // premise, not assumed
-    world.buildRoom('resp', { col: 5, row: 20, cols: 3, rows: 3 }, { col: 8, row: 21 }, true);
-    const room = [...world.rooms.values()].find((r) => r.type === 'resp')!;
-    const rt = hire(world, 'respTherapist', 'Rhea');
-    const busy = world.spawnPatient('asthma');
-    reserve(world, room.id, busy.id, [rt.id], 'active', 0);
-    const waiting = world.spawnPatient('asthma');
+    expect(ROOM_DEFS.xray.capacity.kind).toBe('single'); // premise, not assumed
+    world.buildRoom('xray', { col: 5, row: 20, cols: 3, rows: 4 }, { col: 8, row: 21 }, true);
+    const room = [...world.rooms.values()].find((r) => r.type === 'xray')!;
+    const tech = hire(world, 'radTech', 'Rhea');
+    const busy = world.spawnPatient('fracture');
+    reserve(world, room.id, busy.id, [tech.id], 'active', 0);
+    const waiting = world.spawnPatient('fracture');
     waiting.stage = { kind: 'waiting' };
     blockedLongEnough(world, waiting);
     world.tick();
@@ -430,7 +435,7 @@ describe('ED B1 §5.3 — capacity needs on the BlockedPanel', () => {
 
     const lines = rows(root);
     expect(lines).toContain(
-      `${ROOM_DEFS.resp.label} is busy — build another one (it treats one patient at a time)`,
+      `${ROOM_DEFS.xray.label} is busy — build another one (it treats one patient at a time)`,
     );
     // The impossible advice must not appear in ANY form.
     expect(lines.some((l) => l.includes('expand'))).toBe(false);

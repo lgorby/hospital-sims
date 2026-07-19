@@ -53,8 +53,15 @@ export const CONDITION_DEFS = {
     acuityMax: 3,
     steps: [
       {
+        // DEPARTMENTS_PLAN §3: a respiratory therapist delivers the neb at the
+        // patient's BEDSIDE (AARC, confirmed 3-0 — RTs are mobile, and APEX
+        // standards prohibit routinely treating several patients at once), so
+        // this happens in an exam room rather than a room of its own. Stage A's
+        // principle: change the ROOM of an existing step, never lengthen the
+        // chain. `roles` is unchanged, so the therapist is still the binding
+        // resource — which is the research's actual point.
         label: 'Nebulizer',
-        room: 'resp',
+        room: 'exam',
         roles: ['respTherapist'],
         durationGameMinutes: 45,
         fee: 400,
@@ -68,8 +75,12 @@ export const CONDITION_DEFS = {
     steps: [
       { label: 'X-ray', room: 'xray', roles: ['radTech'], durationGameMinutes: 20, fee: 200 },
       {
+        // DEPARTMENTS_PLAN §3 — bedside, same as asthma's nebulizer. The
+        // preceding X-ray step is unchanged. At 60 min this is the longest
+        // exam-room occupancy in the game, which is why §3.2 measures exam
+        // contention in weight × DURATION rather than arrival weight.
         label: 'Respiratory therapy',
-        room: 'resp',
+        room: 'exam',
         roles: ['respTherapist'],
         durationGameMinutes: 60,
         fee: 500,

@@ -2,7 +2,7 @@ import { GAME_MINUTES_PER_HOUR, gameMinutesToTicks, ticksToGameMinutes } from '.
 import { BALANCE } from '../data/balance';
 import { CONDITION_DEFS } from '../data/conditions';
 import { ROLE_DEFS } from '../data/roles';
-import { ROOM_DEFS } from '../data/rooms';
+import { ROOM_DEFS, roomRetired } from '../data/rooms';
 import type { Room } from '../entities/room';
 import type { Patient } from '../entities/patient';
 import type { Job, Reservation, Staff } from '../entities/staff';
@@ -549,6 +549,24 @@ function assignJobs(world: World): void {
   assignJobsForRole(world, 'maintenance', ['repair']);
 }
 
+/**
+ * A job whose target room is RETIRED (DEPARTMENTS_PLAN §3.6 defect 1,
+ * post-impl review MAJOR 3). A live save can carry a broken retired room with
+ * its repair job still queued, and there is no load-time cleanup (clearing it
+ * in `loadWorld` would break save byte-identity). Without this filter a tech
+ * walks the hospital to spend 15 game-minutes repairing a room that can never
+ * treat anyone — while a real broken X-ray waits — and `computeBlockedNeeds`
+ * reports nothing broken, so the UI and the sim visibly disagree.
+ *
+ * The job is left in place rather than deleted: deletion is a mutation and
+ * `removeMess`/`sellRoom` own the orphan rules. It is simply never assigned.
+ */
+function targetsRetiredRoom(world: World, job: Job): boolean {
+  if (job.roomId === null) return false;
+  const room = world.rooms.get(job.roomId);
+  return room !== undefined && roomRetired(room.type);
+}
+
 function assignJobsForRole(
   world: World,
   role: 'evs' | 'maintenance',
@@ -557,7 +575,7 @@ function assignJobsForRole(
   const workers = idleStaff(world, (s) => s.role === role);
   if (workers.length === 0 || world.jobs.size === 0) return;
   const queued = [...world.jobs.values()]
-    .filter((j) => j.phase === 'queued' && kinds.includes(j.kind))
+    .filter((j) => j.phase === 'queued' && kinds.includes(j.kind) && !targetsRetiredRoom(world, j))
     .sort((a, b) => a.id - b.id); // oldest = lowest job id
   for (const worker of workers) {
     for (const job of queued) {

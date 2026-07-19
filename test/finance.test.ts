@@ -12,7 +12,13 @@ import {
   emptyCashTotals,
   type CashTallyKey,
 } from '../src/sim/data/finance';
-import { ROOM_DEFS, ROOM_TYPES, type RoomCategory, type RoomType } from '../src/sim/data/rooms';
+import {
+  RETIRED_ROOMS,
+  ROOM_DEFS,
+  ROOM_TYPES,
+  type RoomCategory,
+  type RoomType,
+} from '../src/sim/data/rooms';
 import type { Patient } from '../src/sim/entities/patient';
 import type { Reservation } from '../src/sim/entities/staff';
 import {
@@ -486,6 +492,9 @@ describe('roomEarns is DERIVED from CONDITION_DEFS (§9.2)', () => {
       'exam',
       'mri',
       'nucMed',
+      // RETIRED (DEPARTMENTS_PLAN §3.6 ruling 2) — no step routes here any
+      // more, but a standing `resp` room in a live save holds real accumulated
+      // revenue, and dropping its Income row would hide where that money went.
       'resp',
       'surgery',
       'ultrasound',
@@ -503,6 +512,9 @@ describe('roomEarns is DERIVED from CONDITION_DEFS (§9.2)', () => {
     for (const def of Object.values(CONDITION_DEFS)) {
       for (const step of def.steps) if (step.fee > 0) fromTable.add(step.room);
     }
+    // The derivation is CONDITION_DEFS ∪ RETIRED_ROOMS — still derived, still
+    // no hand-kept flag. Retired rooms earned historically and keep the row.
+    for (const type of RETIRED_ROOMS) fromTable.add(type);
     for (const type of ROOM_TYPES) expect(roomEarns(type), type).toBe(fromTable.has(type));
     // The support cast bills nothing — no fee routes through them.
     for (const type of ['reception', 'waiting', 'triage', 'restroom', 'atrium'] as RoomType[]) {

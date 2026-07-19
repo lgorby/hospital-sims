@@ -2,7 +2,7 @@ import { gameMinutesToTicks } from './clock';
 import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditions';
 import { ROLE_DEFS, type RoleId } from './data/roles';
-import { ROOM_DEFS, type RoomType } from './data/rooms';
+import { ROOM_DEFS, roomRetired, type RoomType } from './data/rooms';
 import { staffRatioFor } from './formulas';
 import type { Patient } from './entities/patient';
 import type { World } from './world';
@@ -241,6 +241,17 @@ export function computeBlockedNeeds(world: World): BlockedNeed[] {
   // (no consumer needs them — recorded design delta, pre-impl NIT 10).
   for (const room of world.rooms.values()) {
     if (room.brokenSince === null) continue;
+    // RETIRED rooms are skipped (DEPARTMENTS_PLAN §3.6 defect 1). A retired
+    // room can never treat anyone, and `applyRoomUse` never fires on it again
+    // so it can never break AGAIN — but a break it carried INTO the update
+    // would otherwise stand forever as an urgent row that no action clears.
+    // THIS SKIP IS THE ONLY LINE OF DEFENCE — there is no load-time cleanup.
+    // An earlier draft cleared `brokenSince` for retired rooms inside
+    // `loadWorld`, and it was REVERTED: `loadWorld` must not mutate restored
+    // state or save→load→save byte-identity (THE acceptance gate) breaks. So a
+    // loaded save really can carry a broken retired room forever, and anyone
+    // adding a retired room type must add it here too.
+    if (roomRetired(room.type)) continue;
     needs.push({
       key: `broken:${room.id}:${room.brokenSince}`,
       kind: 'broken',
@@ -258,7 +269,10 @@ export function computeBlockedNeeds(world: World): BlockedNeed[] {
   if (!hiredRoles.has('maintenance')) {
     let brokenRooms = 0;
     for (const room of world.rooms.values()) {
-      if (room.brokenSince !== null) brokenRooms += 1;
+      // Same exclusion as the scan above, and for the same reason — there is
+      // no load-time cleanup, so this is the only guard. Never ask the player
+      // to hire a Maintenance Tech for a room that can never treat anyone.
+      if (room.brokenSince !== null && !roomRetired(room.type)) brokenRooms += 1;
     }
     if (brokenRooms > 0) {
       needs.push({

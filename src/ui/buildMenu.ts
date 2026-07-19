@@ -2,7 +2,13 @@ import type { CommandQueue } from '../commands';
 import type { EventBus } from '../events';
 import { AMENITY_DEFS, AMENITY_IDS, type AmenityId } from '../sim/data/amenities';
 import { ROLE_DEFS } from '../sim/data/roles';
-import { ROOM_DEFS, ROOM_TYPES, type RoomCategory, type RoomType } from '../sim/data/rooms';
+import {
+  ROOM_DEFS,
+  ROOM_TYPES,
+  roomRetired,
+  type RoomCategory,
+  type RoomType,
+} from '../sim/data/rooms';
 import type { World } from '../sim/world';
 import type { UiMode, WorldRenderer } from '../render/renderer';
 import type { BottomBarDropdowns } from './bottomBar';
@@ -74,7 +80,11 @@ export class BuildMenu {
       // still derives from CATEGORY_LABELS (§9 invariant). Empty categories
       // render nothing.
       // 'en' pinned: bare localeCompare collates per OS locale (review MINOR).
-      const types = ROOM_TYPES.filter((type) => ROOM_DEFS[type].category === category).sort(
+      // Retired types leave the catalog but stay loadable (DEPARTMENTS_PLAN
+      // §3.3) — the fact is SSOT in sim/data/rooms.ts, never a UI flag.
+      const types = ROOM_TYPES.filter(
+        (type) => ROOM_DEFS[type].category === category && !roomRetired(type),
+      ).sort(
         (a, b) => ROOM_DEFS[a].label.localeCompare(ROOM_DEFS[b].label, 'en'),
       );
       const hasAmenities = category === AMENITY_CATEGORY && AMENITY_IDS.length > 0;

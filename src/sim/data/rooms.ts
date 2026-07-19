@@ -73,6 +73,9 @@ export const PROP_STYLE: Record<PropId, { color: number; rise: number; tiles: nu
   vitalsCart: { color: 0xd9d4c9, rise: 14, tiles: 1 },
   bed: { color: 0xbcd0e6, rise: 12, tiles: 2 },
   xrayMachine: { color: 0x4a4258, rise: 22, tiles: 2 },
+  // Unreachable since DEPARTMENTS_PLAN §3 retired `resp` — retained
+  // deliberately (§3.7): adding it to `exam.props` would consume a tile in a
+  // 3×3 minimum and perturb quality and auto-placement.
   nebulizer: { color: 0x5aa08c, rise: 14, tiles: 1 },
   traumaBed: { color: 0xd6a0a0, rise: 12, tiles: 2 },
   helpDesk: { color: 0xc9a35a, rise: 14, tiles: 1 },
@@ -192,7 +195,15 @@ export const ROOM_DEFS = {
     minRows: 3,
     cost: 3_000,
     floorColor: 0xaacbe0,
-    staffedBy: ['doctor', 'nurse'],
+    // `respTherapist` joins for DEPARTMENTS_PLAN §3: asthma's nebulizer and
+    // pneumonia's respiratory therapy are delivered at the bedside here. The
+    // `step.roles ⊆ room.staffedBy` invariant (data.test.ts) requires it.
+    // Audited (pre-impl review NIT 15) — the third role changes DISPLAY only:
+    // `standingPost` is false, `staffRatioFor` returns 1 for an absent key,
+    // `everySlotApproachable` early-returns on `single`, and `capacityNeeds`
+    // is gated on `step.roles`, so a flu patient can never produce a spurious
+    // "Every Respiratory Therapist is busy". No third-role assumption exists.
+    staffedBy: ['doctor', 'nurse', 'respTherapist'],
     capacity: { kind: 'single' },
     props: [{ id: 'bed', walkable: false, density: { kind: 'fixed', count: 1 } }],
   },
@@ -212,6 +223,13 @@ export const ROOM_DEFS = {
     failure: { kind: 'mechanical' },
     props: [{ id: 'xrayMachine', walkable: false, density: { kind: 'fixed', count: 1 } }],
   },
+  // RETIRED — see RETIRED_ROOMS below. Kept in the table on purpose: `RoomType`
+  // derives from this object and `save.ts` validates against `ROOM_TYPES`, so
+  // deleting it would refuse every live save holding one (DEPARTMENTS_PLAN
+  // §3.3). Nothing routes here; asthma and pneumonia are treated at the
+  // bedside in `exam`. Its `failure`, `nebulizer` prop and floor colour are
+  // retained-but-unreachable per §3.7 — do not "clean them up" expecting a
+  // no-op, and do not re-point a condition step here (data.test.ts guards it).
   resp: {
     label: 'Respiratory Therapy',
     kind: 'treatment',
@@ -422,4 +440,35 @@ export function roomFailure(type: RoomType): RoomFailure | undefined {
  */
 export function roomStaffRatio(type: RoomType): Readonly<Partial<Record<RoleId, number>>> | undefined {
   return (ROOM_DEFS[type] as RoomDef).staffRatio;
+}
+
+/**
+ * Room types withdrawn from the build catalog (DEPARTMENTS_PLAN §3.3).
+ *
+ * A retired room is NOT deleted. `RoomType` derives from `ROOM_DEFS` and
+ * `save.ts` validates with `asOneOf(o.type, ROOM_TYPES)`, so removing an entry
+ * would make every LIVE save containing that room refuse to load — and the
+ * game is deployed. Retirement keeps the def loadable and keeps existing
+ * rooms standing; it only takes the type out of the build menu.
+ *
+ * THE FACT LIVES HERE, in `src/sim/data/`, not in the UI (hard rule 1): the
+ * sim and the UI must never disagree about what exists. `CATEGORY_LABELS` is
+ * keyed by CATEGORY, so it could not express this even if the rule allowed it.
+ *
+ * `world.buildRoom` is deliberately PERMISSIVE — retirement is a catalog
+ * concept, and the save/maintenance fixtures build `resp` through the command
+ * path to cover schema corners that must keep working (pre-impl review
+ * MINOR 10).
+ *
+ * `resp`: DEPARTMENTS_PLAN §3. Nebulizer and ventilator care are delivered at
+ * the patient's bedside by a mobile therapist (AARC, 3-0), so asthma and
+ * pneumonia now route to `exam` and nothing routes here. Owner decision, with
+ * the evidentiary gap recorded in §3.0 — the research supports the ROUTING
+ * change; retiring the building is a game-design call taken on top of it.
+ */
+export const RETIRED_ROOMS: readonly RoomType[] = ['resp'];
+
+/** Is this type withdrawn from the build catalog? (See RETIRED_ROOMS.) */
+export function roomRetired(type: RoomType): boolean {
+  return RETIRED_ROOMS.includes(type);
 }

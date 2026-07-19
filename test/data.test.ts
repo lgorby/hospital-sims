@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../src/sim/data/balance';
 import { CONDITION_DEFS, CONDITION_IDS } from '../src/sim/data/conditions';
 import { ROLE_DEFS, ROLE_IDS } from '../src/sim/data/roles';
-import { PROP_STYLE, ROOM_DEFS, ROOM_TYPES, type RoomType } from '../src/sim/data/rooms';
+import {
+  PROP_STYLE,
+  RETIRED_ROOMS,
+  ROOM_DEFS,
+  ROOM_TYPES,
+  type RoomType,
+} from '../src/sim/data/rooms';
 
 /**
  * Rooms that legitimately appear in NO condition step (GDD §3 "every room
@@ -53,12 +59,26 @@ describe('SSOT data integrity', () => {
       for (const step of CONDITION_DEFS[id].steps) usedRooms.add(step.room);
     }
     for (const type of ROOM_TYPES) {
-      const earnsItsKeep = usedRooms.has(type) || CONDITION_STEP_EXEMPT_ROOMS.includes(type);
-      expect(earnsItsKeep, `${type}: no condition path and not exempt`).toBe(true);
+      // RETIRED is a THIRD category, deliberately not folded into the exempt
+      // list (DEPARTMENTS_PLAN §3.4): that list means "infrastructure, not
+      // treatment", and filing a retired treatment room there would mislabel
+      // it AND permanently disarm this guard for it — a future accidentally
+      // orphaned room could then hide behind the same entry.
+      const earnsItsKeep =
+        usedRooms.has(type) ||
+        CONDITION_STEP_EXEMPT_ROOMS.includes(type) ||
+        RETIRED_ROOMS.includes(type);
+      expect(earnsItsKeep, `${type}: no condition path, not exempt, not retired`).toBe(true);
     }
     // The exemption list must not mask a room that HAS gained a path.
     for (const type of CONDITION_STEP_EXEMPT_ROOMS) {
       expect(usedRooms.has(type), `${type} is exempt but appears in a condition step`).toBe(false);
+    }
+    // ...and neither may retirement. The INVERSE guard (§3.4): a retired room
+    // that still has a condition path is a room patients are routed to and can
+    // never build — the worst of both states.
+    for (const type of RETIRED_ROOMS) {
+      expect(usedRooms.has(type), `${type} is retired but appears in a condition step`).toBe(false);
     }
   });
 

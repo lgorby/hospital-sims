@@ -3,7 +3,7 @@ import type { WorldRenderer, Selection } from '../render/renderer';
 import { validateRoomSell } from '../sim/build';
 import { AMENITY_DEFS, type AmenityId } from '../sim/data/amenities';
 import { CONDITION_DEFS } from '../sim/data/conditions';
-import { ROOM_DEFS } from '../sim/data/rooms';
+import { ROOM_DEFS, roomRetired } from '../sim/data/rooms';
 import { ROLE_DEFS } from '../sim/data/roles';
 import { BALANCE } from '../sim/data/balance';
 import {
@@ -443,12 +443,23 @@ export class InspectPanel {
       (hasPost ? this.line('Posted', posted.map((s) => s.name.short).join(', ') || '—') : '') +
       // "Treating" would be dishonest for a self-service room (§3.3).
       this.line(stallClaims ? 'In use' : 'Treating', occupant) +
+      // DEPARTMENTS_PLAN §3.6 defect 3: a retired room must SAY it is retired.
+      // Otherwise it is a room the player paid for that quietly stops
+      // receiving patients, which reads as a bug rather than a decision.
+      (roomRetired(room.type)
+        ? this.line('Retired', 'No longer takes patients — sells for a full refund')
+        : '') +
       incomeLines;
     // sellbackAmount is the sim's payout AND this label (SSOT audit #2);
     // rect-aware since Stage 0 (an oversized room refunds its sized price).
     const refund = sellbackAmount(room.type, room.rect);
+    // A retired room refunds in FULL (DEPARTMENTS_PLAN §3.6 defect 3) — say so
+    // on the button, or a player who notices the bigger number assumes a bug.
+    // `sellbackAmount` already applies the ratio; this only explains it.
     this.actionButton.textContent = sellCheck.ok
-      ? `Sell (+$${refund.toLocaleString()})`
+      ? roomRetired(room.type)
+        ? `Sell (+$${refund.toLocaleString()} — full refund)`
+        : `Sell (+$${refund.toLocaleString()})`
       : `Sell — ${sellCheck.reason}`;
     this.actionButton.disabled = !sellCheck.ok;
     // Stage 3: never invite a dead click — the sim rejects expanding a broken

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CommandQueue } from '../src/commands';
 import { EventBus } from '../src/events';
 import { BALANCE } from '../src/sim/data/balance';
-import { ROOM_DEFS, roomFailure, ROOM_TYPES } from '../src/sim/data/rooms';
+import { ROOM_DEFS, roomFailure, roomRetired, ROOM_TYPES } from '../src/sim/data/rooms';
 import type { Patient } from '../src/sim/entities/patient';
 import type { Reservation, Staff } from '../src/sim/entities/staff';
 import type { Room } from '../src/sim/entities/room';
@@ -41,8 +41,17 @@ function buildXray(world: World): Room {
 }
 
 function buildResp(world: World): Room {
+  // `resp` is RETIRED (DEPARTMENTS_PLAN §3) but `world.buildRoom` stays
+  // PERMISSIVE on purpose — retirement is a build-catalog concept — so this
+  // helper still works and keeps the v6 breakdown-rotation coverage alive.
   world.buildRoom('resp', { col: 20, row: 10, cols: 3, rows: 3 }, { col: 21, row: 13 }, true);
   return world.roomsOfType('resp')[0]!;
+}
+
+/** A second NON-retired mechanical-failure room, for tests that need two. */
+function buildCt(world: World): Room {
+  world.buildRoom('ct', { col: 20, row: 16, cols: 4, rows: 4 }, { col: 21, row: 20 }, true);
+  return world.roomsOfType('ct')[0]!;
 }
 
 /** The pre-impl MAJOR-1 geometry: a 2×3 restroom with the door on the long
@@ -590,9 +599,12 @@ describe('repair jobs on the Stage-2 machinery (§S3.4)', () => {
   it('oldest repair first (lowest id); a HELD repair is skipped, never blocking', () => {
     const { world } = setup();
     const xray = buildXray(world);
-    const resp = buildResp(world);
+    // Was `resp`; a RETIRED room's repair job is never assigned now (see the
+    // exclusion test below), which would make the two-job ordering premise
+    // untestable. Any second non-retired mechanical-failure room works.
+    const ct = buildCt(world);
     world.breakRoom(xray); // older job (lower id)
-    world.breakRoom(resp);
+    world.breakRoom(ct);
     const tech = addTech(world);
     const [older, younger] = [...world.jobs.values()].sort((a, b) => a.id - b.id);
     world.clock.advance();
@@ -784,9 +796,12 @@ describe('broken-room hints (§6 / §S3.6)', () => {
   it('role:maintenance is urgent while anything is broken and nobody is hired; hired ⇒ gone', () => {
     const { world } = setup();
     const xray = buildXray(world);
-    const resp = buildResp(world);
+    // Was `resp`, which DEPARTMENTS_PLAN §3 retired — a retired room is now
+    // excluded from the count (see the exclusion test below), so this needs a
+    // second room that still treats patients.
+    const ct = buildCt(world);
     world.breakRoom(xray);
-    world.breakRoom(resp);
+    world.breakRoom(ct);
     const need = computeBlockedNeeds(world).find((n) => n.key === 'role:maintenance');
     expect(need?.urgent).toBe(true);
     expect(need?.patients).toBe(2); // broken-room count drives the tie-break
@@ -795,6 +810,55 @@ describe('broken-room hints (§6 / §S3.6)', () => {
     expect(
       computeBlockedNeeds(world).find((n) => n.key === 'role:maintenance'),
     ).toBeUndefined();
+  });
+
+  it('a repair job on a RETIRED room is never ASSIGNED (post-impl review MAJOR 3)', () => {
+    // A live save can carry a broken retired room with its repair job still
+    // queued — there is no load-time cleanup, because mutating restored state
+    // would break save byte-identity. Without this filter a tech crosses the
+    // hospital to spend 15 game-minutes fixing a room that can never treat
+    // anyone, WHILE a real broken X-ray waits, and the blocked panel reports
+    // nothing broken — the UI and the sim visibly disagree.
+    const { world } = setup();
+    const resp = buildResp(world);
+    const xray = buildXray(world);
+    world.breakRoom(resp); // older job (lower id) — would win oldest-first
+    world.breakRoom(xray);
+    const tech = addTech(world);
+    const jobs = [...world.jobs.values()].sort((a, b) => a.id - b.id);
+    const respJob = jobs.find((j) => j.kind === 'repair' && j.roomId === resp.id)!;
+    const xrayJob = jobs.find((j) => j.kind === 'repair' && j.roomId === xray.id)!;
+    expect(respJob.id).toBeLessThan(xrayJob.id); // premise: it IS the oldest
+    world.clock.advance();
+    updateDispatcher(world);
+    // The tech skips straight past it to the room that still treats patients.
+    expect(respJob.staffId).toBeNull();
+    expect(xrayJob.staffId).toBe(tech.id);
+    // And it is SKIPPED, not deleted — deletion is a mutation, and the orphan
+    // rules belong to removeMess/sellRoom.
+    expect(world.jobs.has(respJob.id)).toBe(true);
+  });
+
+  it('a broken RETIRED room raises NO hint — it can never be un-broken usefully', () => {
+    // DEPARTMENTS_PLAN §3.6 defect 1. A retired room can never treat anyone,
+    // and `applyRoomUse` never fires on it again, so a break it carried into
+    // the update would otherwise stand forever as an always-urgent row that no
+    // player action clears — plus a "Hire a Maintenance Tech" demand for a
+    // room that will never see a patient. Both must stay silent.
+    const { world } = setup();
+    const resp = buildResp(world);
+    expect(roomRetired(resp.type)).toBe(true); // premise, not assumed
+    world.breakRoom(resp);
+    expect(resp.brokenSince).not.toBeNull(); // it really is broken
+    const needs = computeBlockedNeeds(world);
+    expect(needs.some((n) => n.kind === 'broken')).toBe(false);
+    expect(needs.some((n) => n.key === 'role:maintenance')).toBe(false);
+    // A NON-retired room breaking alongside it still reports normally.
+    const xray = buildXray(world);
+    world.breakRoom(xray);
+    const after = computeBlockedNeeds(world);
+    expect(after.filter((n) => n.kind === 'broken')).toHaveLength(1);
+    expect(after.find((n) => n.key === 'role:maintenance')?.patients).toBe(1);
   });
 
   it('no broken rooms ⇒ no broken/maintenance rows', () => {

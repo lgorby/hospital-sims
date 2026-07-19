@@ -4,6 +4,7 @@ import type { Command, CommandQueue } from '../src/commands';
 import { EventBus } from '../src/events';
 import type { UiMode, WorldRenderer } from '../src/render/renderer';
 import { AMENITY_DEFS, AMENITY_IDS } from '../src/sim/data/amenities';
+import { RETIRED_ROOMS, ROOM_DEFS, ROOM_TYPES, roomRetired } from '../src/sim/data/rooms';
 import { setupNewGame } from '../src/sim/newGame';
 import { World } from '../src/sim/world';
 import { BottomBarDropdowns } from '../src/ui/bottomBar';
@@ -100,5 +101,44 @@ describe('BuildMenu (amenities Stage 1)', () => {
     // Owner ruling: red price, STILL clickable — arming works while broke.
     entries.get(AMENITY_DEFS.vending.label)!.click();
     expect(renderer.mode).toEqual({ kind: 'placeAmenity', amenity: 'vending' });
+  });
+});
+
+describe('BuildMenu — retired room types (DEPARTMENTS_PLAN §3.3/§3.4)', () => {
+  it('renders every non-retired room and NO retired one', () => {
+    const { root } = fixture();
+    const labels = new Set(
+      [...root.querySelectorAll<HTMLButtonElement>('.dropdown-panel button')].map(
+        (b) => b.querySelector('.room-label')?.textContent ?? '',
+      ),
+    );
+    // Premise, asserted rather than assumed — if the roster is ever emptied
+    // this test must fail loudly rather than pass vacuously.
+    expect(RETIRED_ROOMS.length).toBeGreaterThan(0);
+    for (const type of RETIRED_ROOMS) {
+      expect(labels.has(ROOM_DEFS[type].label), `${type} must not be buildable`).toBe(false);
+    }
+    // The other half of the guard (HANDOFF: "a new category cannot be labeled
+    // yet invisible" — the same totality demand, applied to retirement): every
+    // room that is NOT retired must still be offered, so a filter bug that
+    // hides too much fails here instead of shipping.
+    for (const type of ROOM_TYPES) {
+      if (roomRetired(type)) continue;
+      expect(labels.has(ROOM_DEFS[type].label), `${type} must be buildable`).toBe(true);
+    }
+  });
+
+  it('the sim still BUILDS a retired type — retirement is catalog-only', () => {
+    // DEPARTMENTS_PLAN §3.3: `world.buildRoom` stays permissive so the save
+    // and maintenance fixtures that exercise schema corners keep working.
+    const { world } = fixture();
+    const type = RETIRED_ROOMS[0]!;
+    const def = ROOM_DEFS[type];
+    world.cash += def.cost;
+    const rect = { col: 20, row: 10, cols: def.minCols, rows: def.minRows };
+    // Treatment-kind rooms need a door onto a corridor; south edge, middle.
+    const door = { col: rect.col + 1, row: rect.row + rect.rows };
+    world.buildRoom(type, rect, def.kind === 'open' ? null : door, true);
+    expect(world.roomsOfType(type)).toHaveLength(1);
   });
 });

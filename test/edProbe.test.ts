@@ -25,7 +25,12 @@ const REFERENCE_BUILD: RoomSpec[] = [
   { type: 'exam', rect: { col: 14, row: 27, cols: 3, rows: 3 }, door: { col: 17, row: 28 } },
   { type: 'exam', rect: { col: 18, row: 27, cols: 3, rows: 3 }, door: { col: 21, row: 28 } },
   { type: 'xray', rect: { col: 24, row: 26, cols: 3, rows: 4 }, door: { col: 27, row: 27 } },
-  { type: 'resp', rect: { col: 28, row: 27, cols: 3, rows: 3 }, door: { col: 31, row: 28 } },
+  // DEPARTMENTS_PLAN §3.2: `resp` is retired and its two steps route to `exam`.
+  // This slot becomes a THIRD EXAM ROOM (both are 3×3 minimum, so the rect is
+  // drop-in) — WITHOUT it the reference build silently loses a server, 3 → 2,
+  // confounding a 33% capacity cut with the routing change. That is exactly
+  // the confounding ED_PLAN §5b had to split into arms.
+  { type: 'exam', rect: { col: 28, row: 27, cols: 3, rows: 3 }, door: { col: 31, row: 28 } },
   { type: 'er', rect: { col: 32, row: 26, cols: 3, rows: 4 }, door: { col: 35, row: 27 } },
   { type: 'ultrasound', rect: { col: 8, row: 21, cols: 2, rows: 3 }, door: { col: 10, row: 22 } },
   { type: 'ct', rect: { col: 12, row: 20, cols: 4, rows: 4 }, door: { col: 14, row: 24 } },
@@ -77,6 +82,9 @@ interface Probe {
   profitPerDay: number;
   surgeries: number;
   triageStarts: number;
+  /** DEPARTMENTS_PLAN §3.2 risk 3 (room-capture): ticks where a DOCTOR-needing
+   *  patient waited while every exam room was held by a non-doctor step. */
+  doctorBlockedInExam: number;
   /** Deaths by condition — which patients are we losing? */
   deathsByCondition: Map<string, number>;
   /** Died while still WAITING for their surgical step (never reached the OR). */
@@ -122,6 +130,7 @@ function run(seed: number, days: number, rooms: RoomSpec[], lean = false): Probe
     profitPerDay: 0,
     surgeries: 0,
     triageStarts: 0,
+    doctorBlockedInExam: 0,
     deathsByCondition: new Map(),
     diedAwaitingSurgery: 0,
     surgeryGatherBlocked: 0,
@@ -157,6 +166,35 @@ function run(seed: number, days: number, rooms: RoomSpec[], lean = false): Probe
       }
     }
     if (erRes > p.peakErReservations) p.peakErReservations = erRes;
+    // Room-capture probe: is a doctor's patient stuck because an RT (or
+    // anyone) is holding every exam room? ED_PLAN §5b was staff-capture; this
+    // is the same failure class on the ROOM axis.
+    // Only rooms that COULD serve someone — a closed or broken room is not
+    // "captured", it is out of service, and counting it inflated both arms.
+    const exams = [...world.rooms.values()].filter(
+      (r) => r.type === 'exam' && !r.closed && r.brokenSince === null,
+    );
+    if (exams.length > 0 && exams.every((r) => world.openSlots(r) <= 0)) {
+      const doctorWaiting = [...world.patients.values()].some((x) => {
+        if (x.stage.kind !== 'waiting') return false;
+        const st = CONDITION_DEFS[x.condition].steps[x.stepIndex];
+        return st?.room === 'exam' && (st.roles as readonly string[]).includes('doctor');
+      });
+      // ...and at least one room must be held by a step that does NOT need a
+      // doctor. Without this the counter fires when three doctors block three
+      // doctors, which is ordinary congestion, not ROOM-CAPTURE by another
+      // role (post-impl review MINOR 4 — the earlier version could not
+      // distinguish them, so §3.8 must not attribute the gap to RT capture).
+      const heldByNonDoctor = exams.some((r) =>
+        world.reservationsOn(r.id).some((res) => {
+          const patient = world.patients.get(res.patientId);
+          if (!patient) return false;
+          const st = CONDITION_DEFS[patient.condition].steps[res.stepIndex];
+          return st !== undefined && !(st.roles as readonly string[]).includes('doctor');
+        }),
+      );
+      if (doctorWaiting && heldByNonDoctor) p.doctorBlockedInExam += 1;
+    }
     // Is anyone stuck at the OR door, and which role is missing?
     const orRooms = [...world.rooms.values()].filter((r) => r.type === 'surgery');
     const orWaiting = [...world.patients.values()].some((x) => {
@@ -213,6 +251,7 @@ function table(label: string, rows: Probe[]): void {
       `peakER ${avg((r) => r.peakErReservations)}`,
       `ERload ${avg((r) => r.meanErStaffLoad)}`,
       `surg ${avg((r) => r.surgeries)}`,
+      `drBlockedExam ${avg((r) => r.doctorBlockedInExam)}t`,
       `diedPreOR ${avg((r) => r.diedAwaitingSurgery)}`,
       `ORblocked ${avg((r) => r.surgeryGatherBlocked)}t`,
       `noNurse ${avg((r) => r.surgeryBlockedOnNurse)}t`,
@@ -293,5 +332,17 @@ describeProbe('ED Stage B1 probe (ED_IMPL_PLAN §6b)', () => {
         table(`${arm} LEAN (1 nurse, 1 doctor)`, seeds.map((s) => run(s, 5, REFERENCE_BUILD, true)));
       });
     }
+    // DEPARTMENTS_PLAN §3.2 risk 1 — the routing change and a 33% server cut
+    // must NOT be measured together. REFERENCE_BUILD already carries the third
+    // exam room (capacity-neutral); this arm drops it, which is what a real
+    // player who never rebuilds actually experiences.
+    // Drop the LAST exam room by identity, not by a magic coordinate: a moved
+    // fixture rect would silently turn this into a duplicate of the 3-room arm.
+    const lastExam = [...REFERENCE_BUILD].reverse().find((r) => r.type === 'exam')!;
+    const twoExam = REFERENCE_BUILD.filter((r) => r !== lastExam);
+    if (twoExam.length !== REFERENCE_BUILD.length - 1) {
+      throw new Error('two-exam arm did not drop exactly one room');
+    }
+    table('resp routing, 2 exam rooms (no rebuild)', seeds.map((s) => run(s, 5, twoExam)));
   }, 600_000);
 });

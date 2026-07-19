@@ -25,6 +25,7 @@ import { Toasts } from './ui/toasts';
 import { clearBootParams, resolveBoot, SEED_MAX } from './sim/challenge';
 import type { ChallengeSpec } from './sim/data/challenges';
 import { setupNewGame } from './sim/newGame';
+import { ROOM_DEFS, roomRetired } from './sim/data/rooms';
 import { loadWorld } from './sim/save';
 import { World } from './sim/world';
 
@@ -126,6 +127,24 @@ async function bootstrap(boot: Boot): Promise<void> {
     renderer.pulseTile(col, row);
   };
   new Toasts(events, world, jump).mount(uiRoot);
+  // DEPARTMENTS_PLAN §3.6 defect 3(a): a retired room must ANNOUNCE itself.
+  // A player who loads a save whose Respiratory Therapy room silently stops
+  // receiving patients concludes the game is broken — and only discovers the
+  // inspect-card line AFTER forming that conclusion, if ever. The game is
+  // deployed, so this is a real purchase in a real save.
+  //
+  // Deliberately UI-side and per-session, not `world.hintOnce`: hintOnce keys
+  // are saved state, so emitting one here would mutate the payload at boot and
+  // break save→load→save byte-identity (THE acceptance gate). Repeating once
+  // per session is the right trade — it is a standing condition, and the
+  // remedy (sell for a full refund) stays available until they take it.
+  for (const room of world.rooms.values()) {
+    if (!roomRetired(room.type)) continue;
+    events.emit('hint', {
+      message: `${ROOM_DEFS[room.type].label} no longer takes patients — sell it for a full refund`,
+    });
+    break; // one notice, however many they own
+  }
   new HirePanel(world, commands, events, bottomBar).mount(uiRoot, buildMenu.staffButton);
   new ThoughtLog(events, jump, bottomBar).mount(uiRoot, document.getElementById('buildbar')!);
   // The hospital directory (owner ask 2026-07-18): the right-side inventory

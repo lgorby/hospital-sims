@@ -10,7 +10,9 @@ import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditio
 import { FINANCE_CATEGORIES, type CashTotals } from './data/finance';
 import type { RoleId } from './data/roles';
 import {
+  RETIRED_ROOMS,
   ROOM_DEFS,
+  roomRetired,
   roomStaffRatio,
   type PropDensity,
   type RoomCategory,
@@ -212,7 +214,22 @@ export function expandPrice(roomType: RoomType, oldRect: Rect, newRect: Rect): n
  * size-based economy refund more than their flat price (one-time, bounded).
  */
 export function sellbackAmount(roomType: RoomType, rect: Rect): number {
-  return Math.floor(priceOf(roomType, rect) * BALANCE.economy.roomSellbackRatio);
+  const priced = priceOf(roomType, rect);
+  if (roomRetired(roomType)) {
+    // RETIRED rooms refund in FULL (DEPARTMENTS_PLAN §3.6 defect 3): the
+    // player paid for a working department and WE withdrew it, so charging
+    // the normal 50% to reclaim the floor would bill them for our decision —
+    // and the game is deployed, so these are real purchases in real saves.
+    //
+    // CLAMPED to the flat build cost (post-impl review MINOR 5). "Made whole"
+    // means the price paid, not the rect's price today: a legacy 5×5 `resp`
+    // bought for the flat $5,000 prices at $13,896 under the size-based
+    // economy, so an unclamped full refund would pay out an $8,896 windfall.
+    // The pre-Stage-0 oversize quirk is documented above as BOUNDED by the
+    // 0.5 ratio; removing that bound without this clamp would unbound it.
+    return Math.min(priced, ROOM_DEFS[roomType].cost);
+  }
+  return Math.floor(priced * BALANCE.economy.roomSellbackRatio);
 }
 
 /** Amenity sell-back (Stage 1, AMENITIES_PLAN §3.4) — the sellbackAmount
@@ -311,6 +328,13 @@ export function plantCoversTile(plant: GridPoint, p: GridPoint, radius: number):
  * Rooms that can bill (FINANCE_PLAN §4.1): DERIVED from CONDITION_DEFS, never
  * a hand-kept flag (§3.1 rule 1 — a table plus a "test both ways" only polices
  * a duplicate). Memoized: the inspect card polls it per frame.
+ *
+ * RETIRED rooms are included (DEPARTMENTS_PLAN §3.6 ruling 2). No step routes
+ * to one any more, so the derivation alone would answer false — and a player's
+ * standing `resp` room, holding real accumulated `revenueTotal`/`visitsTotal`,
+ * would silently drop Income and Patients-seen from its inspect card and the
+ * directory column. Keeping the row is what EXPLAINS where that money went.
+ * Still derived (`CONDITION_DEFS ∪ RETIRED_ROOMS`), still no hand-kept flag.
  */
 let earningRooms: Set<RoomType> | null = null;
 export function roomEarns(type: RoomType): boolean {
@@ -321,6 +345,7 @@ export function roomEarns(type: RoomType): boolean {
         if (step.fee > 0) earningRooms.add(step.room);
       }
     }
+    for (const retired of RETIRED_ROOMS) earningRooms.add(retired);
   }
   return earningRooms.has(type);
 }

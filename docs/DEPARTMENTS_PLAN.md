@@ -249,6 +249,49 @@ Three defects retirement WOULD introduce, each fixed:
   patient cannot produce a spurious "Every Respiratory Therapist is busy".
   **No third-role assumption exists anywhere in the code.**
 
+### 3.8 MEASURED (2026-07-19, `ED_PROBE=1`, 5 seeds x 5 days)
+
+| Arm | ER | exam | Disch | **Died** | Walkouts | Surg | **drBlockedExam** | Payroll/day | Profit/day |
+|---|---|---|---|---|---|---|---|---|---|
+| Before Stage 1 (resp room) | 53.0 | 36.6 | 120.6 | 3.6 | 43.0 | 7.2 | - | 3,060 | 12,709 |
+| **Stage 1, 3 exam rooms** (capacity-neutral) | 44.8 | 62.8 | **120.2** | **3.4** | 43.2 | 8.6 | **27t** | 3,060 | 12,229 |
+| **Stage 1, 2 exam rooms** (no rebuild) | 51.0 | 53.4 | 117.4 | 4.2 | 41.4 | 10.2 | **564t** | 3,060 | 12,897 |
+
+`drBlockedExam` counts ticks where a doctor-needing patient waits, EVERY
+non-closed non-broken exam room is full, AND at least one is held by a step
+that does not need a doctor — i.e. genuine room-capture by another role, not
+ordinary doctor-on-doctor congestion. (The first cut of this counter could not
+tell those apart and read 679t; corrected per post-impl review MINOR 4.)
+
+**The honest read:**
+
+1. **Capacity-neutral, the change is a wash** - discharges 120.6 -> 120.2 and
+   deaths 3.6 -> 3.4, both inside seed noise. Exam absorbs the traffic
+   (36.6 -> 62.8 visits) without the queueing damage SS3.2's Erlang predicted
+   would not happen. The routing change is safe *when the player has the
+   servers*.
+2. **The two-arm split earned its keep, and room-capture is REAL.**
+   Doctor-blocked-in-exam is **27 ticks with three rooms and 564 with two - a
+   20x difference**, plus 3 fewer discharges, 0.8 more deaths, and pneumonia
+   deaths rising 2 -> 5. This is SS3.2 risk 3 (SS5b rotated onto the room axis)
+   measured rather than assumed. **A player who never rebuilds pays for this
+   change**, which is exactly why the capacity hints must name the room.
+3. **The $5,000 capex deletion did NOT show up as a windfall** - profit/day is
+   flat to slightly down across arms. Do not read that as safety: capex is a
+   ONE-TIME cost and a 5-day probe cannot see it. The finding stands as a
+   design risk (SS3.2 risk 2); it needs a longer horizon or a capital-outlay
+   metric to measure properly.
+4. **Payroll is identical across arms** (3,060/day) - the roster never
+   changed, which is what makes the profit comparison meaningful and confirms
+   the capex finding above is about CAPITAL, not wages.
+5. Surgeries recovered (7.2 -> 8.6, and 10.2 in the 2-room arm) - the exam
+   rooms host RT work that used to have its own room, so the nurse pool is
+   less contended. A small mitigation of `ED_PLAN` SS5b, not a fix.
+
+**Not re-pinned:** no new `RoleId`, so no fixed-seed candidate sweep was
+needed (SS3.7). Treatment completions do move to different ticks, but the
+fixed-seed suites assert properties rather than rng values and stayed green.
+
 ## 4. Stage 2 — the department model (the owner's ask)
 
 A **department** is a group of ordinary `Room`s of one type, rendered and

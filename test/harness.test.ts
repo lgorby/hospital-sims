@@ -37,7 +37,12 @@ const STANDARD_ROOMS: RoomSpec[] = [
   { type: 'exam', rect: { col: 14, row: 27, cols: 3, rows: 3 }, door: { col: 17, row: 28 } },
   { type: 'exam', rect: { col: 18, row: 27, cols: 3, rows: 3 }, door: { col: 21, row: 28 } },
   { type: 'xray', rect: { col: 24, row: 26, cols: 3, rows: 4 }, door: { col: 27, row: 27 } },
-  { type: 'resp', rect: { col: 28, row: 27, cols: 3, rows: 3 }, door: { col: 31, row: 28 } },
+  // DEPARTMENTS_PLAN §3.2: `resp` is retired and its two steps route to `exam`.
+  // This slot becomes a THIRD EXAM ROOM (both are 3×3 minimum, so the rect is
+  // drop-in) — WITHOUT it the reference build silently loses a server, 3 → 2,
+  // confounding a 33% capacity cut with the routing change. That is exactly
+  // the confounding ED_PLAN §5b had to split into arms.
+  { type: 'exam', rect: { col: 28, row: 27, cols: 3, rows: 3 }, door: { col: 31, row: 28 } },
   { type: 'er', rect: { col: 32, row: 26, cols: 3, rows: 4 }, door: { col: 35, row: 27 } },
   { type: 'ultrasound', rect: { col: 8, row: 21, cols: 2, rows: 3 }, door: { col: 10, row: 22 } },
   { type: 'ct', rect: { col: 12, row: 20, cols: 4, rows: 4 }, door: { col: 14, row: 24 } },
@@ -251,6 +256,11 @@ describe('headless balance harness (M4)', () => {
     // wear loop is live, MTBFs are in a felt range) AND the lone tech kept
     // up — the run must not END with a broken-room backlog (a repair that
     // never completes would pass the count while the hospital rots).
+    // NOTE (DEPARTMENTS_PLAN §3, post-impl review MINOR 6): this premise got
+    // TIGHTER when `resp` — a `mechanical`-failure room carrying 25/148 of
+    // arrival weight — left the reference build for a third `exam`, which has
+    // NO failure def. If a future balance nudge tips this to zero, that is the
+    // known consequence of that swap, not a mystery regression.
     expect(s.breakdowns).toBeGreaterThan(0);
     expect(s.roomsBrokenAtEnd).toBeLessThanOrEqual(1); // at most one mid-repair at the bell
     // End-to-end coverage of every §12 path (review MINOR): each expansion
