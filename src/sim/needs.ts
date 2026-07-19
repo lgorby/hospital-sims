@@ -332,36 +332,7 @@ export function computeBlockedNeeds(world: World): BlockedNeed[] {
  * Pure: reads world state, mutates nothing.
  */
 function capacityNeeds(world: World): BlockedNeed[] {
-  const blockedFor = gameMinutesToTicks(BALANCE.dispatcher.capacityHintWaitGameMinutes);
-  const longWait = (p: Patient): boolean =>
-    p.waitingSince !== null && world.clock.tick - p.waitingSince >= blockedFor;
-
-  // Which room types have someone genuinely stuck outside them, and on which
-  // roles. `waitingTriage` is included: triage is a staffed room like any
-  // other, and a starved triage queue is the single loudest version of this
-  // failure (a ratio staffer never returns to `idle`, and `assignTriage`
-  // gates on availability — so a busy ED can hold the only nurse indefinitely
-  // and every arrival strands untriaged. ED_PLAN §5b item 5).
-  const blocked = new Map<RoomType, { roles: Set<RoleId>; patients: Set<number> }>();
-  const note = (type: RoomType, roles: readonly RoleId[], patientId: number): void => {
-    let entry = blocked.get(type);
-    if (!entry) {
-      entry = { roles: new Set(), patients: new Set() };
-      blocked.set(type, entry);
-    }
-    entry.patients.add(patientId);
-    for (const role of roles) entry.roles.add(role);
-  };
-  for (const patient of world.patients.values()) {
-    if (!longWait(patient)) continue;
-    if (patient.stage.kind === 'waitingTriage') {
-      note('triage', ROOM_DEFS.triage.staffedBy, patient.id);
-      continue;
-    }
-    if (patient.stage.kind !== 'waiting') continue;
-    const step = CONDITION_DEFS[patient.condition].steps[patient.stepIndex];
-    if (step) note(step.room, step.roles, patient.id);
-  }
+  const blocked = blockedDemand(world);
 
   const needs: BlockedNeed[] = [];
   // Table order, not insertion order (determinism).
@@ -439,4 +410,71 @@ function capacityNeeds(world: World): BlockedNeed[] {
     }
   }
   return needs;
+}
+
+/**
+ * THE ONE "who is genuinely stuck outside which room, needing which role"
+ * derivation. Two consumers with different jobs read it (post-impl review
+ * MINOR 4 — they were near-verbatim copies of each other, each carrying a
+ * "must not drift" comment about a DIFFERENT function):
+ *   • `capacityNeeds` above, for the player-facing shortage hints;
+ *   • the dispatcher's anti-capture guard (ED_PLAN §5b item 5), which refuses
+ *     to extend a ratio staffer while their role is starved elsewhere.
+ *
+ * A patient counts only when ALL of these hold:
+ *   • they have waited past `capacityHintWaitGameMinutes` — a staffer
+ *     mid-walk is not a shortage;
+ *   • they are DISPATCHABLE. This is the correctness fix the review caught
+ *     (MAJOR 1): a patient who is `lost`, on a `needBreak`, or inside a rule-8
+ *     `dispatchHoldUntil` keeps `stage` and `waitingSince` intact, so the old
+ *     scan booked them as unmet demand while the dispatcher was simultaneously
+ *     refusing to serve them. That phantom demand disabled ratio extension
+ *     hospital-wide for the length of a bathroom trip.
+ *
+ * `waitingTriage` is included: triage is a staffed room like any other, and a
+ * starved triage queue is the loudest version of this failure.
+ *
+ * Pure: reads world state, mutates nothing, no rng.
+ */
+export function blockedDemand(
+  world: World,
+): Map<RoomType, { roles: Set<RoleId>; patients: Set<number> }> {
+  const blockedFor = gameMinutesToTicks(BALANCE.dispatcher.capacityHintWaitGameMinutes);
+  const blocked = new Map<RoomType, { roles: Set<RoleId>; patients: Set<number> }>();
+  const note = (type: RoomType, roles: readonly RoleId[], patientId: number): void => {
+    let entry = blocked.get(type);
+    if (!entry) {
+      entry = { roles: new Set(), patients: new Set() };
+      blocked.set(type, entry);
+    }
+    entry.patients.add(patientId);
+    for (const role of roles) entry.roles.add(role);
+  };
+  for (const patient of world.patients.values()) {
+    if (patient.waitingSince === null) continue;
+    if (world.clock.tick - patient.waitingSince < blockedFor) continue;
+    if (!dispatchablePatient(world, patient)) continue;
+    if (patient.stage.kind === 'waitingTriage') {
+      note('triage', ROOM_DEFS.triage.staffedBy, patient.id);
+      continue;
+    }
+    if (patient.stage.kind !== 'waiting') continue;
+    const step = CONDITION_DEFS[patient.condition].steps[patient.stepIndex];
+    if (step) note(step.room, step.roles, patient.id);
+  }
+  return blocked;
+}
+
+/**
+ * The dispatcher's own eligibility predicate, hoisted here so `blockedDemand`
+ * can share it without `needs.ts` importing `dispatcher.ts` (which imports
+ * this module — that would be a cycle). `dispatchable()` in the dispatcher
+ * delegates to it, so there is ONE definition of "can this patient be served".
+ */
+export function dispatchablePatient(world: World, patient: Patient): boolean {
+  return (
+    patient.lost === null &&
+    patient.needBreak === null &&
+    world.clock.tick >= patient.dispatchHoldUntil
+  );
 }

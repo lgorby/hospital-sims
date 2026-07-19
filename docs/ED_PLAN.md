@@ -259,24 +259,55 @@ Short-staffed (1 nurse + 1 doctor), to test the ratio's own claim:
 4. **Even short-staffed, the ratio's win is one-sided**: +26% ER throughput,
    but surgeries fall 2.4 → 1.0. It helps the ED by capturing scarce nurses
    from the rest of the hospital. Defensible as realism; not obviously good.
-5. **THE OPEN BALANCE ISSUE, recorded not buried — the ED out-competes the
-   rest of the hospital for nurses.** Surgeries fall 11.2 → **7.2** (−36%)
-   against the Stage-A baseline. A ratio staffer never returns to `idle`
-   while any bay is live, and both `assignTriage` and `assignJobsForRole`
-   gate on idleness, so a busy ED holds its nurse continuously where pre-B1
-   she cycled back between patients. The post-impl review's MINOR 5 fix
-   (excluding gathering reservations from the attention penalty — a nurse
-   must not be slowed by a patient who has not arrived) made ED treatment
-   faster and therefore made this *worse*: ER visits 49.4 → 53.0, surgeries
-   10.2 → 7.2. The harness's per-condition floor still passes, so this is
-   inside the documented envelope, but it is a real signal.
-   **Candidate remedies, none implemented — they need their own measurement
-   pass:** (a) the Title-22 triage-RN carve-out, which the research already
-   supports (the triage nurse is excluded from the 1:4 count and must be
-   "immediately available at all times"); (b) forbid a ratio room from
-   binding the LAST free staffer of a role; (c) accept it as the intended
-   cost of a busy ED and let the player hire against it — which is only
-   honest if §5.3's capacity hints actually make the tradeoff visible.
+5. **RESOLVED 2026-07-19 — the ED no longer captures the nursing pool.**
+   Originally recorded here as the stage's open cost: surgeries 11.2 -> 7.2,
+   and a characterization suite measured 0 idle ticks, triage never firing in
+   1,200 ticks, and a patient dying untriaged at 4,000. Hiring did not help —
+   two nurses hired up front were both absorbed.
+
+   **The fix: an anti-capture guard on ratio EXTENSION.** `availableStaff`
+   refuses to extend a staffer onto a further bay while their role has
+   SUSTAINED unmet demand in a DIFFERENT room type. Extension is what made the
+   capture permanent — a ratio staffer never returns to `idle` while any bay
+   lives, and triage and the job queue both gate on idleness, so holding bay 2
+   while bay 1 completes is precisely what stopped her ever cycling back.
+   FIRST bindings are untouched, so a department can always staff itself; only
+   the ratio luxury is given up, and only while someone else starves.
+
+   **BOUNDED by headcount (>= 2 of the role).** With exactly one staffer,
+   refusing her second bay leaves it empty and puts nobody in triage any sooner
+   — pure loss, measured at deaths 10.6 -> 13.2 in the 1-nurse arm before the
+   bound was added. So a lone nurse is still captured; that is now a statement
+   about being UNDER-STAFFED, and **hiring a second nurse is the remedy**,
+   which is exactly what the original finding said did not work.
+
+   Demand is read from `needs.blockedDemand` — the SAME derivation the shortage
+   hints use, so the guard and the hint can never disagree, and it counts only
+   DISPATCHABLE patients (a lost patient, one on a bathroom break, or one in a
+   rule-8 retry hold used to book phantom demand and disable extension
+   hospital-wide for the length of a bathroom trip).
+
+   **Measured, 5 seeds x 5 days, reference build:**
+
+   | | before guard | **after** | Stage-A baseline |
+   |---|---|---|---|
+   | Surgeries | 8.6 | **10.4** | 10.8 |
+   | Discharged | 120.2 | **120.4** | 109.8 |
+   | Died | 3.4 | **3.2** | 5.2 |
+   | Walkouts | 43.2 | **39.0** | 32.4 |
+   | Doctor-blocked-in-exam | 27.4t | **11.8t** | 5.6t |
+   | Profit/day | 12,229 | **12,605** | 12,323 |
+
+   Surgeries are restored to the baseline, and deaths, walkouts and profit all
+   IMPROVE rather than trade off. The 1-nurse arm is bit-for-bit its pre-guard
+   self (deaths 10.6, surgeries 1.6, discharges 69.2) — the bound makes the
+   guard inert there by design.
+
+   Found by adversarial review before commit (verdict DO NOT COMMIT, 3 MAJOR):
+   the phantom-demand bug, the unbounded lean regression, and — via mutation
+   testing — that the *bounding* was entirely unverified, because deleting the
+   same-room-type check passed all 40 tests in the file. That test ran a single
+   tick while the demand threshold is 150, so the guard was never reachable.
 
 ## 6. Test/measurement protocol
 

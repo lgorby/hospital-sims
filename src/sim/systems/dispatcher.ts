@@ -1,8 +1,8 @@
 import { GAME_MINUTES_PER_HOUR, gameMinutesToTicks, ticksToGameMinutes } from '../clock';
 import { BALANCE } from '../data/balance';
 import { CONDITION_DEFS } from '../data/conditions';
-import { ROLE_DEFS } from '../data/roles';
-import { ROOM_DEFS, roomRetired } from '../data/rooms';
+import { ROLE_DEFS, type RoleId } from '../data/roles';
+import { ROOM_DEFS, roomRetired, type RoomType } from '../data/rooms';
 import type { Room } from '../entities/room';
 import type { Patient } from '../entities/patient';
 import type { Job, Reservation, Staff } from '../entities/staff';
@@ -13,7 +13,7 @@ import {
   staffRatioFor,
   treatmentDurationTicks,
 } from '../formulas';
-import { computeBlockedNeeds } from '../needs';
+import { blockedDemand, computeBlockedNeeds, dispatchablePatient } from '../needs';
 import { findPath } from '../path/astar';
 import { ORTHOGONAL_STEPS, samePoint, type GridPoint } from '../types';
 import type { Walker, World } from '../world';
@@ -27,8 +27,16 @@ export function updateDispatcher(world: World): void {
   postStandingStaff(world);
   reRouteEntranceWaiters(world);
   processCheckIn(world);
-  assignTriage(world);
-  assignTreatment(world);
+  // Computed ONCE per pass and threaded down: the anti-capture guard needs a
+  // hospital-wide view, and recomputing it per candidate would be O(P²).
+  // KNOWN AND ACCEPTED (post-impl review MINOR 7): it is computed before
+  // `assignTriage`, so if triage clears its whole queue this tick,
+  // `assignTreatment` still sees triage as starved and declines one round of
+  // ED extension. One tick of lost extension, biased against the ED — cheaper
+  // and far easier to reason about than recomputing mid-pass.
+  const starved = starvingDemand(world);
+  assignTriage(world, starved);
+  assignTreatment(world, starved);
   assignJobs(world); // Stage 2 (§S2.3): after assignTreatment (frozen slot)
   promoteGatheredReservations(world);
   progressJobs(world);
@@ -54,6 +62,56 @@ function emitUrgentNeedHints(world: World): void {
     // condition; a one-shot toast is for a new fact.
     if (need.urgent && need.kind !== 'capacity') world.hintOnce(`need:${need.key}`, need.label);
   }
+}
+
+/**
+ * ED_PLAN §5b item 5 — THE ANTI-CAPTURE INPUT. Roles with SUSTAINED unmet
+ * demand, and the room types where it sits.
+ *
+ * The patient scan is `needs.blockedDemand` — the SAME derivation the shortage
+ * hints read, so the guard and the hint can never disagree about who is stuck
+ * (post-impl review MINOR 4). It already filters to DISPATCHABLE patients, so
+ * a patient who is lost, on a bathroom break, or inside a rule-8 retry hold no
+ * longer books phantom demand (MAJOR 1).
+ *
+ * A room type qualifies only if it has a room that could actually take someone
+ * RIGHT NOW: open slot, not closed, not broken, AND it has a DOOR — a doorless
+ * room fails `canReachRoom` forever, so counting it would starve the guard
+ * permanently on a room nobody can enter (MINOR 8). The openings are memoized
+ * per call: `openSlots` walks the room rect and every reservation, and this
+ * used to run once per waiting patient (MINOR 5).
+ */
+function starvingDemand(world: World): Map<RoleId, Set<RoomType>> {
+  const starved = new Map<RoleId, Set<RoomType>>();
+  const openings = new Map<RoomType, boolean>();
+  const hasOpening = (type: RoomType): boolean => {
+    let open = openings.get(type);
+    if (open === undefined) {
+      open = world
+        .roomsOfType(type)
+        .some(
+          (r) =>
+            !r.closed &&
+            r.brokenSince === null &&
+            (ROOM_DEFS[r.type].kind === 'open' || r.door !== null) &&
+            world.openSlots(r) > 0,
+        );
+      openings.set(type, open);
+    }
+    return open;
+  };
+  for (const [type, entry] of blockedDemand(world)) {
+    if (!hasOpening(type)) continue;
+    for (const role of entry.roles) {
+      let types = starved.get(role);
+      if (!types) {
+        types = new Set();
+        starved.set(role, types);
+      }
+      types.add(type);
+    }
+  }
+  return starved;
 }
 
 function idleStaff(world: World, filter: (s: Staff) => boolean): Staff[] {
@@ -100,6 +158,7 @@ function availableStaff(
   room: Room,
   filter: (s: Staff) => boolean,
   held?: ReadonlyMap<number, SoftHold>,
+  starved?: ReadonlyMap<RoleId, ReadonlySet<RoomType>>,
 ): Staff[] {
   // Load snapshot taken ONCE per call, never memoized across a pass:
   // `makeReservation` mutates `world.reservations` between calls and later
@@ -124,11 +183,67 @@ function availableStaff(
     }
     const hold = held?.get(s.id);
     if (hold && hold.roomId !== room.id) return false;
+    // ANTI-CAPTURE (ED_PLAN §5b item 5). Refuse to EXTEND a staffer who is
+    // already working this room when their role has sustained unmet demand in
+    // a DIFFERENT room type.
+    //
+    // Extension is what makes the capture permanent: a ratio staffer never
+    // returns to `idle` while any bay is live, and `assignTriage` and the job
+    // queue both gate on idleness. Holding bay 2 while bay 1 completes is
+    // precisely what stops her ever cycling back — the characterization suite
+    // measured 0 idle ticks, triage never firing in 1,200 ticks, and a patient
+    // dying untriaged at 4,000. Headcount does not fix it (two nurses hired up
+    // front were both absorbed); only an IDLE nurse at the moment triage asks.
+    //
+    // FIRST bindings are untouched, so a department can always staff itself.
+    // Only the ratio LUXURY is given up, and only while someone else starves —
+    // which is the honest trade: graceful degradation for this room is not
+    // worth a starved triage queue or an OR that never runs. Title 22 backs
+    // it: the triage RN is excluded from the 1:4 count precisely so one is
+    // "immediately available at all times".
+    if (load > 0 && starvedOutside(starved, s.role, room.type) && rolePool(world, s.role) > 1) {
+      return false;
+    }
     return load + (hold?.units ?? 0) < staffRatioFor(room.type, s.role);
   });
   return eligible.sort(
     (a, b) => (loads.get(a.id) ?? 0) - (loads.get(b.id) ?? 0) || a.id - b.id,
   );
+}
+
+/**
+ * Working headcount for a role — the guard's BOUND (post-impl review MAJOR 2).
+ *
+ * Refusing to extend is only worth anything when it returns a body to a pool
+ * someone else can draw from. With exactly ONE staffer of a role, blocking her
+ * second bay leaves that bay empty and still does not put anyone in triage any
+ * sooner than her current treatment ending — so the trade is pure loss. The
+ * probe measured it: in the 1-nurse/1-doctor arm the unbounded guard cost
+ * deaths 10.6 → 13.2 and discharges 69.2 → 66.8, because it switched off
+ * exactly the graceful degradation ED_PLAN Stage B1 exists to provide.
+ *
+ * `firing` staff are excluded: they take no new work, so they are not pool.
+ */
+function rolePool(world: World, role: RoleId): number {
+  let count = 0;
+  for (const member of world.staff.values()) {
+    if (member.role === role && !member.firing) count += 1;
+  }
+  return count;
+}
+
+/** Does this role have sustained unmet demand somewhere OTHER than this room
+ *  type? (Demand in the SAME room type is what the ratio exists to serve —
+ *  blocking extension there would just move the queue, not shorten it.) */
+function starvedOutside(
+  starved: ReadonlyMap<RoleId, ReadonlySet<RoomType>> | undefined,
+  role: RoleId,
+  roomType: RoomType,
+): boolean {
+  const types = starved?.get(role);
+  if (!types) return false;
+  for (const type of types) if (type !== roomType) return true;
+  return false;
 }
 
 /** One pass-local partial-gather hold: units of a staffer's ratio capacity
@@ -339,16 +454,14 @@ function canReachRoom(world: World, walker: Walker, room: Room): boolean {
  * they re-enter the pool the tick the break ends).
  */
 function dispatchable(world: World, stageKind: 'waitingTriage' | 'waiting'): Patient[] {
+  // The predicate lives in needs.ts so `blockedDemand` can share it without a
+  // module cycle — ONE definition of "can this patient be served".
   return [...world.patients.values()].filter(
-    (p) =>
-      p.stage.kind === stageKind &&
-      p.lost === null &&
-      p.needBreak === null &&
-      world.clock.tick >= p.dispatchHoldUntil,
+    (p) => p.stage.kind === stageKind && dispatchablePatient(world, p),
   );
 }
 
-function assignTriage(world: World): void {
+function assignTriage(world: World, starved: ReadonlyMap<RoleId, ReadonlySet<RoomType>>): void {
   const waiting = dispatchable(world, 'waitingTriage').sort(
     (a, b) => (a.waitingSince ?? 0) - (b.waitingSince ?? 0),
   );
@@ -367,13 +480,16 @@ function assignTriage(world: World): void {
   for (const patient of waiting) {
     const bay = bays.find((r) => hasOpenSlot(world, r) && canReachRoom(world, patient, r));
     if (!bay) continue;
-    const nurse = availableStaff(world, bay, (s) => s.role === 'nurse')[0];
+    const nurse = availableStaff(world, bay, (s) => s.role === 'nurse', undefined, starved)[0];
     if (!nurse) return;
     makeReservation(world, 'triage', patient, bay, [nurse], 0);
   }
 }
 
-function assignTreatment(world: World): void {
+function assignTreatment(
+  world: World,
+  starved: ReadonlyMap<RoleId, ReadonlySet<RoomType>>,
+): void {
   const waiting = dispatchable(world, 'waiting')
     .filter((p) => p.acuity !== null)
     .sort((a, b) => priorityOf(world, a) - priorityOf(world, b));
@@ -427,6 +543,7 @@ function assignTreatment(world: World): void {
           candidate,
           (s) => s.role === role && !picked.includes(s),
           heldForHigherPriority,
+          starved,
         )[0];
         if (!member) break;
         picked.push(member);

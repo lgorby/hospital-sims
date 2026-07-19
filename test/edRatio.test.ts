@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { CommandQueue } from '../src/commands';
 import { EventBus } from '../src/events';
+import { gameMinutesToTicks } from '../src/sim/clock';
 import { BALANCE } from '../src/sim/data/balance';
 import { ROLE_DEFS, ROLE_IDS, type RoleId } from '../src/sim/data/roles';
 import { ROOM_DEFS, type RoomType } from '../src/sim/data/rooms';
 import type { Patient } from '../src/sim/entities/patient';
 import type { Room } from '../src/sim/entities/room';
 import { attentionSkill, staffRatioFor, successChance } from '../src/sim/formulas';
+import { blockedDemand } from '../src/sim/needs';
 import { setupNewGame } from '../src/sim/newGame';
 import { loadWorld, SAVE_VERSION, saveToString, type SaveData } from '../src/sim/save';
 import { updateTreatment } from '../src/sim/systems/treatment';
@@ -649,22 +651,25 @@ describe('triage starvation under a captured ratio nurse (test 17 — characteri
     return { idleTicks, firstTriageTick, minErPanel };
   }
 
-  it('IT STARVES: a sustained ED load holds the only nurse forever and triage never fires', () => {
+  it('ONE nurse is still captured — that is a SHORTAGE, and hiring is the remedy', () => {
+    // The anti-capture guard is BOUNDED by headcount (post-impl review
+    // MAJOR 2): with exactly one staffer of a role, refusing her second bay
+    // leaves it empty and puts nobody in triage sooner — pure loss, measured
+    // at deaths 10.6 → 13.2 in the 1-nurse probe arm. So a lone nurse is still
+    // captured by a sustained ED, and that is now a deliberate statement about
+    // being UNDER-STAFFED rather than a defect in the mechanic.
+    //
+    // What CHANGED is the thing that made the original finding alarming:
+    // "headcount alone is not the remedy" is no longer true. Hire a second
+    // nurse and the guard engages and the pool cycles — see the two tests
+    // below. That is a teachable shortage instead of an unfixable trap.
     const w = edWorld(1);
     const { idleTicks, firstTriageTick, minErPanel } = run(w, 1_200, { sustain: true });
 
-    // Premise: the ED really did stay busy for the whole run.
     expect(minErPanel, 'the ED panel never emptied').toBeGreaterThan(0);
-    // The mechanism: a ratio staffer never returns to `idle` while a bay lives.
-    expect(idleTicks, 'she is never idle for a single tick').toBe(0);
-    // The consequence, PINNED AS THE CURRENT BEHAVIOUR: triage is starved out.
-    expect(firstTriageTick, 'triage never fires').toBe(-1);
-    expect(w.world.reservationsOn(w.triage.id)).toHaveLength(0);
+    expect(idleTicks, 'the lone nurse never idles under sustained load').toBe(0);
+    expect(firstTriageTick, 'so triage does not fire').toBe(-1);
     expect(w.stuck.stage.kind).toBe('waitingTriage');
-    // …while the ED kept feeding her new patients the whole time. She is
-    // available to the department that already has her, and to nobody else.
-    const nurse = [...w.world.staff.values()].find((s) => s.role === 'nurse')!;
-    expect(w.world.staffLoadIn(nurse.id, w.er.id)).toBeGreaterThan(0);
     expect(w.world.stageViolations).toEqual([]);
   });
 
@@ -680,28 +685,124 @@ describe('triage starvation under a captured ratio nurse (test 17 — characteri
     expect(w.world.stageViolations).toEqual([]);
   });
 
-  it('an IDLE nurse is all triage needs: a rescue hire is claimed the tick she appears', () => {
-    // `assignTriage` runs FIRST, so a newly hired (idle) nurse is taken by
-    // triage before `assignTreatment` can pull her into the ED. This is the
-    // shape any future carve-out has to preserve.
+  it('HIRING IS NOW THE REMEDY: a second nurse engages the guard and frees the pool', () => {
+    // Before the guard: triage fired on exactly the tick a rescue nurse was
+    // hired and never sooner — she was claimed and immediately re-absorbed,
+    // and the ED kept the pool. Now the second hire pushes the role's headcount
+    // past the bound, the guard engages, and the pool CYCLES from then on.
     const w = edWorld(1);
     const rescueAt = 300;
-    const { firstTriageTick } = run(w, 900, { sustain: true, rescueAt });
+    const { firstTriageTick, idleTicks } = run(w, 900, { sustain: true, rescueAt });
 
-    expect(firstTriageTick, 'triage claims her immediately, not eventually').toBe(rescueAt);
+    expect(firstTriageTick, 'triage is served once a second nurse exists')
+      .toBeGreaterThanOrEqual(rescueAt);
+    expect(firstTriageTick, 'and not never').toBeGreaterThan(-1);
+    expect(idleTicks, 'the pool reaches idle after the hire').toBeGreaterThan(0);
+    expect(w.stuck.stage.kind).not.toBe('waitingTriage');
     expect(w.world.stageViolations).toEqual([]);
   });
 
-  it('HEADCOUNT ALONE IS NOT THE REMEDY: two nurses hired first are both absorbed', () => {
-    // The finding that makes this more than "hire another nurse": a 4-bay ED
-    // takes BOTH nurses before any triage patient exists, and neither ever
-    // comes back. Recorded so a future fix is measured against it.
+  it('two nurses are no longer BOTH absorbed — the pool stays reachable', () => {
+    // The finding that made this more than "hire another nurse": a 4-bay ED
+    // used to take BOTH nurses before any triage patient existed and neither
+    // ever came back (idle ticks 0, triage never fired in 1,200). That was the
+    // proof headcount could not fix it. With the anti-capture guard the ED
+    // stops extending while triage starves, so the pool cycles.
     const w = edWorld(2);
     const { idleTicks, firstTriageTick } = run(w, 1_200, { sustain: true });
 
-    expect(idleTicks, 'neither nurse is ever idle').toBe(0);
-    expect(firstTriageTick, 'triage still starves with two nurses').toBe(-1);
+    expect(idleTicks, 'the nurses return to idle').toBeGreaterThan(0);
+    expect(firstTriageTick, 'triage is served').toBeGreaterThan(-1);
     expect(w.world.stageViolations).toEqual([]);
+  });
+
+  it('the guard is NARROW: SAME-room starvation still extends (the bound itself)', () => {
+    // THIS IS THE TEST THAT PINS THE BOUND, and the post-impl review caught
+    // that its first version could not. That version ticked ONCE, while the
+    // threshold is `capacityHintWaitGameMinutes` = 150 ticks — so
+    // `starvingDemand` was empty and the guard was unreachable for a reason
+    // that had nothing to do with room types. Proof it was vacuous: deleting
+    // the `type !== roomType` check — the whole difference between a bounded
+    // guard and a repeal of ratio staffing — passed all 40 tests in this file.
+    //
+    // So this builds REAL, SUSTAINED starvation and puts it in the SAME room
+    // type the staffer is working. Demand inside the ED is what the ratio
+    // exists to serve; blocking extension there would only move the queue.
+    const t = setup();
+    const er = build(t.world, 'er', { col: 20, row: 20, cols: 4, rows: 6 });
+    hire(t.world, 'nurse', 2); // ≥2, so the headcount bound does not mask this
+    hire(t.world, 'doctor', 2);
+    const waiting = [];
+    for (let i = 0; i < 6; i++) waiting.push(waitingPatient(t.world, 'laceration', 3));
+    // Age everyone past the shortage threshold: the ED is genuinely starved.
+    const past = gameMinutesToTicks(BALANCE.dispatcher.capacityHintWaitGameMinutes) + 1;
+    for (const p of waiting) p.waitingSince = t.world.clock.tick - past;
+    for (let i = 0; i < 40; i++) {
+      for (const p of waiting) {
+        p.patience = 10_000; // measure the DISPATCHER, not the AMA timer
+        if (p.stage.kind === 'waiting') p.waitingSince = t.world.clock.tick - past;
+      }
+      t.world.tick();
+    }
+
+    // Premise, asserted: the ED really is starved on its own doorstep.
+    const starvedRooms = blockedDemand(t.world).get('er');
+    expect(starvedRooms?.roles.has('nurse'), 'ER nurse demand is starving').toBe(true);
+    // …and extension STILL happens, because the starvation is in this room.
+    const nurses = [...t.world.staff.values()].filter((s) => s.role === 'nurse');
+    const shared = nurses.some((n) => t.world.staffLoadIn(n.id, er.id) > 1);
+    expect(shared, 'a nurse still covers more than one bay').toBe(true);
+    expect(t.world.stageViolations).toEqual([]);
+  });
+
+  it('the headcount BOUND: a lone staffer keeps her extension (MAJOR 2)', () => {
+    // With one nurse, refusing the second bay leaves it empty and puts nobody
+    // in triage sooner — pure loss, measured as deaths 10.6 → 13.2 in the
+    // 1-nurse probe arm. `edWorld` is reused because the ORDER matters: the ED
+    // must capture her BEFORE the triage patient exists, or `assignTriage`
+    // (which runs first) simply takes the idle nurse and there is no capture
+    // to test.
+    const w = edWorld(1);
+    run(w, 200, { sustain: true });
+
+    // Premise, asserted: triage really is starving demand for a nurse OUTSIDE
+    // the ED — i.e. the guard's trigger condition is genuinely met.
+    expect(blockedDemand(w.world).get('triage')?.roles.has('nurse'), 'triage is starved').toBe(
+      true,
+    );
+    // …and the bound holds anyway, because she is the only nurse there is.
+    const nurse = [...w.world.staff.values()].find((s) => s.role === 'nurse')!;
+    expect(w.world.staffLoadIn(nurse.id, w.er.id), 'she still covers several bays')
+      .toBeGreaterThan(1);
+    expect(w.world.stageViolations).toEqual([]);
+  });
+
+  it('phantom demand does NOT trigger the guard (lost / on-break / held patients)', () => {
+    // Post-impl review MAJOR 1: `lost`, `needBreak` and `dispatchHoldUntil` all
+    // leave `stage` and `waitingSince` intact, so the first version of the scan
+    // booked them as unmet demand while the dispatcher was simultaneously
+    // refusing to serve them — disabling ED extension for the length of a
+    // bathroom trip. `blockedDemand` now filters to DISPATCHABLE patients.
+    const t = setup();
+    build(t.world, 'triage', { col: 30, row: 20, cols: 3, rows: 3 });
+    const past = gameMinutesToTicks(BALANCE.dispatcher.capacityHintWaitGameMinutes) + 1;
+    const stuck = t.world.spawnPatient('flu');
+    stuck.stage = { kind: 'waitingTriage' };
+    stuck.waitingSince = t.world.clock.tick - past;
+
+    // Dispatchable: it IS demand.
+    expect(blockedDemand(t.world).get('triage')?.roles.has('nurse')).toBe(true);
+    // On a bathroom break: NOT demand, though stage and wait clock are intact.
+    stuck.needBreak = { kind: 'restroom', roomId: 1, slot: 0, phase: 'walking', ticks: 0 } as never;
+    expect(blockedDemand(t.world).has('triage'), 'on-break is not demand').toBe(false);
+    stuck.needBreak = null;
+    // Lost: likewise.
+    stuck.lost = { since: t.world.clock.tick } as never;
+    expect(blockedDemand(t.world).has('triage'), 'lost is not demand').toBe(false);
+    stuck.lost = null;
+    // Inside a rule-8 retry hold: likewise.
+    stuck.dispatchHoldUntil = t.world.clock.tick + 100;
+    expect(blockedDemand(t.world).has('triage'), 'held is not demand').toBe(false);
   });
 });
 

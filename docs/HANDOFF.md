@@ -3,7 +3,7 @@
 **Last updated:** 2026-07-19 (Departments epic Stage 1 SHIPPED — respiratory
 therapy retired, its care moved to the bedside; ED epic Stage B1 SHIPPED — ratio staffing, the
 attention penalty, denser ED beds, close/reopen-to-expand; Stages B2/C still
-drafted in `docs/ED_PLAN.md`. SAVE_VERSION 10, 652 tests, all gates green)
+drafted in `docs/ED_PLAN.md`. SAVE_VERSION 10, 655 tests, all gates green)
 **OWNER DECISIONS PENDING (adopt-unless-vetoed, all review-recommended):**
 (1) the clean-day +2 cleanliness rep bonus requires ≥1 arrival that day (the
 wait-bonus "an empty hospital isn't fast" principle — ratified §4.2 didn't
@@ -395,13 +395,11 @@ commit table above and in `docs/ED_PLAN.md` §5b / `docs/DEPARTMENTS_PLAN.md` §
 
 **Open threads, highest-value first:**
 
-1. **`ED_PLAN` §5b item 5 — the ED out-competes the hospital for nurses.**
-   Surgeries 11.2 → 7.2; a ratio staffer never returns to `idle` while triage
-   and the job queue both gate on idleness, so under sustained inflow a busy
-   ED can hold the only nurse indefinitely (pinned as characterization tests in
-   `test/edRatio.test.ts` — a patient died untriaged in one harness arm).
-   Three remedies scoped, NONE implemented; each needs its own measurement.
-   **This is the most important unresolved thing in the codebase.**
+1. ~~**`ED_PLAN` §5b item 5 — the ED out-competes the hospital for nurses.**~~
+   **RESOLVED 2026-07-19** — anti-capture guard on ratio EXTENSION, bounded by
+   role headcount. Surgeries restored 8.6 → 10.4 (baseline 10.8) with deaths,
+   walkouts and profit all improving. See `ED_PLAN` §5b item 5 for the full
+   measurement and the review that caught three MAJORs before commit.
 2. **Departments Stage 2** — the owner's "OR is a collection of operating
    rooms / X-ray is a collection of rooms" ask. `DEPARTMENTS_PLAN` §4 is DRAFT
    and needs its OWN pre-implementation review. Chosen shape avoids internal
