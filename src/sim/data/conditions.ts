@@ -17,6 +17,15 @@ interface ConditionDef {
   readonly acuityMin: number;
   readonly acuityMax: number;
   readonly steps: readonly TreatmentStep[];
+  /**
+   * Elective outpatient referral (OUTPATIENT_IMPL_PLAN §3.1): arrives
+   * PRE-TRIAGED from the scheduled stream, never from the emergency mix.
+   * Absent = emergency, so every pre-existing condition is untouched.
+   *
+   * `true` rather than `boolean` on purpose — it is what makes the
+   * `ElectiveConditionId` type-level partition below derivable.
+   */
+  readonly elective?: true;
 }
 
 /** SSOT for the V1 condition roster (GDD §3). Treatment paths are data, not code. */
@@ -223,7 +232,73 @@ export const CONDITION_DEFS = {
       },
     ],
   },
+  // ── ELECTIVE / OUTPATIENT REFERRALS (OUTPATIENT_IMPL_PLAN §3.1) ──────────
+  // The two modalities the ED does not feed. Research (IMAGING_PLAN §2.3):
+  // MRI is ~83% elective/outpatient, so with emergency walk-ins as the game's
+  // only demand channel these two rooms could never be busy however the
+  // emergency chains were routed.
+  //
+  // Fees ANCHOR to the identical existing steps — backInjury's MRI scan bills
+  // 500, thyroid's nuclear scan 450. That makes revenue-per-room-minute
+  // arbitrage between the streams exactly ZERO by construction (design review
+  // MAJOR 3: the drafted 900/1,100 made an elective nuclear scan 3.3x more
+  // profitable per STAFF-minute than a stroke, which pays the player to starve
+  // their own ED).
+  mriScan: {
+    label: 'MRI Scan (referral)',
+    acuityMin: 5,
+    acuityMax: 5,
+    elective: true,
+    steps: [{ label: 'MRI scan', room: 'mri', roles: ['radTech'], durationGameMinutes: 40, fee: 500 }],
+  },
+  nucMedScan: {
+    label: 'Nuclear Medicine Scan (referral)',
+    acuityMin: 5,
+    acuityMax: 5,
+    elective: true,
+    steps: [
+      {
+        label: 'Nuclear scan',
+        room: 'nucMed',
+        roles: ['radTech'],
+        durationGameMinutes: 45,
+        fee: 450,
+      },
+    ],
+  },
 } as const satisfies Record<string, ConditionDef>;
 
 export type ConditionId = keyof typeof CONDITION_DEFS;
 export const CONDITION_IDS = Object.keys(CONDITION_DEFS) as ConditionId[];
+
+/**
+ * The two arrival streams, DERIVED from the table (§3.1) — never hand-kept
+ * lists. `elective?: true` (not `boolean`) is what makes this filter work:
+ * a `boolean` field would not narrow.
+ *
+ * Load-bearing: without `ElectiveConditionId`, `outpatient.weights` cannot be
+ * typed and `rollElectiveCondition` does not compile (code review MAJOR 2).
+ */
+export type ElectiveConditionId = {
+  [K in ConditionId]: (typeof CONDITION_DEFS)[K] extends { readonly elective: true } ? K : never;
+}[ConditionId];
+export type EmergencyConditionId = Exclude<ConditionId, ElectiveConditionId>;
+
+/**
+ * The one `elective` accessor — same widening as `rooms.ts`'s `roomFailure`
+ * and `roomStaffRatio`, for the same `as const` reason: the table's union type
+ * only carries `elective` on entries that declare it, so bare property access
+ * does not compile. THE test for "which stream does this patient belong to".
+ */
+export function conditionElective(id: ConditionId): boolean {
+  return (CONDITION_DEFS[id] as ConditionDef).elective === true;
+}
+
+export const ELECTIVE_CONDITION_IDS = CONDITION_IDS.filter(
+  (id): id is ElectiveConditionId => conditionElective(id),
+);
+/** The emergency mix. `rollCondition` iterates THIS, not `CONDITION_IDS` —
+ *  which also stops its float-residue fallback returning an elective. */
+export const EMERGENCY_CONDITION_IDS = CONDITION_IDS.filter(
+  (id): id is EmergencyConditionId => !conditionElective(id),
+);

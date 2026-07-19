@@ -1,6 +1,6 @@
 import { GAME_MINUTES_PER_HOUR, gameMinutesToTicks, ticksToGameMinutes } from '../clock';
 import { BALANCE } from '../data/balance';
-import { CONDITION_DEFS } from '../data/conditions';
+import { CONDITION_DEFS, conditionElective } from '../data/conditions';
 import { ROLE_DEFS, type RoleId } from '../data/roles';
 import { ROOM_DEFS, roomRetired, type RoomType } from '../data/rooms';
 import type { Room } from '../entities/room';
@@ -365,7 +365,22 @@ function processCheckIn(world: World): void {
       front.stage.ticksRemaining -= 1;
       if (front.stage.ticksRemaining <= 0) {
         world.leaveQueue(front);
-        world.setPatientStage(front, { kind: 'waitingTriage' });
+        // ELECTIVE referrals skip triage — they arrive pre-triaged, so check-in
+        // hands them straight to the treatment queue (OUTPATIENT_IMPL_PLAN
+        // §3.4). Derived from the CONDITION, not from patient state: there is
+        // no `Patient.referral` field and therefore no save change.
+        world.setPatientStage(
+          front,
+          conditionElective(front.condition) ? { kind: 'waiting' } : { kind: 'waitingTriage' },
+        );
+        // Reset for BOTH streams, and for the elective one this is
+        // load-bearing (code review MAJOR 5). `effectivePriority` is
+        // `acuity - aging x hoursWaited`, and an emergency's clock restarts at
+        // `completeTriage`. An elective has no triage step to restart it, so
+        // without this line its wait would age from CHECK-IN: at 8 game-hours
+        // a referral prices at 5 - 4 = 1.0 and OUTRANKS a freshly-triaged
+        // stroke — inside its own ~8.3-hour patience budget. Both streams must
+        // age from the same origin.
         front.waitingSince = world.clock.tick;
         world.assignWaitingSpot(front);
       }
@@ -827,8 +842,17 @@ function promoteGatheredReservations(world: World): void {
       // FIRST treatment goes active — triage doesn't count as treatment.
       if (patient.firstTreatedAtTick === null) {
         patient.firstTreatedAtTick = world.clock.tick;
-        world.today.waitSumTicks += world.clock.tick - patient.arrivedAtTick;
-        world.today.waitCount += 1;
+        // ELECTIVE referrals are excluded from the wait AVERAGE
+        // (OUTPATIENT_IMPL_PLAN §2.5). They skip triage, so they post
+        // structurally shorter door-to-treatment times and would deflate the
+        // mean — cheapening the day-close wait bonus for a reason that has
+        // nothing to do with how fast the hospital actually sees emergencies.
+        // `firstTreatedAtTick` itself is still stamped: it is per-patient
+        // provenance, not a hospital metric.
+        if (!conditionElective(patient.condition)) {
+          world.today.waitSumTicks += world.clock.tick - patient.arrivedAtTick;
+          world.today.waitCount += 1;
+        }
       }
       const step = CONDITION_DEFS[patient.condition].steps[reservation.stepIndex]!;
       // ED epic Stage B1 — the attention penalty. A ratio staffer split across

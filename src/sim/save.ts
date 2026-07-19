@@ -28,7 +28,7 @@ import { World, type Mess, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 10;
+export const SAVE_VERSION = 11;
 
 /**
  * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
@@ -119,6 +119,21 @@ export const SAVE_VERSION = 10;
  * idle her, walk her out and silently strand the rest of her panel. Silent
  * corruption, where a version refusal is clean. The v10 border additionally
  * closes the one-directional duty↔reservation gap (see `loadWorld`).
+ *
+ * v10 → v11 (outpatient stream, OUTPATIENT_IMPL_PLAN §5): adds NO field in
+ * either direction — the elective stream is derived from a `ConditionDef`
+ * data flag, so `SavedPatient`, `writePatient` and `readPatient` are
+ * untouched and `loadWorld` needs no migration beyond the stamp.
+ *
+ * The bump is owed entirely to the OTHER direction, and to new CONTENT rather
+ * than new state: two new condition ids (`mriScan`, `nucMedScan`). A save
+ * carrying one, opened by an older DEPLOYED build (Vercel auto-deploys; a
+ * cached tab suffices), dies on `asOneOf(o.condition, CONDITION_IDS)` with a
+ * confusing shape error instead of the clean "newer than this game
+ * understands" refusal. Adding condition ids has bumped the version every
+ * time it has happened — see the v1 → v2 note above, which names conditions
+ * explicitly, and v8 → v9, which states the same rule for roles.
+ *
  * Anything below 1 or above SAVE_VERSION is refused.
  */
 export function isLoadableVersion(version: number): boolean {

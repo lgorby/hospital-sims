@@ -35,7 +35,17 @@ export const LEGAL_STAGE_TRANSITIONS: Record<
 > = {
   atEntrance: ['queuedCheckIn', 'leaving', 'dead'],
   queuedCheckIn: ['checkingIn', 'atEntrance', 'leaving', 'dead'],
-  checkingIn: ['queuedCheckIn', 'waitingTriage', 'atEntrance', 'leaving', 'dead'],
+  // `waiting` added for the ELECTIVE stream (OUTPATIENT_IMPL_PLAN §2.1): an
+  // outpatient referral arrives pre-triaged and genuinely has no triage step,
+  // so check-in hands it straight to the treatment queue.
+  //
+  // This is a DELIBERATE widening of a guard that exists to catch the audit-#1
+  // strand-bug class, and it is safe only because of the paired semantic
+  // invariant in `setPatientStage`: `waiting` still requires `acuity !== null`.
+  // A patient reaching here without an acuity trips that check from the other
+  // side, so the shortcut cannot be used to smuggle an untriaged emergency
+  // into the treatment queue — which is precisely what the table is guarding.
+  checkingIn: ['queuedCheckIn', 'waitingTriage', 'waiting', 'atEntrance', 'leaving', 'dead'],
   waitingTriage: ['reserved', 'leaving', 'dead'],
   waiting: ['reserved', 'leaving', 'dead'],
   reserved: ['waitingTriage', 'waiting', 'leaving', 'dead'],

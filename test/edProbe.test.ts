@@ -454,5 +454,34 @@ describeProbe('ED Stage B1 probe (ED_IMPL_PLAN §6b)', () => {
         table(`§5b GUARD OFF · ${layoutName}`, seeds.map((s) => run(s, 5, build)));
       });
     }
+
+    // OUTPATIENT_IMPL_PLAN §6 / §8 risk 2 — DOES HIRING ANSWER THE PRESSURE?
+    //
+    // The elective stream drives radTech utilisation 24% -> 56%, and the
+    // fixed-roster arms above show the cost of IGNORING that: emergency
+    // discharges down, deaths and walkouts up, surgeries down. But those arms
+    // hold STAFF constant, so they measure a player who does nothing.
+    //
+    // The design review's position is that this pressure IS the feature —
+    // DEPARTMENTS_PLAN §4.3's "never exercised" movable bottleneck finally
+    // being exercised — and that the remedy is a third radiographer. That is a
+    // testable claim, not a reassurance, so this arm tests it. If a third tech
+    // restores the ED, the stream is a real decision (hire, or suffer). If it
+    // does not, the arrival rate is simply too high and must come down.
+    const withThirdRadTech = [...STAFF, { role: 'radTech' as const, count: 1 }];
+    const savedStaff = STAFF.slice();
+    STAFF.length = 0;
+    STAFF.push(...withThirdRadTech);
+    try {
+      for (const [layoutName, build] of [
+        ['REFERENCE', REFERENCE_BUILD],
+        ['COMPACT', COMPACT_BUILD],
+      ] as const) {
+        table(`OUTPATIENT + 3rd radTech · ${layoutName}`, seeds.map((s) => run(s, 5, build)));
+      }
+    } finally {
+      STAFF.length = 0;
+      STAFF.push(...savedStaff);
+    }
   }, 600_000);
 });

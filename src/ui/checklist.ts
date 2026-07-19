@@ -79,7 +79,17 @@ export class Checklist {
       nurse: roles.has('nurse'),
       doctor: roles.has('doctor'),
       // Same signal as the live feeBilled path: any billed treatment counts.
-      treat: this.world.lifetimeTreated > 0,
+      //
+      // ...with one guard the live path gets for free. `lifetimeTreated`
+      // counts ELECTIVE referrals too (OUTPATIENT_IMPL_PLAN §3.8), which the
+      // live path excludes via `source: 'outpatient'` but this one cannot see.
+      // Requiring an exam room restores the mirror for every reachable case:
+      // referrals are room-gated behind an $18,000 scanner, so a save with a
+      // treated referral and no $3,000 exam room is not a state the onboarding
+      // sequence can produce. Deliberately a zero-state guard — a second
+      // lifetime counter would be permanent World + save state for a
+      // tutorial-only cosmetic.
+      treat: this.world.lifetimeTreated > 0 && this.world.roomsOfType('exam').length > 0,
     };
     for (const [key, done] of Object.entries(seeded)) {
       if (done) this.items.get(key)!.done = true;

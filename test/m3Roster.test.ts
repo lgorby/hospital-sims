@@ -3,7 +3,9 @@ import { CommandQueue } from '../src/commands';
 import { EventBus } from '../src/events';
 import { TICKS_PER_DAY } from '../src/sim/clock';
 import { BALANCE } from '../src/sim/data/balance';
-import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from '../src/sim/data/conditions';
+import { CONDITION_DEFS, CONDITION_IDS, type ConditionId,
+  ELECTIVE_CONDITION_IDS, EMERGENCY_CONDITION_IDS,
+} from '../src/sim/data/conditions';
 import type { Patient } from '../src/sim/entities/patient';
 import type { Reservation } from '../src/sim/entities/staff';
 import { conditionSpawnWeights } from '../src/sim/formulas';
@@ -71,21 +73,41 @@ describe('condition spawn mix (GDD §3 + §7 case-mix shift)', () => {
     expect(atZero.flu).toBe(base.flu);
   });
 
-  it('rollCondition realizes the weighted mix (seeded, all conditions appear)', () => {
+  /**
+   * AMENDED for the outpatient stream (OUTPATIENT_IMPL_PLAN §2.2) — the SECOND
+   * roster-reachability guard, which the plan's first draft missed entirely.
+   * Scoped to the EMERGENCY roster: elective referrals are not part of the
+   * walk-in mix and carry `conditionWeights: 0` by compile requirement, so
+   * asserting a share for them here would assert 0 > 0.
+   */
+  it('rollCondition realizes the weighted mix (seeded, all EMERGENCY conditions appear)', () => {
     const t = setup(123);
     const draws = 6000;
-    const counts = Object.fromEntries(CONDITION_IDS.map((id) => [id, 0])) as Record<
+    const counts = Object.fromEntries(EMERGENCY_CONDITION_IDS.map((id) => [id, 0])) as Record<
       ConditionId,
       number
     >;
     for (let i = 0; i < draws; i++) counts[rollCondition(t.world)]++;
 
     const weights = conditionSpawnWeights(t.world.reputation);
-    const total = CONDITION_IDS.reduce((sum, id) => sum + weights[id], 0);
-    for (const id of CONDITION_IDS) {
+    const total = EMERGENCY_CONDITION_IDS.reduce((sum, id) => sum + weights[id], 0);
+    for (const id of EMERGENCY_CONDITION_IDS) {
       expect(counts[id]).toBeGreaterThan(0);
       const share = counts[id]! / draws;
       expect(Math.abs(share - weights[id] / total)).toBeLessThan(0.05);
+    }
+  });
+
+  it('elective conditions carry ZERO emergency weight and never roll as walk-ins', () => {
+    const t = setup(123);
+    const weights = conditionSpawnWeights(t.world.reputation);
+    // Zero here is a COMPILE requirement, not a balance choice (formulas.ts
+    // indexes by ConditionId) — and it is also what keeps rollCondition's
+    // running total unchanged, so the emergency stream stays bit-identical
+    // until the elective Bernoulli first fires (OUTPATIENT_IMPL_PLAN §4).
+    for (const id of ELECTIVE_CONDITION_IDS) expect(weights[id]).toBe(0);
+    for (let i = 0; i < 2000; i++) {
+      expect(ELECTIVE_CONDITION_IDS).not.toContain(rollCondition(t.world));
     }
   });
 });

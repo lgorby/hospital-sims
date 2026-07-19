@@ -481,3 +481,83 @@ Recorded because the errors are instructive.
 the second reachability guard in `m3Roster.test.ts`; the derived
 `ElectiveConditionId` type without which nothing compiles; the first-run
 death spiral; the bare-build measurement blind spot.
+
+---
+
+## 10. MEASURED (2026-07-19) — and the proposed rate was rejected
+
+Both the plan (§3.2) and the design review proposed `perGameHour: 1.0`. The
+probe rejected it on **both** layout arms, against §6's own falsification
+conditions. Recorded because the reasoning that produced 1.0 was wrong in a
+specific, instructive way.
+
+### 10.1 The prize is real
+
+| room | baseline | rate 1.0 | **shipped (0.5)** |
+|---|---|---|---|
+| MRI | 3.9% | 23.1% | **16.8%** (4.3x) |
+| Nuclear Medicine | 3.3% | 17.0% | **13.5%** (4.1x) |
+| MRI visits/day | 1.2 | 7.0 | **5.2** |
+| **radTech** | 24.2% | 56.0% | **47.5%** |
+
+`capacity:mri` now fires 7.4% of ticks — the room genuinely gets busy, which
+is the "is a second suite a real decision?" signal `DEPARTMENTS_PLAN` §4.3
+found missing. Note these are measured on the probe's REFERENCE build, which
+owns BOTH elective modalities, so the stream splits 10:6. **A single-scanner
+player receives the whole stream**, which is the room-gating design (§2).
+
+### 10.2 Why 1.0 was rejected
+
+| REFERENCE arm | baseline | rate 1.0 | rate 0.5 |
+|---|---|---|---|
+| died | 3.2 | **4.2** | 3.4 |
+| walkouts | 39.0 | **45.0** | 40.4 |
+| surgeries | 10.4 | **8.2** | 9.2 |
+
+At 1.0 the stream drove radTech to 56% and ED imaging queued behind elective
+scans. Total `disch` rose to 161.8, but ~55 of that is elective discharges, so
+**emergency discharges FELL about 12%.** An aggregate throughput column would
+have read this as success — which is exactly why §6 demanded stream-split
+outcomes.
+
+### 10.3 The review's remedy was FALSIFIED
+
+The design review's position was that radTech saturation *is* the feature —
+`DEPARTMENTS_PLAN` §4.3's "never exercised" movable bottleneck finally being
+exercised — and that the player's answer is a third radiographer.
+
+**Measured, it is not.** A third radTech at rate 1.0:
+
+| | 2 techs | 3 techs |
+|---|---|---|
+| died (REFERENCE) | 4.2 | **4.8** |
+| died (COMPACT) | 2.0 | **2.6** |
+| surgeries (REFERENCE) | 8.2 | 9.8 |
+
+Surgeries partially recover, but **deaths rise on both arms** — hiring does not
+buy back the ED. The bottleneck is not purely staff: elective scans occupy the
+single-capacity SCANNER for 40–45 minutes, and a third tech cannot unblock a
+room that is physically full. Do not re-derive "just hire another tech".
+
+### 10.4 The residual cost, recorded not buried
+
+At 0.5, surgeries sit at 9.2 against a 10.4 baseline — **about −12%**, on 5
+seeds. Deaths (3.4 vs 3.2) and walkouts (40.4 vs 39.0) are within noise of
+baseline. The surgery delta is the same magnitude the ED §5b work treated as
+real, so it should be treated as real here too: the outpatient stream costs
+roughly one surgery per five days on the reference build.
+
+That is the trade the milestone makes — imaging goes from ornamental to
+contended, and the OR pays a little for it.
+
+### 10.5 What this does NOT yet settle
+
+- **Does it unblock Departments Stage 2a?** MRI at 16.8% of a 24-hour day is
+  ~40% of the clinic window, and a single-scanner player sees the undivided
+  stream. That is a far better case than ρ=0.039, but the Stage 2a contract
+  must re-run its own §6 arms before the block is lifted. **Not lifted here.**
+- **The §3.7 legibility surfaces are NOT built** (daily-report referrals line,
+  inspect `Referral` tag). The `feeBilled` channel exists and is tested; the
+  two UI consumers are outstanding, and §10.2 shows exactly why they matter —
+  a player cannot currently see which stream their money or their walkouts
+  came from.

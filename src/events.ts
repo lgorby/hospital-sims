@@ -79,7 +79,11 @@ export interface EventMap {
   patientThought: { patientId: number; name: string; text: string; col: number; row: number };
   /** `source` discriminates treatment billing from amenity revenue (Stage-1
    *  live-drive MAJOR 1: the checklist's 'treat' must ignore vending fees). */
-  feeBilled: { amount: number; label: string; source: 'treatment' | 'vending' };
+  /** `source` discriminates the revenue CHANNEL. 'outpatient' is a scheduled
+   *  elective referral (OUTPATIENT_IMPL_PLAN §3.7) — it must not complete the
+   *  first-run checklist's "Treat your first patient", and it is what lets the
+   *  daily report separate referral income from emergency income. */
+  feeBilled: { amount: number; label: string; source: 'treatment' | 'vending' | 'outpatient' };
   staffHired: { staffId: number };
   staffFired: { staffId: number };
   /** Non-terminal staff change (e.g. fire deferred while mid-job) — UI re-renders. */

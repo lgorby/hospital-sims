@@ -71,6 +71,53 @@ export const BALANCE = {
       headInjury: 5,
       appendicitis: 5,
       stroke: 4,
+      // ELECTIVE conditions are ZERO here, and that is a COMPILE requirement,
+      // not a balance choice: `formulas.conditionSpawnWeights` indexes this
+      // table by `ConditionId`, so a missing key does not typecheck. Zero also
+      // keeps `rollCondition`'s running total unchanged, which is what makes
+      // the emergency stream bit-identical until the elective Bernoulli first
+      // fires (OUTPATIENT_IMPL_PLAN §4). They spawn from `outpatient.weights`.
+      mriScan: 0,
+      nucMedScan: 0,
+    },
+    /**
+     * The scheduled outpatient stream (OUTPATIENT_IMPL_PLAN §3.2). Deliberately
+     * NOT a share of `conditionWeights`: referrals arrive on clinic hours
+     * rather than the emergency time-of-day curve, and the two volumes must be
+     * tunable — and measurable — apart.
+     *
+     * Also deliberately NOT scaled by `reputationArrivalMultiplier`: referrals
+     * are contracted work, not walk-in demand. Recorded as a choice (§2.5).
+     */
+    outpatient: {
+      /**
+       * Referrals per game-hour inside clinic hours, BEFORE room-gating.
+       *
+       * MEASURED, and 1.0 was rejected (OUTPATIENT_IMPL_PLAN §10). Both the
+       * plan and the design review proposed 1.0; the probe tripped the plan's
+       * own falsification condition on BOTH layout arms — deaths 3.2 -> 4.2,
+       * walkouts 39.0 -> 45.0, surgeries 10.4 -> 8.2, i.e. the stream was
+       * starving the ED through radTech (24% -> 56%).
+       *
+       * A THIRD radiographer did not repair it (deaths rose further, to 4.8),
+       * which falsifies the review's "the pressure is the point, hiring is the
+       * answer" reasoning — recorded so nobody re-derives it.
+       *
+       * At 0.5 deaths (3.4) and walkouts (40.4) sit at baseline while MRI
+       * still runs 4.3x its old utilisation (3.9% -> 16.8%) and nucMed 4.1x.
+       * Surgeries at 9.2 vs 10.4 is the honest residual cost.
+       */
+      perGameHour: 0.5,
+      openHour: 8,
+      closeHour: 18,
+      /**
+       * Weights over elective conditions, renormalised over the modalities the
+       * player has actually BUILT (§2 room-gating). Ungated and split four
+       * ways this reached only ~12.5% MRI utilisation — clearing the plan's own
+       * 8% failure line while still missing saturation by an order of
+       * magnitude, so Departments Stage 2a would have stayed blocked.
+       */
+      weights: { mriScan: 10, nucMedScan: 6 },
     },
     /** Conditions with acuityMin ≤ this are "referral-grade" and shift with reputation (GDD §7). */
     referralAcuityMax: 2,
@@ -137,6 +184,20 @@ export const BALANCE = {
     dischargeGainMax: 8,
     deathLoss: 25,
     amaLoss: 8,
+    /**
+     * An elective no-show is not an abandoned emergency
+     * (OUTPATIENT_IMPL_PLAN §3.6). Flat `amaLoss` against the +2 an elective
+     * discharge earns (`dischargeReputationGain(5)`) puts break-even at a 20%
+     * walkout rate — and the measured baseline is already ~25%, with electives
+     * sorting LAST. The stream would have been reputation-NEGATIVE in
+     * expectation, silently, in a channel with no UI.
+     *
+     * Symmetric with that +2, so the stream is reputation-neutral at any
+     * service level. Deliberately a NEW local number rather than acuity-scaling
+     * `amaLoss`: that is shared emergency behaviour and must not ride in under
+     * an outpatient milestone (design review MAJOR 4).
+     */
+    electiveNoShowLoss: 2,
     dayCloseWaitBonus: 10,
     /** M4 balance pass: 120 was unreachable — even an overstaffed 6-room build
      *  bottoms out ~230m door-to-first-treatment (check-in + triage + walking

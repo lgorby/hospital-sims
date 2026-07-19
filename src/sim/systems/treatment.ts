@@ -1,5 +1,5 @@
 import { BALANCE } from '../data/balance';
-import { CONDITION_DEFS } from '../data/conditions';
+import { CONDITION_DEFS, conditionElective } from '../data/conditions';
 import type { Reservation } from '../entities/staff';
 import { successChance } from '../formulas';
 import type { World } from '../world';
@@ -65,7 +65,13 @@ export function resolveTreatmentOutcome(
     // The ONE per-room attribution site (FINANCE_PLAN §4.1): the reservation
     // names the room that just earned the fee, in the same call that moves the
     // cash. `dischargePatient` does NOT re-bill — it forwards `patient.billed`.
-    world.billFee(step.fee, `${def.label} — ${step.label}`, { roomId: reservation.roomId });
+    // Channel-tagged so the checklist and the daily report can tell a
+    // scheduled referral from an emergency (OUTPATIENT_IMPL_PLAN §3.7).
+    // Derived from the CONDITION — no patient field, no save change.
+    world.billFee(step.fee, `${def.label} — ${step.label}`, {
+      roomId: reservation.roomId,
+      source: conditionElective(patient.condition) ? 'outpatient' : 'treatment',
+    });
     patient.stepIndex += 1;
     if (patient.stepIndex >= def.steps.length) {
       world.dischargePatient(patient, patient.billed); // releases the reservation too

@@ -1,6 +1,11 @@
 import { gameMinutesToTicks } from './clock';
 import { BALANCE } from './data/balance';
-import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditions';
+import {
+  CONDITION_DEFS,
+  CONDITION_IDS,
+  conditionElective,
+  type ConditionId,
+} from './data/conditions';
 import { ROLE_DEFS, type RoleId } from './data/roles';
 import { ROOM_DEFS, roomRetired, type RoomType } from './data/rooms';
 import { staffRatioFor } from './formulas';
@@ -129,7 +134,15 @@ export function computeBlockedNeeds(world: World): BlockedNeed[] {
 
     // Triage is everyone's next stop until they've been triaged: urgent once
     // someone is already waitingTriage, upcoming while still checking in.
-    if (CHECK_IN_STAGES.has(stage) || stage === 'waitingTriage') {
+    //
+    // ...everyone EXCEPT an elective referral (OUTPATIENT_IMPL_PLAN §2.3),
+    // which arrives pre-triaged and goes checkingIn -> waiting. Without this
+    // gate every checking-in outpatient would demand a Triage Bay and a Nurse
+    // it will never use. Scoped to the HINT deliberately: `blockedDemand`
+    // books triage demand only for `waitingTriage`, which an elective never
+    // enters, so the anti-capture guard was never at risk here — an earlier
+    // draft of the plan claimed otherwise and was wrong.
+    if (!conditionElective(patient.condition) && (CHECK_IN_STAGES.has(stage) || stage === 'waitingTriage')) {
       const urgent = stage === 'waitingTriage';
       if (!builtRooms.has('triage')) add(patient.id, 'room', 'triage', { urgent, triage: true });
       if (!hiredRoles.has('nurse')) add(patient.id, 'role', 'nurse', { urgent, triage: true });

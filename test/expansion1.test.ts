@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { CommandQueue } from '../src/commands';
 import { EventBus } from '../src/events';
 import { TICKS_PER_DAY } from '../src/sim/clock';
-import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from '../src/sim/data/conditions';
+import { CONDITION_DEFS, CONDITION_IDS, type ConditionId,
+  ELECTIVE_CONDITION_IDS, EMERGENCY_CONDITION_IDS,
+} from '../src/sim/data/conditions';
 import { PROP_STYLE, ROOM_DEFS, ROOM_TYPES, type RoomType } from '../src/sim/data/rooms';
-import { rollCondition } from '../src/sim/systems/spawn';
+import { rollCondition, rollElectiveCondition } from '../src/sim/systems/spawn';
 import { propTargetCount } from '../src/sim/formulas';
 import { rectTiles } from '../src/sim/types';
 import { World } from '../src/sim/world';
@@ -223,13 +225,49 @@ describe('dual-staff OR (GDD §12: the second assignment-system stress test)', (
 });
 
 describe('expansion spawn mix (GDD §12 weights)', () => {
-  it('all 14 conditions can spawn under the live weights (seeded direct rolls)', () => {
+  /**
+   * AMENDED for the outpatient stream (OUTPATIENT_IMPL_PLAN §2.2). The guard's
+   * intent — no condition may be defined yet unreachable — is unchanged; what
+   * changed is that there are now TWO streams, so "reachable from
+   * `rollCondition`" is too strong a phrasing of it.
+   *
+   * Amended to the true invariant (every condition reachable from ITS OWN
+   * stream) plus the INVERSE guard (no condition reachable from both).
+   * Deliberately NOT weakened to "reachable from either", which would let an
+   * elective leak into the walk-in mix undetected — the Departments Stage 1
+   * precedent, where filing `resp` under the exempt list "would have
+   * mislabelled it and permanently disarmed the guard."
+   */
+  it('every condition spawns from its OWN stream, and from only that stream', () => {
     const t = setup(2026);
-    const seen = new Set<ConditionId>();
+    // An MRI + nucMed suite, so the elective roll's room-gate is open. Built
+    // free: this is a roster probe, not an economy one.
+    t.world.buildRoom('mri', { col: 4, row: 4, cols: 4, rows: 4 }, { col: 6, row: 8 }, true);
+    t.world.buildRoom('nucMed', { col: 10, row: 4, cols: 3, rows: 4 }, { col: 11, row: 8 }, true);
+
+    const emergency = new Set<ConditionId>();
+    const elective = new Set<ConditionId>();
     const DRAWS = 5000; // smallest weight is stroke at 4/148 ≈ 2.7% — ample margin
-    for (let i = 0; i < DRAWS && seen.size < CONDITION_IDS.length; i++) {
-      seen.add(rollCondition(t.world));
+    for (let i = 0; i < DRAWS; i++) {
+      emergency.add(rollCondition(t.world));
+      const id = rollElectiveCondition(t.world);
+      if (id !== null) elective.add(id);
     }
-    expect([...seen].sort()).toEqual([...CONDITION_IDS].sort());
+
+    expect([...emergency].sort()).toEqual([...EMERGENCY_CONDITION_IDS].sort());
+    expect([...elective].sort()).toEqual([...ELECTIVE_CONDITION_IDS].sort());
+    // The inverse guard: the two streams partition the roster.
+    for (const id of emergency) expect(elective.has(id)).toBe(false);
+    expect(emergency.size + elective.size).toBe(CONDITION_IDS.length);
+  });
+
+  it('the elective roll is GATED on the modality being built', () => {
+    const t = setup(2026); // setupNewGame builds reception + waiting only
+    expect(rollElectiveCondition(t.world)).toBeNull();
+
+    t.world.buildRoom('mri', { col: 4, row: 4, cols: 4, rows: 4 }, { col: 6, row: 8 }, true);
+    // Only MRI exists, so the WHOLE elective stream routes to it — which is
+    // what makes a single scanner saturate (OUTPATIENT_IMPL_PLAN §2).
+    for (let i = 0; i < 200; i++) expect(rollElectiveCondition(t.world)).toBe('mriScan');
   });
 });

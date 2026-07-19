@@ -12,7 +12,7 @@ import { GameClock, gameMinutesToTicks, TICKS_PER_DAY, ticksToGameMinutes } from
 import { emptyDayTally, type DayReport, type DayTally } from './dailyStats';
 import { AMENITY_DEFS, type Amenity, type AmenityId } from './data/amenities';
 import { BALANCE } from './data/balance';
-import { CONDITION_DEFS, type ConditionId } from './data/conditions';
+import { CONDITION_DEFS, conditionElective, type ConditionId } from './data/conditions';
 import { emptyCashTotals, type CashTallyKey, type CashTotals } from './data/finance';
 import { generateAge, generateName, generateStaffAge } from './data/names';
 import { ROLE_DEFS, ROLE_IDS, type RoleId } from './data/roles';
@@ -1624,13 +1624,23 @@ export class World implements PathGrid {
     this.assignWaitingSpot(patient);
   }
 
-  spawnPatient(condition: ConditionId): Patient {
+  /**
+   * `opts.acuity` arrives PRE-TRIAGED (OUTPATIENT_IMPL_PLAN §3.3) — the
+   * elective stream's whole mechanism. It must be set at construction rather
+   * than patched afterwards, because `setPatientStage` enforces the semantic
+   * invariant that `waiting` requires `acuity !== null`, and a referral has no
+   * triage step to set it later. Omitted = emergency, triage rolls it.
+   *
+   * NOTE the draw order is unchanged either way: `acuity` is not rng-rolled
+   * here, so an elective spawn consumes exactly the same draws as a walk-in.
+   */
+  spawnPatient(condition: ConditionId, opts: { acuity?: number } = {}): Patient {
     const patient: Patient = {
       id: this.takeId(),
       name: generateName(this.rng),
       age: generateAge(this.rng),
       condition,
-      acuity: null,
+      acuity: opts.acuity ?? null,
       health: BALANCE.stats.vitalsMax,
       patience: BALANCE.stats.vitalsMax,
       wayfinding: this.rng.intInRange(BALANCE.stats.min, BALANCE.stats.max),
@@ -1847,7 +1857,7 @@ export class World implements PathGrid {
   billFee(
     amount: number,
     label: string,
-    opts: { source?: 'treatment' | 'vending'; roomId?: number } = {},
+    opts: { source?: 'treatment' | 'vending' | 'outpatient'; roomId?: number } = {},
   ): void {
     const source = opts.source ?? 'treatment';
     this.cash += amount;
@@ -2006,7 +2016,16 @@ export class World implements PathGrid {
     this.setPatientStage(patient, { kind: 'leaving', reason: 'ama' });
     patient.lost = null; // exits clear lostness (M3-gate ruling)
     this.today.leftAma += 1;
-    this.applyReputation(-BALANCE.reputation.amaLoss);
+    // An elective no-show is not an abandoned emergency
+    // (OUTPATIENT_IMPL_PLAN §3.6). Flat `amaLoss` against the +2 an elective
+    // discharge earns puts break-even at a 20% walkout rate, and the measured
+    // baseline is ~25% with electives sorting LAST — so the stream would have
+    // been reputation-NEGATIVE in expectation, silently.
+    this.applyReputation(
+      -(conditionElective(patient.condition)
+        ? BALANCE.reputation.electiveNoShowLoss
+        : BALANCE.reputation.amaLoss),
+    );
     this.setWalkerTarget(patient, BALANCE.map.entrance);
     this.events.emit('patientLeftAma', {
       patientId: patient.id,
