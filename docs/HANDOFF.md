@@ -370,12 +370,23 @@ Both were hardened by independent adversarial reviews before any code was writte
 
 ### START HERE (session handoff, 2026-07-19)
 
-**Everything is committed; the working tree is clean.** But **8 commits are
-UNPUSHED**, including all of today's. `git push` to `master` **auto-deploys to
-production** (https://hospital-sims.vercel.app) — so pushing is a release, not
-a save. Confirm with the owner before pushing. Note SAVE_VERSION is now **10**:
-once deployed, saves written by the new build cannot be opened by the old one
-(that is the point of the bump); existing v9 saves load fine.
+**Everything is committed AND PUSHED** (owner-authorized 2026-07-19, through
+`dbab78d`); the working tree is clean. Pushing to `master` auto-deploys, so
+this session's work is **LIVE** at https://hospital-sims.vercel.app. Treat any
+future push the same way — it is a release decision for the owner, not routine
+hygiene.
+
+**SAVE_VERSION 10 is now deployed, which makes it one-way.** Saves written by
+the live build cannot be opened by the previous one — that is the bump doing
+its job, but a rollback alone no longer undoes it: anyone who played
+post-deploy would be unable to load their save. Existing v9 saves load fine.
+
+**Live-deploy watch items** (neither is a known defect; both are consequences
+worth checking against real play):
+- Existing saves should **add a third exam room**. Departments Stage 1 measured
+  real room-capture for players who do not rebuild (doctor-blocked-in-exam
+  27t → 564t). The capacity hints say so, but only once the player is blocked.
+- The Stage-1 **capex risk** (§3.8 point 3) is unmeasured, not proven safe.
 
 **Shipped this session:** ED epic Stage B1 (`5ad3e2b`), the single-capacity
 hint fix (`41ee800`), the Departments plan (`cb580a1`), the pre-change harness
