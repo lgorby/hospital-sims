@@ -6,9 +6,15 @@ const MAX_ENTRIES = 100;
 
 /**
  * The thought log (GDD §9) — the RCT guest-thoughts analog. A pure projection
- * of `patientThought` events; entries are clickable jumps to where the
- * thought happened. Toggled by a 💭 button, coordinated by BottomBarDropdowns
- * (§9 mutual-exclusion ruling).
+ * of `patientThought` events. Toggled by a 💭 button, coordinated by
+ * BottomBarDropdowns (§9 mutual-exclusion ruling).
+ *
+ * Entries follow the PERSON, not the place (owner ask 2026-07-19: "pulse the
+ * patient so the user can follow their path"). The event's `col,row` is where
+ * the thought HAPPENED — by the time a player reads the feed and clicks, the
+ * patient has usually walked away from it, so jumping to those coordinates
+ * lands on an empty tile and the pulse throbs over nobody. The id is what the
+ * player means, and the event has carried it all along.
  */
 export class ThoughtLog {
   private panel!: HTMLElement;
@@ -16,7 +22,7 @@ export class ThoughtLog {
 
   constructor(
     private events: EventBus,
-    private onJump: (col: number, row: number) => void,
+    private onFollow: (patientId: number, col: number, row: number) => void,
     private bottomBar: BottomBarDropdowns,
   ) {}
 
@@ -38,11 +44,11 @@ export class ThoughtLog {
     toggleHost.appendChild(toggle);
     this.bottomBar.register(toggle, this.panel);
 
-    this.events.on('patientThought', ({ name, text, col, row }) => {
+    this.events.on('patientThought', ({ patientId, name, text, col, row }) => {
       const entry = document.createElement('div');
       entry.className = 'thought';
       entry.setAttribute('data-ui', '');
-      entry.title = 'Click to jump there';
+      entry.title = `Click to follow ${name}`;
       // textContent, not innerHTML — names/thoughts are data, never markup.
       const who = document.createElement('span');
       who.className = 'who';
@@ -50,7 +56,10 @@ export class ThoughtLog {
       const quote = document.createElement('em');
       quote.textContent = `“${text}”`;
       entry.append(who, ' ', quote);
-      entry.addEventListener('click', () => this.onJump(col, row));
+      // `col,row` is the FALLBACK only — where the thought happened, used when
+      // the patient is already gone (discharged, died, walked out) and there
+      // is nobody left to follow.
+      entry.addEventListener('click', () => this.onFollow(patientId, col, row));
       this.list.prepend(entry);
       while (this.list.children.length > MAX_ENTRIES) this.list.lastChild?.remove();
     });

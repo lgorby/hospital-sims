@@ -59,6 +59,16 @@ const PAN_SPEED_PX_PER_SEC = 700; // dt-scaled so pan speed is refresh-rate inde
  *  sees it. Amber = the ghost-valid "look here" color already in the language. */
 const PULSE_DURATION_MS = 1600;
 const PULSE_THROBS = 3;
+/** A person pulse runs longer than a place pulse — the player is being asked
+ *  to FOLLOW a moving target, not glance at a fixed one. Same throb cadence
+ *  (2x duration, 2x throbs) so it reads as the same affordance. */
+const PULSE_PATIENT_DURATION_MS = 3200;
+const PULSE_PATIENT_THROBS = 6;
+/** The selection ring is deliberately dimmer and thinner than the pulse — it
+ *  has to be readable for minutes without becoming visual noise in a crowd. */
+const SELECTION_COLOR = 0xffe066;
+const SELECTION_WIDTH = 1.5;
+const SELECTION_ALPHA = 0.55;
 /** The throb never fully blacks out mid-pulse (review NIT: a bare cosine hit
  *  alpha 0 three times per pulse — a quarter-second after the click the glow
  *  momentarily vanished). */
@@ -174,7 +184,31 @@ export class WorldRenderer {
   private messSprites = new Map<string, Sprite>();
   /** Jump-target pulse: single slot (a new jump replaces the old glow). */
   private pulseGfx = new Graphics();
-  private pulseTarget: { rect: Rect; startedAt: number } | null = null;
+  /**
+   * A quiet, non-throbbing ring under the SELECTED patient, redrawn every
+   * frame at their live sprite position.
+   *
+   * The pulse alone does not satisfy "follow their path" (owner ask
+   * 2026-07-19): it fades after PULSE_PATIENT_DURATION_MS, leaving the player
+   * with an inspect card naming someone they can no longer pick out of a
+   * crowd. Live-drive confirmed exactly that — the card stayed on the patient
+   * while every in-world trace of her was gone. This is the sustained half:
+   * the pulse says "here", this says "still here".
+   */
+  private selectionGfx = new Graphics();
+  /**
+   * Single slot; a new pulse replaces any active one.
+   *
+   * `patient` is NOT a rect captured at click time (owner ask 2026-07-19: "so
+   * the user can follow their path"). A walking patient leaves a fixed rect
+   * behind within a second or two, which is what the tile pulse did — and the
+   * thought-log entry's own `col,row` is where the thought HAPPENED, staler
+   * still. This kind re-reads the walker every frame.
+   */
+  private pulseTarget:
+    | { kind: 'rect'; rect: Rect; startedAt: number }
+    | { kind: 'patient'; patientId: number; startedAt: number }
+    | null = null;
 
   /** Current hovered tile, if in bounds — HUD readout polls this. */
   hoveredTile: TilePoint | null = null;
@@ -206,12 +240,21 @@ export class WorldRenderer {
   /** Pulse a footprint outline at the jump destination (owner ask) —
    *  single slot, a new pulse replaces any active one. */
   pulseRect(rect: Rect): void {
-    this.pulseTarget = { rect: { ...rect }, startedAt: performance.now() };
+    this.pulseTarget = { kind: 'rect', rect: { ...rect }, startedAt: performance.now() };
   }
 
-  /** Tile-sized pulse — toasts/thought-log jumps and amenity rows. */
+  /** Tile-sized pulse — toasts and amenity rows. */
   pulseTile(col: number, row: number): void {
     this.pulseRect({ col, row, cols: 1, rows: 1 });
+  }
+
+  /**
+   * Pulse a PERSON, tracking them as they walk (owner ask 2026-07-19).
+   * Ends early and silently if they are discharged, die or leave mid-pulse —
+   * a terminal event during a 2.5s pulse is ordinary, not exceptional.
+   */
+  pulsePatient(patientId: number): void {
+    this.pulseTarget = { kind: 'patient', patientId, startedAt: performance.now() };
   }
 
   async init(mount: HTMLElement): Promise<void> {
@@ -234,7 +277,13 @@ export class WorldRenderer {
 
     this.highlight = new Sprite(this.textures.highlight);
     this.highlight.visible = false;
-    this.camera.addChild(this.overlay, this.highlight, this.ghost, this.pulseGfx);
+    this.camera.addChild(
+      this.overlay,
+      this.highlight,
+      this.ghost,
+      this.selectionGfx,
+      this.pulseGfx,
+    );
 
     this.centerCamera();
     this.bindInput();
@@ -1178,6 +1227,7 @@ export class WorldRenderer {
     this.updateActors(alpha);
     this.drawGhost();
     this.drawOverlay();
+    this.drawSelectionRing();
     this.drawPulse(now);
   }
 
@@ -1190,32 +1240,86 @@ export class WorldRenderer {
    */
   private drawPulse(now: number): void {
     if (!this.pulseTarget) return;
-    const t = (now - this.pulseTarget.startedAt) / PULSE_DURATION_MS;
+    const patient = this.pulseTarget.kind === 'patient';
+    const duration = patient ? PULSE_PATIENT_DURATION_MS : PULSE_DURATION_MS;
+    const throbs = patient ? PULSE_PATIENT_THROBS : PULSE_THROBS;
+    const t = (now - this.pulseTarget.startedAt) / duration;
     if (t >= 1) {
       this.pulseTarget = null;
       this.pulseGfx.clear();
       return;
     }
-    const { rect } = this.pulseTarget;
-    const wave = 0.5 + 0.5 * Math.cos(2 * Math.PI * PULSE_THROBS * t);
+
+    const points = this.pulsePoints(this.pulseTarget);
+    if (!points) {
+      // The patient was discharged, died or left mid-pulse. End quietly —
+      // over a multi-second follow-pulse that is ordinary, not exceptional.
+      this.pulseTarget = null;
+      this.pulseGfx.clear();
+      return;
+    }
+
+    const wave = 0.5 + 0.5 * Math.cos(2 * Math.PI * throbs * t);
     const throb = PULSE_THROB_FLOOR + (1 - PULSE_THROB_FLOOR) * wave;
     const alpha = (1 - t) * throb;
-    const north = toScreen(rect.col, rect.row);
-    const east = toScreen(rect.col + rect.cols - 1, rect.row);
-    const south = toScreen(rect.col + rect.cols - 1, rect.row + rect.rows - 1);
-    const west = toScreen(rect.col, rect.row + rect.rows - 1);
-    const points = [
-      north.x, north.y,
-      east.x + TILE_W / 2, east.y + TILE_H / 2,
-      south.x, south.y + TILE_H,
-      west.x - TILE_W / 2, west.y + TILE_H / 2,
-    ];
     this.pulseGfx
       .clear()
       .poly(points)
       .stroke({ color: PULSE_COLOR, width: PULSE_GLOW_WIDTH, alpha: alpha * PULSE_GLOW_ALPHA })
       .poly(points)
       .stroke({ color: PULSE_COLOR, width: PULSE_LINE_WIDTH, alpha });
+  }
+
+  /**
+   * The selected patient's standing ring. Cheap by construction: one poly when
+   * a patient is selected, a `clear()` otherwise — the hot-path budget the art
+   * pass guards is untouched (no per-tile work, no texture churn).
+   */
+  private drawSelectionRing(): void {
+    const id = this.selectedPatientId;
+    const sprite = id === null ? undefined : this.patientSprites.get(id);
+    if (!sprite) {
+      // Covers both "nothing selected" and "they were discharged/died/left" —
+      // `selected` is cleared elsewhere on removal, but a stale id must never
+      // leave a ring painted over empty floor.
+      this.selectionGfx.clear();
+      return;
+    }
+    const { x, y } = sprite.position;
+    this.selectionGfx
+      .clear()
+      .poly([x, y - TILE_H / 2, x + TILE_W / 2, y, x, y + TILE_H / 2, x - TILE_W / 2, y])
+      .stroke({ color: SELECTION_COLOR, width: SELECTION_WIDTH, alpha: SELECTION_ALPHA });
+  }
+
+  /** The outline for the active pulse, or null if its subject is gone. */
+  private pulsePoints(target: NonNullable<typeof this.pulseTarget>): number[] | null {
+    if (target.kind === 'patient') {
+      // Read the SPRITE, not the walker: `updateActors` has already placed it
+      // for this frame (draw() order), so the ring cannot drift from the body
+      // it is ringing. Re-deriving the tween here would duplicate
+      // `placeWalker`'s interpolation and the two would disagree on any edit.
+      const sprite = this.patientSprites.get(target.patientId);
+      if (!sprite) return null;
+      const { x, y } = sprite.position;
+      return [
+        x, y - TILE_H / 2,
+        x + TILE_W / 2, y,
+        x, y + TILE_H / 2,
+        x - TILE_W / 2, y,
+      ];
+    }
+    const { rect } = target;
+    const north = toScreen(rect.col, rect.row);
+    const east = toScreen(rect.col + rect.cols - 1, rect.row);
+    const south = toScreen(rect.col + rect.cols - 1, rect.row + rect.rows - 1);
+    const west = toScreen(rect.col, rect.row + rect.rows - 1);
+    return [
+      north.x, north.y,
+      east.x + TILE_W / 2, east.y + TILE_H / 2,
+      south.x, south.y + TILE_H,
+      west.x - TILE_W / 2, west.y + TILE_H / 2,
+    ];
   }
 
   private tintTile(col: number, row: number, color: number, alpha: number): void {

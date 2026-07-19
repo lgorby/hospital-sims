@@ -146,7 +146,23 @@ async function bootstrap(boot: Boot): Promise<void> {
     break; // one notice, however many they own
   }
   new HirePanel(world, commands, events, bottomBar).mount(uiRoot, buildMenu.staffButton);
-  new ThoughtLog(events, jump, bottomBar).mount(uiRoot, document.getElementById('buildbar')!);
+  // Thought-log entries FOLLOW the person (owner ask 2026-07-19). The tile
+  // jump above is wrong here twice over: the event's col,row is where the
+  // thought happened, and a fixed pulse is left behind by anyone still
+  // walking. Selecting as well as pulsing is what makes "follow their path"
+  // work — the pulse says "here", the selection keeps the inspect card on
+  // them as they move (directory rows set the jump-AND-select precedent).
+  const follow = (patientId: number, col: number, row: number): void => {
+    const patient = world.patients.get(patientId);
+    if (!patient) {
+      jump(col, row); // already discharged/died/left — the thought's tile is all that is left
+      return;
+    }
+    renderer.jumpTo(patient.at.col, patient.at.row);
+    renderer.pulsePatient(patientId);
+    renderer.selected = { kind: 'patient', id: patientId };
+  };
+  new ThoughtLog(events, follow, bottomBar).mount(uiRoot, document.getElementById('buildbar')!);
   // The hospital directory (owner ask 2026-07-18): the right-side inventory
   // pullout — rows jump the camera AND select, so the inspect card opens.
   const directory = new DirectoryPanel(world, events, jump, renderer);
