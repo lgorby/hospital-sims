@@ -386,6 +386,87 @@ and presentation epic sitting on machinery that already works.
    types and the cleanest case; surgery has the three-role gather and the
    anesthesia machinery layered on it.
 
+### 4.3 MEASURED (2026-07-19) — imaging is not contended, and Stage 2 is BLOCKED
+
+**Stage 2a was contracted (`docs/DEPARTMENTS_IMPL_PLAN.md`), reviewed twice, and
+STOPPED.** The design review priced the feature against the data tables; every
+number below was independently re-verified against source before the stage was
+blocked. **Owner decision (2026-07-19): a measured imaging-demand balance pass
+lands FIRST; Stage 2a waits behind it.**
+
+**Derivation.** `basePatientsPerGameHour: 1.5` (`balance.ts:41`) against the
+`timeOfDayCurve` (`balance.ts:46-52`) integrates to ~31.8 arrivals/day —
+consistent with §3.8's ~150 over 5 days. Spawn weights total 148
+(`balance.ts:57-74`). A day is 1,440 game-minutes.
+
+| Room | Cost | Weight | Share | Visits/day | Room-min/day | **Utilisation** |
+|---|---|---|---|---|---|---|
+| `xray` | $8,000 | 25 (fracture 15 + pneumonia 10) | 16.9% | 5.4 | 107 | **7.4%** |
+| `ct` | $14,000 | 17 (kidneyStones 8 + headInjury 5 + stroke 4) | 11.5% | 3.7 | 91 | **6.3%** |
+| `mri` | $18,000 | 8 (backInjury) | 5.4% | 1.7 | 69 | **4.8%** |
+| `nucMed` | $16,000 | 6 (thyroid) | 4.1% | 1.3 | 58 | **4.0%** |
+
+Both X-ray steps are `durationGameMinutes: 20, fee: 200`
+(`conditions.ts:45,76`). `priceOf` prices a min-size rect at exactly the table
+cost (`formulas.ts:195-198`), so a suite is the full room price.
+
+**Finding 1 — a suite can never pay back.** At ρ = 0.074 a second server
+recovers essentially nothing. The maximally generous upper bound — assume EVERY
+arrival finding the room busy would otherwise have walked out — is 0.4
+visits/day × $200 = **$80/day against $8,000**, i.e. ~100 days, in a game
+whose profit/day is $12,229 (§3.8). The realistic figure is **never**. Sellback
+is 50% (`balance.ts:31`), so a player following the game's own hint is down
+$4,000 net. Even at rep-max (arrivals ×2.0) X-ray reaches only ~16%.
+
+**Finding 2 — the movable bottleneck does not exist.** §5 calls it *"the
+strongest design argument for the whole epic"*. Total radTech demand across all
+four rooms is 107+91+69+58 = **325 tech-min/day against 2 × 1,440 = 2,880 —
+~11% utilisation**. The 2-techs-for-4-scanners structure is a real constraint
+that is **never exercised**; the joint probability of both techs being busy is
+~1%. The diagnosis "do I need a machine or a tech?" has the answer **"neither,
+at every suite count you will ever build."**
+
+**The lesson, and it is §4.0's own lesson turned on its author.** §5 asked
+"do suites make capacity too cheap?" — one direction. The answer was the other
+direction: they are unaffordable at any price because they produce nothing.
+`ED_PLAN` §5 diagnosed the ER by measurement and found 12.8% of arrival weight;
+nobody had run the same arithmetic on imaging, and the epic was built on an
+assumption of contention that the data tables contradict by a factor of ten.
+**Measure the demand side before designing capacity for it.**
+
+**What this does NOT invalidate:** §1's research (three capacity axes) still
+stands, and §4.1's "a department is a SET of ordinary Rooms" is still the right
+implementation shape — the code review found no defect in that choice. What is
+missing is a reason to build a second suite.
+
+### 4.4 The prerequisite: an imaging-demand balance pass
+
+Scoped, not built. Its own milestone with its own pre-implementation review.
+The goal is a state in which **one scanner genuinely saturates**, so that a
+second suite is a real decision and the machine-vs-tech diagnosis becomes real.
+Levers, none chosen yet — this needs measurement, not reasoning:
+
+- **Route more conditions through imaging.** The cheapest lever and the one
+  most consistent with Stage 1's principle (*change the ROOM of existing steps,
+  never lengthen chains*). Candidates worth pricing: chest pain, abdominal
+  presentations, head injury already routes to CT.
+- **Longer scan durations.** An MRI at 20 game-minutes is unrealistically fast;
+  real MRI sequences run 30–60 minutes. This is the most defensible on research
+  grounds AND directly raises occupancy.
+- **A rep-shifted imaging-heavy case mix at high reputation**, so imaging
+  pressure arrives as a late-game problem rather than a permanent one.
+
+**Required instrument, which does not exist yet:** per-room utilisation and
+per-role busy-tick counters in `test/edProbe.test.ts`. Today the probe's only
+load sampling is hardcoded to `r.type === 'er'` (`edProbe.test.ts:157`). §6
+named "radTech utilisation" as a required column without anyone noticing there
+was nothing to read it from — build the counter first, then measure, then
+choose a lever.
+
+**The trap to avoid:** raising imaging demand raises radTech demand in lockstep,
+so it is entirely possible to make imaging busy AND still never make the machine
+the binding constraint. Measure both utilisations, not just throughput.
+
 ## 5. Economy — the guardrail that must not be skipped
 
 `ED_PLAN` §5 learned this the expensive way: a density change can **delete the

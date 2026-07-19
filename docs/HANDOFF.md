@@ -112,22 +112,43 @@ revisited.
 
 ### Open threads, highest-value first
 
-1. **Departments Stage 2a — radiology departments.** IN PROGRESS. The owner's
-   "OR is a collection of operating rooms / X-ray is a collection of rooms"
-   ask. `DEPARTMENTS_PLAN` §4 is a DRAFT SKETCH and is **not review-ready** —
-   **read §4.0 first**. The code map called for by §4.0 step 1 is DONE
-   (2026-07-19); next is `docs/DEPARTMENTS_IMPL_PLAN.md` as a frozen contract,
-   then two parallel pre-impl reviews of THAT. Reviewing the sketch earns
-   design opinions; only a contract earns defects. Chosen shape avoids internal
-   wall edges: a department is a SET of ordinary Rooms, so the dispatcher needs
-   no change (`roomsOfType` already returns them, and `dispatcher.ts:527-556`
-   tries candidates rather than first-matching — verified, not assumed).
-2. **The Stage-1 capex risk** (`DEPARTMENTS_PLAN` §3.8 point 3) — see the
-   watch items above. Unmeasured, not proven safe.
-3. **Staff lounge** (owner ask) — scoped below. Collides with ED B1's nurse
+1. **The capacity-hint defect** — IN PROGRESS, own milestone (owner call
+   2026-07-19). A one-room X-ray at 7.4% utilisation that is briefly busy tells
+   the player *"build another one"* — an $8,000 recommendation for transient
+   contention, recoverable at 50%. This is a **live defect on the deployed
+   build**, independent of departments. **Measure how often it actually fires
+   before changing wording.** A reviewer proposed removing the `continue` at
+   `needs.ts:375` so the staff branch also runs; that is contested and probably
+   wrong — if no room has a free slot, hiring a tech genuinely does not help.
+2. **The imaging-demand balance pass** — the prerequisite for Departments
+   Stage 2. `DEPARTMENTS_PLAN` §4.4 scopes it. Goal: a state where ONE scanner
+   genuinely saturates. **Build the per-room/per-role utilisation counter in
+   `edProbe` FIRST** — it does not exist (the probe's only load sampling is
+   hardcoded to the ER), and §6 named it as a required column without anyone
+   noticing there was nothing to read it from.
+3. **Departments Stage 2a — ⛔ BLOCKED behind (2).** Contracted, reviewed twice,
+   both **NOT READY**, stopped by measurement. Imaging rooms are idle 93–96% of
+   the day, so a second suite can never pay back, and the epic's self-described
+   "strongest design argument" — the movable machine-vs-tech bottleneck — does
+   not exist (radTechs run at ~11%). Full numbers in `DEPARTMENTS_PLAN` §4.3;
+   the 24 review findings are the v2 spec in `DEPARTMENTS_IMPL_PLAN` §9.
+   **§4.1's shape ("a department is a SET of ordinary Rooms") survived review
+   intact** — what is missing is a reason to build a second suite.
+4. **The Stage-1 capex risk** (`DEPARTMENTS_PLAN` §3.8 point 3) — see the
+   watch items above. Unmeasured, not proven safe. Pairs naturally with (2):
+   both are capital questions a 5-day probe cannot see.
+5. **Staff lounge** (owner ask) — scoped below. Collides with ED B1's nurse
    capture: a ratio nurse who never idles would never get a break.
-4. **`ED_PLAN` §3b/§4** — Stage B2 (ED entrance/ambulance arrivals) and Stage C
+6. **`ED_PLAN` §3b/§4** — Stage B2 (ED entrance/ambulance arrivals) and Stage C
    (ungate the CT dependency: ER → CT → ER). Both still DRAFT.
+
+> **The lesson from Stage 2a, worth keeping at eye level.** The epic asked
+> "do suites make capacity too cheap?" — one direction. The answer was the
+> other direction: unaffordable at any price, because they produce nothing.
+> `ED_PLAN` §5 diagnosed the ER by measurement and found 12.8% of arrival
+> weight; nobody ran the same arithmetic on imaging, and the epic was built on
+> an assumption of contention the data tables contradict by a factor of ten.
+> **Measure the demand side before designing capacity for it.**
 
 *(Resolved 2026-07-19: `ED_PLAN` §5b item 5, the ED out-competing the hospital
 for nurses — anti-capture guard on ratio extension, bounded by role headcount.
@@ -146,9 +167,10 @@ agreed on**: the ED probe falsified `availableStaff`'s ordering, and a reviewer
 falsified the model's own reading of the respiratory-therapy research.
 **Measure; do not reason from the plan.**
 
-### Findings from the Stage 2a code map (2026-07-19) worth carrying into the contract
+### Findings from the Stage 2a code map (2026-07-19)
 
-Recorded here because they are cheap to lose and expensive to rediscover:
+Recorded here because they are cheap to lose and expensive to rediscover. They
+remain valid for a Stage 2a v2 — the code map was not what stopped the stage.
 
 - **The shared-wall seam is the biggest unknown.** `drawRoom`
   (`renderer.ts:392-496`) walks `boundaryEdges(room.rect)` with exactly ONE
