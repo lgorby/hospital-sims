@@ -20,6 +20,7 @@ import { samePoint, type GridPoint, type Rect } from '../sim/types';
 import type { Walker, World } from '../sim/world';
 import { expandPrice, priceOf } from '../sim/formulas';
 import { HintLine } from './hintLine';
+import { ThoughtBubbles } from './thoughtBubbles';
 import { depthKey, TILE_H, TILE_W, toScreen, toTile, type TilePoint } from './iso';
 import { growExpandRect, growRect, minRectAt } from './placement';
 import {
@@ -94,6 +95,43 @@ const WALL_Z_NEAR = 0.45;
 const WALK_FRAME_TICKS = 3;
 /** Bubble height above the feet anchor. */
 const BUBBLE_RISE = 46;
+/** Mood emoji size. Named because THOUGHT_RISE is derived from it — the two
+ *  bubbles share one patient's headroom and the relationship must not be
+ *  restated in prose where it can drift (post-impl review MAJOR). */
+const MOOD_EMOJI_SIZE = 16;
+/**
+ * In-world thought bubble styling (owner ask 2026-07-18).
+ *
+ * THOUGHT_RISE clears the mood emoji, which anchors at (0.5, 1) on
+ * `y - BUBBLE_RISE` and so occupies `[-62, -46]`. The balloon is built to
+ * extend NOTHING below its own anchor (tail tip at local y=0), which is what
+ * makes this a real clearance rather than a zoom-dependent one:
+ *
+ * POST-IMPL REVIEW MAJOR — the first version put the tail and the rect's
+ * bottom edge BELOW the anchor by `(PAD_Y + TAIL_H) * (1 / zoom)`. That is a
+ * WORLD offset against SCREEN-space geometry, so the gap grew as the player
+ * zoomed out: fine at 2x, overlapping the emoji at 1x, and covering it
+ * completely at 0.5x — hiding the mood indicator exactly when the patient is
+ * thinking. Raising THOUGHT_RISE could not fix it (over-lifts at 2x, still
+ * under-clears at 0.5x); the geometry had to be re-based instead.
+ */
+const THOUGHT_RISE = BUBBLE_RISE + MOOD_EMOJI_SIZE + 6;
+/** Explicit family: the mood bubble renders a glyph and can inherit Pixi's
+ *  default, but a sentence must match the DOM UI stack (ui.css) so the same
+ *  thought reads identically in the bubble and the 💭 log. */
+const THOUGHT_FONT = 'Segoe UI, system-ui, sans-serif';
+const THOUGHT_FONT_SIZE = 12;
+const THOUGHT_WRAP_PX = 140;
+const THOUGHT_TEXT_COLOR = 0x2b2b2b;
+const THOUGHT_FILL = 0xfdfcf7;
+const THOUGHT_FILL_ALPHA = 0.94;
+const THOUGHT_STROKE = 0x8a8578;
+const THOUGHT_STROKE_ALPHA = 0.8;
+const THOUGHT_PAD_X = 8;
+const THOUGHT_PAD_Y = 5;
+const THOUGHT_RADIUS = 7;
+const THOUGHT_TAIL_W = 9;
+const THOUGHT_TAIL_H = 7;
 /**
  * Broken-room floor treatment (Stage 3, §S3.7): pull `def.floorColor` toward
  * its own luminance (desaturate) then darken — unmistakably "out of service"
@@ -161,6 +199,17 @@ export class WorldRenderer {
   private patientSprites = new Map<number, Sprite>();
   private staffSprites = new Map<number, Sprite>();
   private bubbles = new Map<number, Text>();
+  /**
+   * In-world thought bubbles (owner ask 2026-07-18, bubbles-first 2026-07-19).
+   * The lifetime/eviction decisions live in the pure class so they have tests;
+   * this layer is placement only. Its own container sits ABOVE `sortedLayer`
+   * so a bubble is never occluded by an actor one tile to the south-east — a
+   * notification you cannot read is not a notification. Mirrors how
+   * `pulseGfx`/`selectionGfx` deliberately live outside the depth sort.
+   */
+  private thoughtBubbles = new ThoughtBubbles();
+  private thoughtLayer = new Container();
+  private thoughtVisuals = new Map<number, { text: Text; balloon: Graphics }>();
   private characterTextures!: Map<string, Texture>;
   private overlay = new Graphics();
   /** Debug: tint unwalkable tiles (toggled from the debug panel). */
@@ -283,6 +332,7 @@ export class WorldRenderer {
       this.ghost,
       this.selectionGfx,
       this.pulseGfx,
+      this.thoughtLayer,
     );
 
     this.centerCamera();
@@ -308,6 +358,18 @@ export class WorldRenderer {
     // Mess decals (Stage 2): ONE event for add and remove — re-sync the tile
     // from world.messes (the frozen messChanged contract). Per-change only.
     this.events.on('messChanged', ({ col, row }) => this.syncMess(col, row));
+    // Thought bubbles: a SIM-driven transient, so the renderer subscribes
+    // directly (the messChanged/roomBuilt shape) rather than being driven from
+    // main.ts like the jump pulse — that one is a USER action and belongs
+    // beside the click handler. The thought log subscribes independently;
+    // EventBus is plain fan-out and the two share no state.
+    // `col,row` on the payload is deliberately IGNORED: it is where the thought
+    // HAPPENED and goes stale within seconds (thoughtLog.ts:12-18). A bubble
+    // must follow the walker, so it is keyed by patientId and reads the live
+    // sprite position every frame.
+    this.events.on('patientThought', ({ patientId, text }) => {
+      this.thoughtBubbles.add(patientId, text, performance.now());
+    });
 
     // Rooms that existed before the renderer (new-game start state).
     for (const roomId of this.world.rooms.keys()) this.drawRoom(roomId);
@@ -737,7 +799,7 @@ export class WorldRenderer {
       const emoji = WorldRenderer.bubbleFor(patient);
       let bubble = this.bubbles.get(id);
       if (emoji && !bubble) {
-        bubble = new Text({ text: emoji, style: { fontSize: 16 } });
+        bubble = new Text({ text: emoji, style: { fontSize: MOOD_EMOJI_SIZE } });
         bubble.anchor.set(0.5, 1);
         this.sortedLayer.addChild(bubble);
         this.bubbles.set(id, bubble);
@@ -759,6 +821,14 @@ export class WorldRenderer {
         this.patientSprites.delete(id);
         this.bubbles.get(id)?.destroy();
         this.bubbles.delete(id);
+        // A thought bubble outlives its patient by up to BUBBLE_LIFETIME_MS,
+        // and the last thing many patients think is emitted AS they leave
+        // (`dischargePatient` -> emitThought). Drop the model entry here or the
+        // visual is orphaned: `drawThoughtBubbles` reads `patientSprites` for
+        // position and would silently skip it, leaking the Text/Graphics pair
+        // until the next add for the same id.
+        this.thoughtBubbles.remove(id);
+        this.destroyThoughtVisual(id);
         if (this.selected?.kind === 'patient' && this.selected.id === id) this.selected = null;
       }
     }
@@ -1229,6 +1299,142 @@ export class WorldRenderer {
     this.drawOverlay();
     this.drawSelectionRing();
     this.drawPulse(now);
+    this.drawThoughtBubbles(now);
+  }
+
+  /** Tear down one bubble's Pixi objects. Idempotent — the reap loop and the
+   *  expiry path both call it and either may run first. */
+  private destroyThoughtVisual(patientId: number): void {
+    const visual = this.thoughtVisuals.get(patientId);
+    if (!visual) return;
+    visual.text.destroy();
+    visual.balloon.destroy();
+    this.thoughtVisuals.delete(patientId);
+  }
+
+  /**
+   * In-world thought bubbles (owner ask 2026-07-18 — the RCT "read their
+   * thoughts" moment; bubbles chosen over the card-history first on
+   * 2026-07-19 because they are the LIVE surface).
+   *
+   * Drawn per frame from the pure model, which owns lifetime and eviction.
+   * Runs after `updateActors`, so it READS the sprite position that was
+   * already placed this frame rather than re-deriving the tween — the same
+   * rule `drawSelectionRing`/`pulsePoints` follow, and for the same reason: two
+   * copies of the interpolation would disagree on any edit.
+   *
+   * Allocation-free at rest: the size check below returns before `visible()`
+   * can allocate. (Post-impl review MINOR: an earlier version claimed this
+   * budget while unconditionally allocating an array, a spread and a Set every
+   * frame — ~240 short-lived objects/second with nothing on screen. drawPulse's
+   * `if (!this.pulseTarget) return` is the contract being matched here.)
+   */
+  private drawThoughtBubbles(now: number): void {
+    if (this.thoughtBubbles.size === 0 && this.thoughtVisuals.size === 0) return;
+    const visible = this.thoughtBubbles.visible(now);
+    const alive = new Set<number>();
+
+    for (const { patientId, text, alpha } of visible) {
+      const sprite = this.patientSprites.get(patientId);
+      // The patient left between the thought and this frame. The reap loop
+      // will clear the model entry; skip drawing rather than guessing a spot.
+      if (!sprite) continue;
+      alive.add(patientId);
+
+      let visual = this.thoughtVisuals.get(patientId);
+      if (!visual) {
+        // fontFamily is explicit: the one pre-existing in-world Text renders an
+        // EMOJI and could inherit Pixi's default, but a full sentence cannot —
+        // it must match the DOM UI's stack (ui.css) so the same thought reads
+        // identically in the bubble and in the 💭 log.
+        const textNode = new Text({
+          text,
+          style: {
+            fontFamily: THOUGHT_FONT,
+            fontSize: THOUGHT_FONT_SIZE,
+            fill: THOUGHT_TEXT_COLOR,
+            wordWrap: true,
+            wordWrapWidth: THOUGHT_WRAP_PX,
+            align: 'center',
+          },
+        });
+        textNode.anchor.set(0.5, 1);
+        const balloon = new Graphics();
+        // Balloon first so the text draws over it — the layer is unsorted.
+        this.thoughtLayer.addChild(balloon, textNode);
+        visual = { text: textNode, balloon };
+        this.thoughtVisuals.set(patientId, visual);
+      } else if (visual.text.text !== text) {
+        visual.text.text = text;
+      }
+
+      // Counter-scale so the text stays a constant SIZE ON SCREEN. Everything
+      // in `camera` scales with zoom (0.5x-2x), which is fine for the mood
+      // GLYPH but would render a 12px sentence at 6px when zoomed out —
+      // illegible, and the handoff already tracks zoom legibility as a live
+      // concern (the sparks decal reads too subtle at default zoom).
+      const counter = 1 / this.zoom;
+      visual.text.scale.set(counter);
+      visual.balloon.scale.set(counter);
+
+      const x = sprite.position.x;
+      const y = sprite.position.y - THOUGHT_RISE;
+      // A bubble over a corpse must fade WITH the corpse (review NIT): dead
+      // patients dissolve over deathFadeTicks and `complication`/`discharged`
+      // thoughts fire at exactly those moments, so a full-opacity balloon would
+      // hang above a vanishing sprite.
+      const faded = alpha * sprite.alpha;
+
+      // The balloon is drawn, not a generated texture: it must fit variable
+      // text, and a fixed texture cannot stretch cleanly. This is the
+      // pulseGfx/selectionGfx precedent and needs no sprites.ts change.
+      // Bounds come from the laid-out Text, so wrapping is already resolved.
+      // GEOMETRY. Two bugs were fixed here, both invisible to unit tests
+      // (render is untested by design) and both caught downstream — the first
+      // by live-drive, the second by review:
+      //
+      //  1. The Text anchor is (0.5, 1), so text grows UPWARD from its
+      //     position. An early version offset the rect two paddings too high
+      //     and the last wrapped line hung outside the balloon.
+      //  2. Nothing may extend BELOW the anchor. Local units are multiplied by
+      //     `counter` (= 1/zoom), so any negative-side geometry becomes a
+      //     zoom-dependent intrusion into the mood emoji's band — see the
+      //     THOUGHT_RISE docblock. Tail tip sits at local y = 0.
+      //
+      // Everything is therefore built UPWARD from y = 0:
+      //   tail   [-TAIL_H, 0]
+      //   rect   [-TAIL_H - h, -TAIL_H]
+      //   text   bottom at -(TAIL_H + PAD_Y), growing up by textH
+      // Width/height are read back from the laid-out Text, so wrapping is
+      // already resolved — Pixi measures synchronously on the bounds getter,
+      // so this is valid on a bubble's very first frame.
+      const textH = visual.text.height / counter;
+      const w = visual.text.width / counter + THOUGHT_PAD_X * 2;
+      const h = textH + THOUGHT_PAD_Y * 2;
+      visual.text.position.set(x, y - (THOUGHT_TAIL_H + THOUGHT_PAD_Y) * counter);
+      visual.text.alpha = faded;
+      visual.balloon.position.set(x, y);
+      visual.balloon.alpha = faded;
+      visual.balloon
+        .clear()
+        // Tail first and STROKED IN ITS OWN RIGHT (review MINOR): Pixi v8's
+        // `stroke()` applies to the immediately preceding path only, so a
+        // single trailing stroke would outline the rect and draw a hard 1px
+        // line straight across the tail's base, leaving an unoutlined nub
+        // below it. Stroking here and filling the rect afterwards covers that
+        // shared edge, so the silhouette reads as one shape.
+        .poly([-THOUGHT_TAIL_W / 2, -THOUGHT_TAIL_H, THOUGHT_TAIL_W / 2, -THOUGHT_TAIL_H, 0, 0])
+        .fill({ color: THOUGHT_FILL, alpha: THOUGHT_FILL_ALPHA })
+        .stroke({ color: THOUGHT_STROKE, width: 1, alpha: THOUGHT_STROKE_ALPHA })
+        .roundRect(-w / 2, -THOUGHT_TAIL_H - h, w, h, THOUGHT_RADIUS)
+        .fill({ color: THOUGHT_FILL, alpha: THOUGHT_FILL_ALPHA })
+        .stroke({ color: THOUGHT_STROKE, width: 1, alpha: THOUGHT_STROKE_ALPHA });
+    }
+
+    // Reap visuals whose model entry expired this frame.
+    for (const id of [...this.thoughtVisuals.keys()]) {
+      if (!alive.has(id)) this.destroyThoughtVisual(id);
+    }
   }
 
   /**
