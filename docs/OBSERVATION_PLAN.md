@@ -1,146 +1,237 @@
 # The Observation Unit — an EDOU department
 
-**Status:** CONTRACT DRAFT (2026-07-19, owner ask). Awaiting 2 independent
+**Status:** CONTRACT DRAFT v2 (2026-07-19). Rewritten around the v1 review
+findings (12 + 13 findings, both reviewers NOT READY). Awaiting a fresh pair of
 adversarial pre-implementation reviews. **No code until findings are folded in.**
 **Owner ask:** *"add an observation area option to purchase for things like
-chest pains, strokes, headaches… expandable… expanded with the increase in
-beds, so the area is a department that will have rooms in it like the ER and
-OR. Of course that is after they come back from radiology."*
-**Owner decision 2026-07-19:** the ED is the hub for walk-ins —
-`triage → er → imaging → observation → discharge`.
-**Save impact:** **SAVE_VERSION 11 → 12.** Owed and justified — see §7.
+chest pains, strokes, headaches… expandable… a department that will have rooms
+in it like the ER and OR. Of course that is after they come back from
+radiology."* Plus: *"outpatients should be sent from triage to the ER for things
+like this, just like in a hospital setting"* and nurse techs with a
+**6–9 patient load** to staff it.
+**Owner decisions folded in:** ED is the hub for walk-ins; nurse tech is a role
+distinct from EVS; keep chest pains (do NOT touch the chestPain chain).
+**Save impact:** **SAVE_VERSION 11 → 12**, owed three times over — see §7.
 
 ---
 
-## 1. Why this exists, and what it fixes
+## 0. What changed from v1, and why
 
-Three open problems collapse into this one feature.
+v1 tried to route `chestPain` and `headInjury` THROUGH a new observation bed by
+lengthening their chains. Both reviewers killed it, converging on one better
+design. This rewrite adopts it wholesale:
 
-1. **`IMAGING_PLAN` §2.2 — the chain inversion.** Every imaging chain runs
-   `imaging → er`; reality is that the ED *orders* imaging mid-stay. Observation
-   gives the corrected chain somewhere to terminate.
-2. **`IMAGING_4B` review MAJOR 3 — the decay-exposure defect.** The reason the
-   §4B contract came back NOT READY: `er → xray` converts health-PAUSED minutes
-   into decay-exposed wait-and-gather minutes for acuity-1 patients.
-   `decay.ts:20-25` pauses health decay during any **active** reservation, so an
-   observation bed is a place a fragile patient waits *safely*. This is the
-   defect's actual fix, not a patch over it.
-3. **Radiology is empty** (`IMAGING_PLAN` §1; re-measured 2026-07-19: X-ray
-   8.1%). §4 below is the research finding that matters most here, and it is a
-   larger imaging lever than §4B was.
+| v1 (NOT READY) | v2 (this doc) |
+|---|---|
+| Lengthen `chestPain` (1→2 steps) and `headInjury` (2→3) | **Two NATIVE conditions, `tia` + `syncope`**, that only exist because the room exists |
+| Stranded chestPain in every save with no obs room (MAJOR 1) | **Room-gated**: no observation → these patients never spawn. Zero stranding. |
+| "observation fixes the decay defect" — INVERTED (MAJOR 2): it added a decay-exposed queue before the bed | Native conditions arrive AT the ED and flow to the bed; nothing existing is re-routed |
+| Nurse-only ward starved the 3-nurse pool → `appendicitis` discharged 0 (proven) | **Nurse-tech staffed** — a new role, zero competition with the nurse pool |
+| `tilesPerProp: 8` → half of all expansions added zero beds | **`tilesPerProp: 6`** — every column of growth adds a bed |
+| Confounded measurement (routing + service-time + revenue all at once) | Clean by construction: the "before" arm simply has neither condition |
+| Overrode the owner's stroke ask with a flat "no" | Honours it with the research's own answer — **TIA**, not acute stroke |
 
-It also adds a capacity axis the game barely has. The Departments research found
-reality has three — AREA-scaled, EQUIPMENT-scaled, STAFF-HOUR-scaled — and the
-game has essentially one. Observation is **bed-scaled**, which today only
-dialysis is.
+The v1 doc's research (§2) and its honesty ledger (§10) survive intact; only the
+design built on top of them is replaced.
 
-## 2. The research (sources in §11; confidence markers are the harness's)
+## 0.1 v2 REVIEW OUTCOME (2026-07-19) — NOT READY; the v3 spine
 
-Method: fan-out search → source fetch → adversarial self-check, with an explicit
-"what I could not establish" section. §10 carries the unverified items forward
-rather than laundering them.
+Two fresh reviews. **Design: NOT READY. Code: READY WITH FIXES** ("the v2 design
+is sound and the architecture claims mostly hold"). They converge on one fix.
 
-### 2.1 The owner's condition list scores 2 of 3 — HIGH confidence
+**The disqualifying finding (design MAJOR 1), verified against `spawn.ts:76-85`:**
+the arrival rate is a FIXED Bernoulli per tick, independent of `conditionWeights`
+— the weights only pick WHICH condition each arrival becomes. So putting
+`tia`/`syncope` in `conditionWeights` does NOT add patients; it **redistributes a
+fixed budget**, dropping every existing condition's arrivals by 148/162 = 8.6%
+the moment the room is built. This falsifies "net-new revenue" (§1, §6),
+reintroduces the measurement confound §3.2 claimed to eliminate, and confounds
+two of four revert guards. The outpatient stream is genuinely net-new precisely
+because it is a SEPARATE Bernoulli channel (`spawn.ts:99-110`) — this contract
+cited that precedent but copied only the gating, not the separate rate.
+
+**THE v3 SPINE — both reviewers point here:**
+1. **Model observation as a separate gated arrival channel** with its own
+   `perGameHour`, like the outpatient stream — genuinely net-new, cleanly
+   measurable, still triaged as ED walk-ins. This also dissolves the code
+   review's gate-mechanism MAJOR (no filter-in-the-emergency-roll, no
+   float-residue trap) and means tia/syncope are not in the emergency weight mix
+   at all.
+2. **MEASURE the balance before asserting it.** Design MAJORs 2/3/4: at the v2
+   weights, base occupancy is ~33% (fails the plan's own 40% success floor),
+   max-rep ~70% on 2 beds (never saturates), and one $100 tech at ratio 6 covers
+   the ward forever — **neither capacity lever ever binds.** The §6.2 saturation
+   figure double-counted the case-mix shift (syncope is acuity 3, does not
+   shift). v1 and v2 both asserted balance and both were wrong the same way.
+   **v3's balance section must be produced from a probe arm, not reasoned.**
+3. **TIA ships clinically hollow** (design MAJOR 6): its identity is stroke
+   rule-out and Stage 1 gives it no imaging. Consider **syncope + a
+   non-imaging native** (dehydration / cellulitis / a-fib rate-control) for
+   Stage 1, holding TIA until its CT lands in the same stage.
+
+**Code-side fixes to fold into v3 (all confirmed against source):**
+- Gate keys on the OBSERVATION step (step 1), not step 0; use a filtered
+  `available` array, never a `continue` (the fallback returns the last id).
+  Moot if the separate-channel model is adopted.
+- **Test blast radius the plan missed:** `m3Roster.test.ts:83-99` and
+  `expansion1.test.ts:248-261` both assert every `EMERGENCY_CONDITION_ID` rolls
+  — they fail the instant tia/syncope are gated. `finance.test.ts:486-503` pins a
+  hardcoded earning-room set that omits the now-earning `observation`.
+- Regression 3 "bit-identical to today" is FALSE — `nurseTech` mints candidates
+  (`world.ts:201-204`) and re-pins every seed. Reword to "role present, no obs
+  room → tia/syncope never spawn over a long run."
+- The bladder pause needs reserved→reservation→room plumbing (`decay.ts:57`
+  has no room lookup), not a one-line data read. And the accident drops on the
+  patient's walkable ANCHOR tile, not the bed.
+- `nurseTech` needs a unique `color` (`anesthesia.test.ts:44` all-pairs sweep).
+
+**Confirmed sound, carry forward unchanged:** the SAVE_VERSION 12 story (all
+three `asOneOf` sites, no field migration); the single-room `nurseTech` role
+(anti-capture guard correctly inert for it); one tech across 6 beds mechanically;
+the `data.test.ts` / `edRatio.test.ts` coverage guards auto-satisfy.
+
+---
+
+## 1. Why this exists
+
+Three problems collapse into one feature, and unlike v1 this version actually
+resolves each:
+
+1. **Radiology is empty** (`IMAGING_PLAN`; X-ray 8.1%, re-measured). Observation
+   is a real second demand source for CT/MRI/ultrasound — but the imaging-during-
+   observation leg is **Stage 2** (§3), not Stage 1. Stage 1 does not touch it.
+2. **The game has one capacity axis.** Departments research: reality has three
+   (area-, equipment-, staff-hour-scaled). Observation is **bed-scaled**, which
+   today only dialysis is, and it introduces a genuine "machine or staff?"
+   diagnosis via the nurse-tech ratio (§5).
+3. **The owner wants an expandable department** "with rooms in it like the ER."
+   Bed-scaled `perProp` capacity IS that: expanding the room adds beds, and at
+   `tilesPerProp: 6` every expansion column actually delivers one.
+
+It is also **net-new revenue**, not a cost bolted onto existing patients. tia
+and syncope are patients who do not exist without the room, so the unit has its
+own P&L — the honest tycoon shape the research (§2.6) describes, and the exact
+thing v1 got backwards.
+
+## 2. The research (unchanged from v1; sources §11, honesty ledger §10)
+
+Method: fan-out search → source fetch → adversarial self-check. Confidence
+markers are the harness's.
+
+### 2.1 The owner's condition list — HIGH confidence
 
 | owner named | verdict |
 |---|---|
-| **chest pain** | **CORRECT, and genuinely #1.** *"The most common OU protocol across all sites is chest pain"* — two independent sources. |
-| **head injury** | **CORRECT.** Named a top-4 protocol; "traumatic brain injury" in a 2025 review. |
-| **stroke** | **MOSTLY WRONG — and this matters.** What goes to observation is **TIA / transient neurological events**, not acute stroke. Acute stroke needs thrombolysis and an inpatient stroke unit. In the game, `stroke` is acuity **1**, the most time-critical condition there is — routing it to a 15-hour monitoring bed would be clinically backwards AND would park the game's most fragile patient for most of a day. |
-| **headache** | **COULD NOT VERIFY.** Plausible, but no fetched source lists it as a standard protocol. Not included; see §10. |
+| **chest pain** | CORRECT and #1 in reality — but we ship it as an EXISTING condition and do NOT reroute it (owner: "keep chest pains"). Chest pain reaches observation only in **Stage 3**, via the escalate/branch mechanic. |
+| **head injury** | CORRECT — a top-4 protocol. Also deferred; `headInjury` stays a 2-step chain in Stage 1. |
+| **stroke** | **Acute stroke → NO** (acuity 1; belongs in a thrombolysis pathway). **TIA → YES** — the canonical obs protocol and the honest answer to the ask. Shipped as the new `tia` condition. |
+| **headache** | UNVERIFIED as a standard protocol (§10). Not shipped. |
 
-Canonical list, for future expansion: chest pain · syncope · TIA · abdominal
-pain · asthma · head injury · atrial fibrillation · cellulitis · dehydration ·
-hyperglycemia · mild heart failure · sickle cell crisis.
+Canonical obs list, for later stages: chest pain · **syncope** · **TIA** ·
+abdominal pain · asthma · head injury · a-fib · cellulitis · dehydration.
+**syncope and TIA are the two Stage-1 natives** — both well-attested, both
+short-stay, neither requiring the escalate mechanic.
 
-### 2.2 Length of stay — HIGH confidence, and the "23-hour rule" is folklore
+### 2.2 Length of stay — HIGH confidence
+No CMS "23-hour rule" (folklore; the real rule is Two-Midnight). Measured mean
+**12.9 h** (US EDOU), ~15 h benchmark. **The game cannot import 15 h** — see
+§5.2. Turnover **1.6 patients/bed/day**.
 
-**No CMS document establishes a 23-hour threshold.** It is a billing artifact
-from when ≥24h of hospitalisation meant inpatient status. The governing rule
-since 2013 is the **Two-Midnight Rule**. CMS language is *"generally do not
-exceed 24 hours."*
+### 2.3 Disposition — HIGH confidence
+**75–85% discharged, 15–25% escalated.** Stage 1 ships **100% discharge** for
+the two natives and says so (§5.4); the escalate branch is Stage 3.
 
-Measured LOS: **12.9 h** (US EDOU sites), 14–15 h (2025 review), ~15 h (ACEP
-benchmark). **Design number: ~15 h mean, 24 h cap. Not 23.**
-
-Turnover: **1.6 patients/bed/day.**
-
-### 2.3 Disposition — HIGH confidence, tight convergence
-
-**75–85% discharged, 15–25% escalated to inpatient.** US sites: 84.3%
-discharged. This is a game mechanic, not a detail — see §5.4.
-
-### 2.4 Staffing — HIGH confidence, and it directly supports the mechanic
-
-**1 RN : 5–8 beds**, consistent across US and Asian sites; design literature
-independently gives 1:5. For comparison: ICU 1:2, ED 1:3–1:4 (Cal. Title 22
-caps at 1:4 — the number already in `ROOM_DEFS.er`), med-surg 1:4–1:6.
-
-**Observation is the LOWEST nursing intensity of any monitored bed in the
-hospital.** One nurse covering 5–6 beds is accurate, defensible, and exactly
-the `staffRatio` shape the ER already established.
-
-Physician side: EDOUs run on **APPs with ED-physician supervision**, not a
-dedicated attending — and units staffed attending-only measured *worse*
-throughput. The game has no APP role; §9 Q4 asks whether to add one or to model
-observation as nurse-only.
+### 2.4 Staffing — HIGH confidence, and it IS the mechanic
+**1 RN : 5–8 beds** — the lowest nursing intensity of any monitored bed. And
+critically: EDOUs run on **nurse techs / CNAs with nurse oversight** — the tech
+absorbing routine bedside work is *why* the ratio stretches that far. This is
+the clinical basis for the owner's nurse-tech ask and for staffing the room with
+`nurseTech`, not `nurse` (§5.1).
 
 ### 2.5 Sizing — HIGH confidence
+**OU volume ≈ 4–10% of ED visits.** Only 39% of US EDs have one — the basis for
+making it opt-in (room-gated, §3.2). This is the number that sets the Stage-1
+weights (§6).
 
-**"OU volume should approximate 4% to 10% of annual ED visits."** US EDOU
-average **17 beds**; typical range 10–40. Only **39% of US EDs have one** —
-natural justification for an opt-in purchase rather than a starting room.
+### 2.6 Financial case — HIGH confidence, right tycoon shape
+$1,572 saved/patient; payback is INDIRECT (throughput/avoided admission), and
+*"high upfront costs often outweigh eventual savings."* In v2 the room ALSO earns
+directly from its native patients, so it is not the pure-sink trap v1 was.
 
-FGI (via secondary reporting, see §10): **120–140 sq ft per bed**, 4-ft
-clearance each side, one toilet per six patients, ~10 rooms per clinical
-workstation, visibility from the station the top design priority.
+## 3. The design — native conditions, room-gated
 
-### 2.6 The financial case — HIGH confidence, and it is the right tycoon shape
+### 3.1 Two new conditions, both `er → observation`
 
-- **$1,572 saved per patient**; $4.6M/hospital/year; $3.1B nationally (Baugh,
-  *Health Affairs* 2012), by avoiding ~2.4M admissions/year.
-- Protocol-driven dedicated units vs scattered observation: **23–38% shorter
-  LOS, 17–44% lower subsequent admission** (Ross, *Health Affairs* 2013).
-- **The caveat that makes it a game decision:** *"High upfront costs often
-  outweigh eventual savings."* Expensive to build, pays back through throughput
-  rather than directly.
+Owner-confirmed chain (ED hub for walk-ins): a walk-in **triages, is assessed in
+the ED, then goes to the observation bed.** Both natives are therefore
+**2-step** chains — the game's current maximum — so `DEPARTMENTS_PLAN` §3.1's
+never-lengthen-chains rule is satisfied *by construction*, and nothing existing
+is touched.
 
-## 3. THE FINDING THAT CHANGES THE DESIGN — imaging happens DURING observation
+```
+tia:      Transient Ischemic Attack   acuity 2   (referral-grade → rides case-mix shift)
+  step 0  ED assessment    er           [doctor, nurse]   45 min   $900
+  step 1  Observation      observation  [nurseTech]      360 min   $500
 
-**The owner's premise — "after they come back from radiology" — is half right,
-and the half it omits is the more valuable one.**
+syncope:  Syncope (fainting)           acuity 3
+  step 0  ED assessment    er           [doctor, nurse]   40 min   $700
+  step 1  Observation      observation  [nurseTech]      360 min   $500
+```
 
-Real chest-pain sequence, HIGH confidence:
+- **The ER step is short by design.** The point of the feature is that service
+  time lives in the bed, not the ED — and a short ER step limits the load added
+  to the game's most-contended room. It is still measured (§6.1).
+- **tia is acuity 2** → referral-grade (`referralAcuityMax: 2`), so its weight
+  scales up with reputation via `caseMixShiftFactor`. That is deliberate: it is
+  what grows bed demand as the player succeeds, which is what eventually makes
+  **expansion** pay (§6.2). syncope at acuity 3 does not shift — a steady base.
+- **The CT-first "rule out stroke" step is Stage 2.** Real TIA gets a head CT;
+  adding it now is a 3-step chain the reviews forbade. `tia` shipping as
+  `er → observation` is the honest 2-step compression; the CT leg is the
+  imaging-during-observation prize (§3.3), measured against this baseline.
 
-1. **ED:** ECG + first troponin + **plain chest X-ray**. Low-risk-but-not-clear
-   patients go to observation.
-2. **Observation:** the **advanced** imaging is ordered *during* the stay —
-   CCTA, stress echo, nuclear perfusion. Directly verified: *"CCTA occurs
-   during the observation stay, not before admission."*
-3. **Disposition** follows that result: discharge, or escalate.
+### 3.2 Room-gating dissolves the stranding failure
 
-So the real shape is:
+**tia and syncope only spawn when an observation room exists.** This is the
+outpatient precedent (`spawn.ts` gates electives on the modality being built),
+applied to two emergency conditions:
 
-> **ER → basic imaging → OBSERVATION → advanced imaging → discharge-or-admit**
+- No observation room → the conditions never enter the mix → **no stranding, no
+  forced $12k capex, and every existing save is untouched** — the v1 MAJOR 1
+  that killed the predecessor cannot occur.
+- Build the room → the patients appear. "Build the unit, unlock the patients" is
+  a clean tycoon loop and makes the whole feature genuinely opt-in.
+- Measurement is clean by construction: the baseline arm has neither the room
+  nor the conditions; the treatment arm has both. No confound between "the
+  routing changed" and "a room appeared."
 
-**Observation is a CONSUMER of the imaging department, not a parking lot
-downstream of it.** It pulls patients *back* to imaging mid-stay — a circular
-flow rather than a linear one.
+**This is the one required `src/sim/systems/` change** (`spawn.ts`): the
+emergency roll must skip observation-gated conditions when the room is absent,
+mirroring `rollElectiveCondition`'s existing gate. Everything else is data.
+§9 Q1 asks a reviewer to confirm the gate belongs in the emergency roll and not,
+say, as an elective-style pre-triaged stream (it must not be — the owner wants
+them triaged as ED walk-ins).
 
-This is why observation is a bigger imaging lever than §4B was. §4B added ~2.2
-X-ray visits/day. An observation unit that orders advanced imaging adds demand
-for **CT, nuclear medicine and ultrasound** — the modalities sitting at 4.9%,
-13.5% and 3.9%, and the ones `IMAGING_PLAN` §2.3 said an ED-only hospital could
-never fill. It also lands that demand on patients who are *safely parked*, not
-decaying in a queue.
+### 3.3 The staged roadmap — and why Stage 1 does not strand at a dead end
 
-**Scope ruling: Stage 1 does NOT build the return leg.** It is the prize, but a
-chain that goes `er → xray → observation → ct → discharge` is a 4-step chain
-against a game whose longest is 2, and `DEPARTMENTS_PLAN` §3.1 warns that every
-added step is another gather, another walk, another contention point. Stage 1
-establishes the bed and the terminal step; **Stage 2 adds the return leg and
-measures it against Stage 1's baseline.** §9 Q1 asks a reviewer to challenge
-this split.
+The v1 review's MAJOR 9 was that its Stage 1 pointed at a Stage 2 the design had
+already ruled inadmissible. This roadmap does not:
+
+- **Stage 1 (this contract):** the room, `tia` + `syncope` as `er → observation`,
+  the `nurseTech` role staffing the beds, room-gating. A complete, shippable,
+  measurable feature on its own.
+- **Stage 2:** imaging-during-observation. `tia` becomes `er → observation → ct`
+  — the return-to-imaging leg, which lands demand on CT/MRI. Still 3 steps, and
+  it *replaces* the deferred CT-first step rather than adding a fourth, so the
+  never-lengthen rule holds. Measured against Stage 1's baseline.
+- **Stage 3:** the escalate/discharge branch (§2.3's 15–25%) and the
+  protocol-selectivity mechanic (§2.4: a unit that accepts everything performs
+  worse). This is where `chestPain` and `headInjury` finally reach observation —
+  as escalations, not as lengthened chains — honouring the owner's original
+  "chest pains and head injuries" naming without ever making those chains longer.
+
+Each stage is independently valuable and none requires rewriting a shipped,
+save-bumped chain.
 
 ## 4. The room
 
@@ -150,247 +241,269 @@ observation: {
   kind: 'treatment',
   category: 'treatment',          // appears in the build bar automatically
   minCols: 4, minRows: 4,
-  cost: 14_000,                   // see §6 — the most expensive room in the game
+  cost: 12_000,                   // see §6
   floorColor: <pale blue-grey>,
-  staffedBy: ['nurse'],
-  staffRatio: { nurse: 5 },       // §2.4: 1 RN : 5-8 beds, MEASURED
+  staffedBy: ['nurseTech'],       // §5.1 — NOT nurse; that is the appendicitis fix
+  staffRatio: { nurseTech: 6 },   // owner spec 6-9; 6 is the conservative pick
   capacity: { kind: 'perProp', prop: 'bed', noun: 'Beds' },
   props: [{ id: 'bed', walkable: false,
-            density: { kind: 'perTiles', tilesPerProp: 8, min: 2 } }],
+            density: { kind: 'perTiles', tilesPerProp: 6, min: 2 } }],
 }
 ```
 
-- **`perProp` capacity is the whole point** — beds ARE capacity, derived from
-  placed prop tiles (`world.ts:406-418`), so expanding the room adds beds. This
-  is the owner's "expanded with the increase in beds," and it is data-derived:
-  no expansion code changes.
-- **Reuse the existing `bed` prop.** A new `PropId` requires a `PROP_STYLE`
-  entry or the renderer crashes on a non-null assertion (`renderer.ts:484`).
-  Reusing `bed` means **zero render-side work**.
-- **`tilesPerProp: 8`** — deliberately sparser than the ER's 6, reflecting §2.5's
-  120–140 sq ft + 4-ft clearance. `min: 2` satisfies CAPACITY_PLAN §3.2 (a
-  min-size room must derive exactly its intended count: 4×4=16, 16/8 = 2 ✓).
-- **No `failure` entry.** A ward of beds has no machine to break. This also
-  keeps it off the single maintenance tech's queue.
+- **`tilesPerProp: 6`, not 8** (v1 review MINOR, measured): at 8, `4×4→5×4`
+  costs money and adds ZERO beds — half of all expansions were inert, gutting
+  the owner's "expanded with the increase in beds" ask. At 6: `4×4`=16→**2 beds**
+  (satisfies CAPACITY_PLAN §3.2 min-size rule), `5×4`=20→**3 beds**. Every growth
+  column delivers.
+- **Reuse the existing `bed` prop** → ZERO render-side work (v1 code review
+  verified `bed` has a `PROP_STYLE` entry). Note `bed` is a 2-tile strip, so 2
+  beds consume 4 of 16 tiles — ample standing room (v1 review confirmed 11
+  standable at min size).
+- **No `failure` entry** — a ward of beds has no machine to break, and this keeps
+  it off the single maintenance tech's queue.
+- **`treatment` category** — no `RoomCategory` union change.
 
-**Not a new `RoomCategory`.** `treatment` is correct and needs no union change.
+## 5. The four mechanics questions
 
-## 5. The four mechanics questions, answered
+### 5.1 Staffing — the nurse tech is the appendicitis fix AND the owner's ask
 
-### 5.1 Staff hold — the ratio is doing real work
+v1's code review PROVED a nurse-only 240-min ward drains the 3-nurse pool until
+`appendicitis` discharges zero (`INVARIANTS.md:60`). Staffing with a **new
+`nurseTech` role removes that competition at the root** — the ward never touches
+the nurse pool.
 
-`makeReservation` binds a staffer for the **whole** reservation
-(`dispatcher.ts:445-449`); there is no attend-then-leave concept. A long
-observation step at ratio 1 would remove a nurse from the hospital for the
-entire stay.
+```
+nurseTech: { label: 'Nurse Tech', salaryPerDay: 100, ... }
+```
 
-`staffRatio: { nurse: 5 }` is what makes this affordable, and §2.4 says it is
-also what is *true*. But it walks straight into the **anti-capture guard**
-(`dispatcher.ts:186-207`), whose comment is a warning written from measurement:
+- **$100/day** sits below nurse ($150) and above EVS ($90) — a CNA earns less
+  than an RN, so hiring techs to cover beds is genuinely cheaper than hiring
+  nurses, which is what makes the "nurse or tech?" question a real economic one.
+- **`staffRatio: { nurseTech: 6 }`** — owner spec 6–9 patients; 6 is the safe end
+  and the band is the balance knob. One tech covers a whole small ward.
+- **A new `RoleId` is a real cost:** it mints constructor candidates
+  (`topUpCandidates`) and therefore **re-pins every seed from tick 0** — the
+  ANESTHESIA_PLAN §6 precedent. §8 owns the re-pin, derived mechanically, never
+  predicted (v1 review MAJOR 6).
+- **The anti-capture guard.** v1's headline fear did NOT materialise — measured
+  triage starts were flat-to-up on all five seeds, because the guard fires for a
+  new room type. But it does not fire on a role the ED never competes for:
+  `nurseTech` serves ONLY observation, so it has no "starved outside" pressure
+  and the guard is irrelevant to it. That is fine here — a tech monopolised by
+  observation is a tech doing its only job. §9 Q4 confirms.
 
-> *"a ratio staffer never returns to `idle` while any bay is live… the
-> characterization suite measured 0 idle ticks, triage never firing in 1,200
-> ticks, and a patient dying untriaged at 4,000."*
+**Stage 1 keeps observation tech-only.** The richer "do I need a nurse or a
+tech?" diagnosis — where both serve and the tech raises effective nurse coverage
+— is Stage 2+, once nurses also appear in the unit. Stated so a reviewer does
+not expect the capacity-lever payoff in Stage 1.
 
-A long hold makes that near-permanent. **Mandatory before ship: verify
-`starvedOutside` actually fires for `observation`** (`dispatcher.ts:238-247`),
-and measure nurse idle-time and triage-start rate on both layout arms. If the
-guard does not fire here, observation eats the nurse pool exactly as ED Stage B1
-measured. §8 regression 4 pins it.
+### 5.2 Duration — 360 game-minutes, and the honest defence
 
-### 5.2 Duration — reality is 15 h; the game cannot have 15 h
+Reality is ~15 h; the game's longest step is stroke's 120 min. A literal import
+is impossible. **360 game-min (6 h)** — 3× chest pain's ER step — preserves the
+relationship (observation is much longer than treatment) without deleting a bed
+for a day. It is a game-feel judgement, not a research finding.
 
-The game's longest step today is stroke's 120-minute ER stay. A literal 15
-game-hours (900 min) would be **7.5× the longest existing step** and ~62% of a
-game day — one patient would occupy a bed for most of a day at 1.6 turns/bed/day.
+**The honest defence is the sizing rule, not the turnover figure** (v1 review
+MINOR): §2.5's "OU volume = 4–10% of ED visits." §6's weights put tia+syncope at
+~8.6% of arrivals, inside that band, and 360 min sets bed occupancy where a
+2-bed ward is comfortable early and saturates as reputation grows (§6.2). Bed
+occupancy is the falsifiable measure (§8 regression 5), not the duration itself.
 
-The game already compresses: real chest-pain ED stays run hours against the
-game's 90 minutes. **Observation must compress by the same factor, not be
-imported literally.** Proposed: **240 game-minutes** (4 h), which is
-2.7× chest pain's current ER step and preserves the *relationship* — observation
-is much longer than treatment — without deleting a bed for a day.
+### 5.3 Bladder — Stage 1 pauses it; the nurse-tech hygiene job is Stage 1.5
 
-**This is the number most likely to be wrong.** It is a game-feel judgement, not
-a research finding, and §8 regression 5 makes it falsifiable via bed turnover.
+A 360-min bedbound patient drains 72 bladder points (`bladderPerGameHour: 12`)
+against a 45 spawn floor — **essentially every obs patient would accident in the
+bed**, dropping a mess on a `walkable: false` tile.
 
-### 5.3 Bladder and thirst keep draining
+The owner's answer is *"staff for them"* — nurse techs handle bed accidents.
+That is real, and it is the second nurse-tech duty. But it is a **new
+patient-directed claim shape** (the tech attends a PATIENT, unlike EVS which
+attends a TILE — owner ruling), which is genuinely new machinery. So:
 
-`decay.ts:52-58` drains both in every non-terminal stage, so a bedbound patient
-on a 240-minute step will hit a bladder accident — patience hit plus a mess, in
-the bed. `patientNeeds.ts:23` notes a reserved patient will not break a
-gathering. **Decide deliberately** (§9 Q3): pause bladder during an active
-observation reservation (defensible — obs beds have call bells and bedpans;
-FGI mandates one toilet per six patients), or accept accidents as flavour and
-let EVS earn its keep. This contract proposes **pausing bladder only, not
-thirst** — but it is a real fork.
+- **Stage 1 pauses bladder in an observation bed** via a `RoomDef` data flag
+  (`bedbound: true`), read through an accessor like `conditionElective` /
+  `roomStaffRatio` — NOT a `room.type === 'observation'` literal in `decay.ts`,
+  which would put a game fact in a system file (v1 review MINOR, hard rule 1).
+  Defensible: obs beds have call bells and bedpans; FGI mandates a toilet per
+  six beds. This ships a working, accident-free unit.
+- **Stage 1.5 (the nurse-tech hygiene job):** unpause bladder, add the
+  patient-directed nurse-tech claim for accidents, and the EVS boundary. This is
+  where the "new claim shape" lands, measured against Stage 1's clean baseline.
 
-### 5.4 Escalation — 15–25% do NOT go home
+The owner gets the nurse-tech role immediately (as obs staff) and the
+bed-accident mechanic in the very next stage — not a giant single drop. §9 Q3
+puts the pause-vs-ship-accidents fork to a reviewer explicitly; a reviewer who
+would rather do the hygiene job in Stage 1 should say so now.
 
-§2.3 says 75–85% discharge. The game's chain model has exactly one terminal:
-`stepIndex >= steps.length → dischargePatient` (`treatment.ts:75-79`). There is
-no "escalate to inpatient" concept, and the complication path
-(`treatment.ts:89-107`) re-queues the *same* step rather than branching.
+### 5.4 Escalation — Stage 1 is 100% discharge, and says so
 
-**Stage 1 ships 100% discharge and says so.** Branching outcomes are a genuinely
-new sim capability (a conditional chain), and bolting it onto this stage would
-make an already-large epic unreviewable. Recorded as the Stage 3 prize: it is
-the mechanic that would make observation a *decision* ("did I rule out, or did I
-just delay?") rather than a slower discharge. §9 Q2.
+The chain model has one terminal (`stepIndex >= steps.length → discharge`).
+Branching to "escalate to inpatient" (§2.3's 15–25%) is a genuinely new sim
+capability and is **Stage 3**. Stage 1's two natives discharge 100%, which is
+stated, not hidden. It does not misteach the mechanic because the natives are
+*low-risk rule-outs by definition* — a TIA whose deficit resolved and a syncope
+that ruled out cardiac cause genuinely do go home. The interesting "did I rule
+out or just delay?" decision is Stage 3's, and named as such.
 
-## 6. Balance — and the anti-pattern the research warns about
+## 6. Balance
 
 | | value | basis |
 |---|---|---|
-| cost | **$14,000** | §2.6's "high upfront costs often outweigh eventual savings" — it must be the most expensive room in the game (ER is $10,000) and must not pay back immediately |
-| beds at min size | 2 | §4 density |
-| duration | 240 game-min | §5.2, compressed |
-| fee | **$400** | low per-bed-hour: observation is cheap monitoring, and its payback is THROUGHPUT (fewer deaths/walkouts, more completed chains), not the fee |
-| staffRatio | nurse: 5 | §2.4, measured |
+| room cost | **$12,000** | above ER ($10k); but native revenue means it is not a pure sink (§2.6) |
+| beds at min size | 2 | §4 density at `tilesPerProp: 6` |
+| obs step duration | 360 game-min | §5.2 |
+| obs step fee | **$500** | low per-bed-hour; the room also earns each condition's ER-step fee |
+| nurseTech salary | **$100/day** | §5.1, below nurse |
+| staffRatio | nurseTech: 6 | §5.1, owner spec |
 
-**Chain change (Stage 1):** `chestPain` becomes
-`er (70min/$1,000) → observation (240min/$400)`, and `headInjury` becomes
-`ct → er → observation`. **`stroke` is NOT routed to observation** (§2.1).
+**New emergency weights** (added to the existing 148):
 
-**The design prize the research hands us — and it is a better mechanic than a
-number.** §8 point 4: protocol-driven units with strict exclusion criteria
-dramatically outperform "put anyone in there" units; multi-diagnosis units
-showed *no significant LOS benefit or a slight increase*. **An observation unit
-that accepts everything should perform WORSE than a focused one.** That is a
-real tycoon decision and it falls naturally out of routing only the researched
-conditions there. Recorded for Stage 3; not built in Stage 1.
+```
+tia:     6      (acuity 2 → rides the case-mix shift)
+syncope: 8      (acuity 3 → steady base)
+```
 
-### 6.1 Falsification — calibrated against the MEASURED noise floor
+tia+syncope = 14 of 162 = **8.6% of arrivals** ≈ 2.7 obs patients/day at base
+reputation — squarely inside §2.5's 4–10% band. **Room-gated (§3.2), so these
+weights are ZERO whenever observation is absent** — the emergency mix is
+bit-identical to today until the room is built, exactly as the elective weights
+are zero until a modality is built.
 
-The `IMAGING_4B` review's MAJOR 8 killed that contract's thresholds because they
-were asserted, not calibrated. The baseline commit (`8ec700d`) now supplies real
-per-seed spreads, so this set is built from them:
+Revenue: at ~2.7/day the obs step alone earns ~$1,350/day, plus the ER-step fees
+of patients who would not exist otherwise; payback on $12k is ~9 days from the
+obs step and faster counting the whole conditions' revenue. Honest, because it is
+net-new demand.
 
-| metric | baseline (REFERENCE / COMPACT) | per-seed spread | usable? |
-|---|---|---|---|
-| deaths/day | 0.20 / 0.20 | **0.0–0.6** | **NO at 5 seeds** — a 10% threshold is 30× smaller than its own noise |
-| elective completion | 98.5% / 99.4% | tight | **YES** — near-saturated, a drop has room to mean something |
-| chestPain discharged | 7.0 / 10.8 | 3.0–11.0 | **weak** — 3.7× spread on REFERENCE |
-| radTech ACTIVE-only | 21.7% / 23.7% | 19.5–27.4 | **YES** |
-| xray utilisation | 8.1% / 9.3% | 4.7–13.5 | **weak on COMPACT** |
+### 6.1 Falsification — calibrated against the MEASURED noise floor (commit `8ec700d`)
 
-**REVERT if, on either arm:**
-1. **triage starts fall >15%** or **nurse idle-time falls below 10%** — the §5.1
-   nurse-capture failure, the single most likely way this feature does harm.
-   Nurse utilisation is 62.3% today, the highest of any role.
-2. **elective completion drops >15%** from 98.5% — the one tight falsifier.
-3. **chestPain discharged/arrived falls** below its 61% (REFERENCE) / 79%
-   (COMPACT) baseline — the §3.2-risk-1 discharge floor, now pinned in
-   `harness.test.ts` on the pre-change build.
-4. **fracture or pneumonia discharges fall** — X-ray/room preemption.
+The baseline commit supplies real per-seed spreads. Deaths at 5 seeds have a
+0.0–0.6 spread against a 0.20 mean — **unusable**, exactly as it killed
+`IMAGING_4B`'s thresholds. So:
 
-**Deaths are NOT in the revert set at 5 seeds, and that is stated deliberately
-rather than papered over.** To use deaths, raise the seed count until the
-spread is smaller than the effect being claimed. §9 Q5.
+**REVERT if, on either layout arm (both, per LAYOUT_PLAN §3.4):**
+1. **triage starts fall >15%** OR **nurse idle-time falls below its measured
+   baseline minus 15 points** — the ER-step load from two new conditions lands
+   on the nurse pool. State the measured baseline idle-% first, then set the
+   threshold as a delta (v1 review MAJOR 7: never cite utilisation as if it were
+   idle-time).
+2. **`appendicitis`, `gallstones` or any surgery/dialysis condition's
+   discharged/arrived falls** — the nurse-gated rooms, the exact thing v1's
+   nurse-only ward broke. This is the guard that proves the tech-staffing fix.
+3. **AMA walkouts rise >15%** on either arm — v1 moved them 9→32 on one seed and
+   watched with nothing. Now watched.
+4. **`chestPain`/`fracture`/`pneumonia` discharged/arrived falls** — the floors
+   pinned in `harness.test.ts` on the pre-change build (`8ec700d`).
 
-**Success bar** (the `IMAGING_4B` review's MAJOR 8c — that contract had revert
-conditions and no success criterion): chestPain discharged/arrived rises on both
-arms, with no regression in (1)–(4). If observation does not improve the
-survival of the patients it exists to serve, it is decoration.
+**SUCCESS BAR** (v1 had none): tia and syncope discharge ≥90% of arrivals on both
+arms, bed occupancy lands in a 40–80% band at base reputation, and **no
+regression in (1)–(4)**. If the ward cannot serve its own patients without
+harming the existing hospital, it is not ready.
 
-## 7. Save impact — SAVE_VERSION 12, and this one is genuinely owed
+**Deaths are NOT a revert metric at 5 seeds — stated deliberately** (v1 review
+MAJOR 3). To use deaths, raise the seed count until the spread is below the
+effect. §9 Q5.
 
-`save.ts:917` validates room type with `asOneOf(o.type, ROOM_TYPES)`. A save
-containing an `observation` room, opened by an older DEPLOYED build (Vercel
-auto-deploys; a cached tab suffices), dies on a confusing shape error instead of
-the clean *"newer than this game understands"* refusal.
+### 6.2 Expansion actually pays — the owner's headline ask, defended
 
-**That is exactly the concrete old-build failure every recent bump is justified
-by** — v8→v9 for roles (`asOneOf(o.role, ROLE_IDS)`), v10→v11 for condition ids
-(`asOneOf(o.condition, CONDITION_IDS)`), both at `save.ts:99-135`. Unlike the
-per-patient thought ring — where the reader silently drops unknown keys and no
-bump was owed — this one cannot be avoided.
+v1's fatal flaw: 2 beds exceeded demand, so no player would ever buy a third and
+the "expandable" ask was inert. v2 fixes this two ways:
+- `tilesPerProp: 6` means a bought column delivers a real bed (§4).
+- tia is acuity-2 referral-grade, so at high reputation its weight ×1.5 AND the
+  arrival rate ~×2 — obs demand at max rep is roughly 2.7 × (arrival mult) ×
+  (tia shift) ≈ 6–8/day, which **saturates a 2-bed ward and forces a third**.
+  Early game 2 beds suffice; late game you expand. The probe must show this
+  (§8 regression 5): occupancy rising with reputation toward saturation.
 
-**No field shape changes and no `readRoom` migration**: capacity is derived from
-the grid, not stored. The bump is owed to new CONTENT, exactly as v11's was.
+## 7. Save impact — SAVE_VERSION 12, owed THREE times
 
-> **Doc defect found while verifying this: `HANDOFF.md:316` states "new room
-> type is fine, but a staff meter is new saved state ⇒ SAVE_VERSION bump."**
-> That is **wrong** under the policy written into `save.ts:99-135` and would
-> mislead the next session into shipping a save-breaking change. Fix it in the
-> same commit.
+Every reason is the same concrete old-build failure the policy at
+`save.ts:33-138` requires, all via `asOneOf(... , X_IDS)`:
+
+1. **New room type** `observation` — `save.ts:917` `asOneOf(o.type, ROOM_TYPES)`.
+2. **New condition ids** `tia`, `syncope` — `save.ts:757`
+   `asOneOf(o.condition, CONDITION_IDS)` (the v10→v11 precedent exactly).
+3. **New role id** `nurseTech` — `asOneOf(o.role, ROLE_IDS)` (the v8→v9
+   precedent exactly).
+
+An older DEPLOYED build opening such a save dies on a shape error instead of the
+clean "newer than this game understands" refusal. **No field shape changes and
+no `readRoom`/`readPatient` migration** — capacity is derived from the grid, not
+stored; `stepIndex` already serialises; the v1 code review ran the full save
+suite at v12 including byte-identity and version-border fixtures, all green.
 
 ## 8. Regressions required
 
-1. **Room shape** — `observation` derives exactly 2 beds at min size (4×4) and
-   more when expanded. Pins §4's density arithmetic. Add to
-   `capacity.test.ts:60-92` beside the existing min-size pins.
-2. **Chain terminal** — a chestPain patient in a world with `er` + `observation`
-   reaches `discharged` with the full fee, and the observation reservation holds
-   its bed for the whole step.
-3. **Health is paused in the bed** — a patient on an active observation
-   reservation loses NO health over the step. This is the §1-point-2 claim, the
-   entire reason the feature fixes the §4B defect; it must not silently regress.
-4. **Anti-capture fires for observation** — with the ward occupied and triage
-   starved, a ratio nurse is refused extension (`dispatcher.ts:201-203`).
-   The §5.1 risk, pinned.
-5. **Bed turnover** — beds turn over at a rate consistent with §5.2's
-   compression; falsifies a duration that silently deletes a bed for a day.
-6. **v11 → v12 back-compat** — a v11 save loads. Use the REAL downgrade helper
-   (`save.test.ts:840-860`, which DELETES fields), not the version-stamp tamper
+1. **Room shape** — `observation` derives exactly 2 beds at 4×4 and 3 at 5×4
+   (pins `tilesPerProp: 6` vs the rejected 8). Add to `capacity.test.ts`.
+2. **Native chains** — `tia` and `syncope` are each `er → observation`, step 1
+   is `nurseTech`-staffed, and a patient reaches `discharged` with the full fee.
+3. **Room-gating** — with NO observation room, `tia`/`syncope` never spawn
+   (emergency mix bit-identical to today); WITH one built, they do. Pins §3.2,
+   the dissolution of the stranding failure.
+4. **Nurse pool untouched** — a run with the observation ward busy still
+   discharges `appendicitis`/`gallstones` (the tech-staffing fix; the exact
+   assertion v1 failed).
+5. **Bed occupancy / turnover** — mean occupancy over a 5-day run lands in a
+   stated band and rises with reputation (falsifies a duration that deletes a bed
+   for a day; pins §6.2's expansion premise).
+6. **Bladder paused in the bed** — a patient on an active observation
+   reservation does not accident (pins the Stage-1 `bedbound` flag; §5.3).
+7. **v11 → v12 back-compat** — a v11 save loads. Use the REAL downgrade helper
+   (`save.test.ts:840-860`, which DELETES fields), NOT the version-stamp tamper
    lines at `:534/544/552` — that mistake made a regression vacuous in the
-   thoughts contract and it must not be repeated.
-7. **Coverage guards pass** — `data.test.ts:55-83` (every room type used by ≥1
-   condition step: satisfied by the chain change, and would FAIL without it),
-   `expansion1.test.ts:70-118` prop-fit, `buildMenu.dom.test.ts:108-130`
-   totality, `edRatio.test.ts:138-151` staffRatio ⊆ staffedBy.
+   thoughts contract.
+8. **Coverage guards** — `data.test.ts:55-83` (obs used by ≥1 step — satisfied by
+   the natives; would FAIL without them), `expansion1.test.ts` prop-fit,
+   `buildMenu.dom.test.ts` totality, `edRatio.test.ts` staffRatio ⊆ staffedBy.
+9. **RNG re-pins derived mechanically, never predicted** — the new role + room +
+   conditions shift seeded streams; re-pin whatever goes red, committed WITH the
+   change (`INVARIANTS.md:161/278`).
 
-## 9. Open questions a reviewer must settle
+## 9. Open questions for the reviewers
 
-1. **Is the Stage-1/Stage-2 split right?** §3 defers the return-to-imaging leg —
-   the research's most valuable finding and the biggest imaging lever. Is
-   shipping a terminal-only observation unit first genuinely safer, or does it
-   ship a chain we immediately rewrite (the exact mistake §4B made)?
-2. **Is 100% discharge acceptable for Stage 1** (§5.4), when §2.3 says 15–25%
-   escalate? Does a unit where everyone goes home misteach the mechanic?
-3. **Bladder during observation** (§5.3) — pause, or accidents in beds?
-4. **Nurse-only, or add an APP role?** §2.4 says EDOUs are APP-led and
-   attending-only staffing measured worse. A new `RoleId` is a save-affecting
-   change of its own (`asOneOf(o.role, ROLE_IDS)`) — but the bump is already
-   being spent. Is this the moment to add it, or scope creep?
-5. **Is 5 seeds enough?** §6.1 shows deaths are unusable at 5. Raise the count,
-   change the metric, or accept the blind spot — but choose explicitly.
-6. **The expandability trap.** `build.ts:248-250` rejects expansion while ANY
-   reservation is live. With long occupancy an observation ward is almost never
-   expandable without the close/drain gesture — and the drain takes a full step.
-   Is that acceptable friction for a room whose selling point is "add more
-   beds," or does it need a remedy?
-7. **Does `maxOccupants` hold?** `expansion1.test.ts:60-69` derives it from
-   `max(step.roles.length) + 1`, i.e. one crew plus one patient. A 4-bed ward
-   holds 4 patients plus a nurse; the standing-room assertion may not cover it.
-8. **Is $14,000 / $400 the right shape**, given §2.6 says payback is indirect?
+1. **Is room-gating an emergency condition on a room the right mechanism**
+   (§3.2), or does gating belong elsewhere? It must NOT become an elective-style
+   pre-triaged stream — the owner wants ED walk-ins through triage → ER.
+2. **Are `er → observation` (2-step) the right chains**, or does tia clinically
+   demand its CT rule-out even in Stage 1 (making it 3 steps and reopening the
+   never-lengthen debate)?
+3. **Bladder: pause in Stage 1, or ship the hygiene job now?** (§5.3) The owner
+   asked for nurse-tech accident handling; this contract stages it one step
+   later. Right call, or should Stage 1 carry it?
+4. **Is `nurseTech` serving ONLY observation correct for Stage 1**, or should it
+   also relieve nurses elsewhere immediately (the capacity-lever payoff)? The
+   latter reintroduces nurse-pool interaction the tech-staffing was chosen to
+   avoid.
+5. **Seed count.** Deaths are unusable at 5 (§6.1). Raise, change the metric, or
+   accept the blind spot — choose explicitly.
+6. **The expandability friction** (`build.ts:248-250` rejects expansion while any
+   reservation is live; a 360-min ward is almost always busy). v1's code review
+   measured the drain at ~80 real-seconds at 1× — a documented gesture, not a
+   blocker. Confirm that judgement holds for a bed-scaled room.
+7. **Is $12,000 / $500 / weights 6+8 the right shape** for "2 beds early,
+   saturates late"? The whole §6.2 expansion premise rests on it and it is
+   asserted, not yet measured.
 
 ## 10. What the research could NOT establish — carried, not laundered
 
-1. **Headache as a standard EDOU protocol — UNVERIFIED.** The owner named it; no
-   fetched source lists it. Head *injury* is well-attested. Not included.
-2. **Exact condition-mix percentages — UNVERIFIED.** The Emory CDU figures came
-   from a search extraction of a PDF the harness could not open. Ordering
-   probably right, decimals unverified.
-3. **Chest pain's share of obs volume — NOT FOUND.** Every source says #1; none
-   gave a percentage. Any "30–50%" is inference.
-4. **ACEP chest-pain protocol details** (0/6h troponins, 8–24h window) are
-   second-hand via search summary, not a direct read.
-5. **FGI section numbers — NOT FOUND.** The 120–140 sq ft / 4-ft clearance /
-   1-toilet-per-6 figures come from HFM reporting *about* FGI, not the code.
-6. **Median (vs mean) LOS — NOT ESTABLISHED.** All good figures are means; the
-   distribution is right-skewed, so the median is probably lower.
-7. **Nurse ratio is convention, not law.** No US state mandates an
-   observation-specific ratio.
+1. **Headache as a standard EDOU protocol — UNVERIFIED.** Not shipped.
+2. **Exact condition-mix percentages — UNVERIFIED** (Emory figures from an
+   unopenable PDF). Ordering probably right, decimals not.
+3. **Chest pain's share of obs volume — NOT FOUND.**
+4. **ACEP protocol details** — second-hand via search summary.
+5. **FGI section numbers — NOT FOUND** (HFM reporting about FGI, not the code).
+6. **Median (vs mean) LOS — NOT ESTABLISHED.**
+7. **Nurse/tech ratio is convention, not law.**
 
 ## 11. Sources
 
-- Baugh et al., *Health Affairs* 2012 — observation unit cost savings
+- Baugh et al., *Health Affairs* 2012 — observation cost savings
 - Ross et al., *Health Affairs* 2013 — protocol-driven vs scattered observation
-- PMC3922480 — multi-site EDOU operational characteristics (LOS, ratios, 84.3%
-  discharge, 4–10% sizing rule)
-- PMC8967459 — NHAMCS; 39% of US EDs have a unit
-- PMC12194427 — 2025 narrative review; multi-diagnosis units underperform
-- PMC11291183 — CCTA occurs DURING the observation stay (§3)
-- CMS Two-Midnight Rule; Medicare Claims Processing Manual Ch.12 §30.6.8
-- SAEM EDOU toolkit; ACEP chest-pain protocol; AAEM ED staffing ratios
-- FGI Guidelines via HFM Magazine design reporting
+- PMC3922480 — multi-site EDOU (LOS 12.9h, 1 RN:5–8 beds, 84.3% discharge, 4–10%
+  sizing)
+- PMC8967459 — NHAMCS; 39% of EDs have a unit
+- PMC12194427 — 2025 review; multi-diagnosis units underperform
+- PMC11291183 — imaging occurs DURING the observation stay (Stage 2 basis)
+- CMS Two-Midnight Rule; SAEM EDOU toolkit; AAEM staffing ratios; FGI via HFM
