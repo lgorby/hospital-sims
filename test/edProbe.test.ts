@@ -8,78 +8,14 @@ import { ROOM_DEFS } from '../src/sim/data/rooms';
 import { EventBus } from '../src/events';
 import { setupNewGame } from '../src/sim/newGame';
 import { World } from '../src/sim/world';
-import type { RoomType } from '../src/sim/data/rooms';
-import type { GridPoint, Rect } from '../src/sim/types';
 import { GAME_MINUTES_PER_TICK } from '../src/sim/clock';
-
-interface RoomSpec {
-  type: RoomType;
-  rect: Rect;
-  door: GridPoint | null;
-}
-
-/** Mirrors test/harness.test.ts STANDARD_ROOMS — the reference build. */
-const REFERENCE_BUILD: RoomSpec[] = [
-  { type: 'restroom', rect: { col: 5, row: 27, cols: 2, rows: 3 }, door: { col: 7, row: 28 } },
-  { type: 'triage', rect: { col: 10, row: 28, cols: 2, rows: 2 }, door: { col: 12, row: 29 } },
-  { type: 'exam', rect: { col: 14, row: 27, cols: 3, rows: 3 }, door: { col: 17, row: 28 } },
-  { type: 'exam', rect: { col: 18, row: 27, cols: 3, rows: 3 }, door: { col: 21, row: 28 } },
-  { type: 'xray', rect: { col: 24, row: 26, cols: 3, rows: 4 }, door: { col: 27, row: 27 } },
-  // DEPARTMENTS_PLAN §3.2: `resp` is retired and its two steps route to `exam`.
-  // This slot becomes a THIRD EXAM ROOM (both are 3×3 minimum, so the rect is
-  // drop-in) — WITHOUT it the reference build silently loses a server, 3 → 2,
-  // confounding a 33% capacity cut with the routing change. That is exactly
-  // the confounding ED_PLAN §5b had to split into arms.
-  { type: 'exam', rect: { col: 28, row: 27, cols: 3, rows: 3 }, door: { col: 31, row: 28 } },
-  { type: 'er', rect: { col: 32, row: 26, cols: 3, rows: 4 }, door: { col: 35, row: 27 } },
-  { type: 'ultrasound', rect: { col: 8, row: 21, cols: 2, rows: 3 }, door: { col: 10, row: 22 } },
-  { type: 'ct', rect: { col: 12, row: 20, cols: 4, rows: 4 }, door: { col: 14, row: 24 } },
-  { type: 'mri', rect: { col: 17, row: 20, cols: 4, rows: 4 }, door: { col: 19, row: 24 } },
-  { type: 'nucMed', rect: { col: 22, row: 20, cols: 3, rows: 4 }, door: { col: 23, row: 24 } },
-  { type: 'dialysis', rect: { col: 26, row: 20, cols: 3, rows: 4 }, door: { col: 27, row: 24 } },
-  { type: 'surgery', rect: { col: 30, row: 20, cols: 4, rows: 4 }, door: { col: 32, row: 24 } },
-];
-
-/**
- * THE MEASUREMENT-VALIDITY ARM (`LAYOUT_PLAN` §3, owner ask 2026-07-19).
- *
- * REFERENCE_BUILD is the fixture behind every balance number this project has
- * recorded (DEPARTMENTS_PLAN §3.8, ED_PLAN §5b, §4.3). Its triage door sits 18
- * tiles from the entrance (20,39), and the utilisation probe measured that one
- * placement as worth +28% triage throughput — so the fixture's SPRAWL is a
- * large uncontrolled variable in all of them.
- *
- * This arm holds EVERYTHING else constant — same 13 rooms, same types, same
- * sizes, same staffing, same cash — and only packs them close to the entrance
- * in two bands with corridors on rows 38 and 31, reached by the clear column-20
- * channel. Triage door is 7 tiles out instead of 18: compact but not optimal,
- * which is the point. This is meant to be a plausible player layout, not a
- * best case engineered to maximise the delta.
- *
- * If the deltas here are large, the fixture must be revisited before it
- * ratifies another balance decision.
- */
-const COMPACT_BUILD: RoomSpec[] = [
-  // Band A — rows 34-37, doors onto the row-38 corridor.
-  { type: 'restroom', rect: { col: 5, row: 35, cols: 2, rows: 3 }, door: { col: 5, row: 38 } },
-  { type: 'exam', rect: { col: 8, row: 35, cols: 3, rows: 3 }, door: { col: 9, row: 38 } },
-  { type: 'er', rect: { col: 12, row: 34, cols: 3, rows: 4 }, door: { col: 13, row: 38 } },
-  { type: 'triage', rect: { col: 26, row: 36, cols: 2, rows: 2 }, door: { col: 26, row: 38 } },
-  { type: 'exam', rect: { col: 28, row: 35, cols: 3, rows: 3 }, door: { col: 29, row: 38 } },
-  { type: 'exam', rect: { col: 32, row: 35, cols: 3, rows: 3 }, door: { col: 33, row: 38 } },
-  // Band B — rows 27-30, doors onto the row-31 corridor.
-  { type: 'xray', rect: { col: 5, row: 27, cols: 3, rows: 4 }, door: { col: 6, row: 31 } },
-  { type: 'ultrasound', rect: { col: 9, row: 28, cols: 2, rows: 3 }, door: { col: 9, row: 31 } },
-  { type: 'ct', rect: { col: 12, row: 27, cols: 4, rows: 4 }, door: { col: 13, row: 31 } },
-  { type: 'mri', rect: { col: 17, row: 27, cols: 4, rows: 4 }, door: { col: 18, row: 31 } },
-  { type: 'nucMed', rect: { col: 22, row: 27, cols: 3, rows: 4 }, door: { col: 23, row: 31 } },
-  { type: 'dialysis', rect: { col: 26, row: 27, cols: 3, rows: 4 }, door: { col: 27, row: 31 } },
-  { type: 'surgery', rect: { col: 30, row: 27, cols: 4, rows: 4 }, door: { col: 31, row: 31 } },
-];
-
-const EXPANSION_WING: readonly RoomType[] = [
-  'ultrasound', 'ct', 'mri', 'nucMed', 'dialysis', 'surgery',
-];
+import {
+  COMPACT_BUILD,
+  EXPANSION_WING,
+  REFERENCE_BUILD,
+  matureStaffRoster,
+  type RoomSpec,
+} from './fixtures/builds';
 
 /**
  * ED_PLAN §6 / ED_IMPL_PLAN §6b — the Stage-B1 measurement instrument.
@@ -89,20 +25,14 @@ const EXPANSION_WING: readonly RoomType[] = [
  * discharged, died and left-untreated, none of which detect a deleted payroll
  * brake or a starved triage queue. The columns below are the ones that can.
  *
+ * REFERENCE_BUILD / COMPACT_BUILD / EXPANSION_WING now live in
+ * `./fixtures/builds` so the economy probe measures the SAME hospital.
+ *
  * Run with: npx vitest run test/edProbe.test.ts --reporter=basic
  */
 
-const STAFF: { role: RoleId; count: number }[] = [
-  { role: 'nurse', count: 3 },
-  { role: 'doctor', count: 2 },
-  { role: 'radTech', count: 2 },
-  { role: 'respTherapist', count: 1 },
-  { role: 'sonographer', count: 1 },
-  { role: 'surgeon', count: 1 },
-  { role: 'anesthesiologist', count: 1 },
-  { role: 'evs', count: 1 },
-  { role: 'maintenance', count: 1 },
-];
+// Mutated in place by the "3rd radTech" arm below — a fresh array per module.
+const STAFF: { role: RoleId; count: number }[] = matureStaffRoster();
 
 interface Probe {
   seed: number;

@@ -1,11 +1,16 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-19 (late) — **THOUGHT BUBBLES shipped** (render-only,
-committed not pushed); three epics diagnosed and NONE buildable yet (observation
-banked at v4, shifts + economy-rebalance both NOT READY). **The next concrete
-task is building the EARLY-GAME PROBE — see START HERE.** ~18 commits ahead of
-origin, all held from deploy by owner. Prior: outpatient stream LIVE
-(SAVE_VERSION 11, one-way); Departments Stage 2a still blocked.
+**Last updated:** 2026-07-19 (late) — **EARLY-GAME ECONOMY PROBE built + reviewed**
+(`test/economyProbe.test.ts`, gated; 8 adversarial-review findings folded; its
+measured numbers recorded in `ECONOMY_STAGE1_CONTRACT.md` MEASURED block). **The
+next concrete task is DERIVING the ECONOMY Stage-1 v2 numbers from those streams —
+see START HERE.** Three epics diagnosed (observation banked at v4, shifts +
+economy-rebalance both NOT READY). **GIT STATE CORRECTED (prior handoff was
+stale): the working tree is clean and all commits through `74a516e` are on
+`origin/master` (reflog: "update by push") — so the thought-bubble + measurement
+layer are already PUSHED and LIVE, NOT held.** The uncommitted probe work is
+local-only; a push is a deploy decision for the owner. Prior: outpatient stream
+LIVE (SAVE_VERSION 11, one-way); Departments Stage 2a still blocked.
 
 ## Read order
 
@@ -46,11 +51,11 @@ hygiene.**
 
 | | |
 |---|---|
-| Tests | **690** (686 passed, 4 skipped), 49 files — `npm test` |
+| Tests | **691** (686 passed, 5 skipped), 50 files — `npm test` (the new gated economy probe adds one skipped file) |
 | Gates | lint, `tsc --noEmit`, `vite build` all green; CI runs the full gate on every push to `master` and every PR |
 | `SAVE_VERSION` | **11** (`src/sim/save.ts:31`), v1–v11 loadable — **DEPLOYED, so one-way** |
 | Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 15 room types (14 buildable, `resp` retired) · 11 staff roles |
-| Working tree | clean. `d172f58` and earlier are pushed (LIVE). **`8ec700d`, `2288399`, `f9ecbbb` and this doc update are committed but NOT PUSHED** — owner held the deploy 2026-07-19 |
+| Working tree | before the probe: clean, and **all commits through `74a516e` are on `origin/master` (verified via reflog — the prior "NOT PUSHED / ~18 ahead" claim was STALE; a push landed at 18:52).** So `f9ecbbb` (thought bubbles) + `8ec700d` (measurement layer) are LIVE. The economy-probe commit is local-only until the owner pushes. |
 
 **SAVE_VERSION 11 is deployed, which makes it one-way.** Saves written by the
 live build cannot be opened by the previous one — that is the bump doing its
@@ -128,14 +133,25 @@ revisited.
 
 ### START HERE (session handoff, 2026-07-19 late — BUBBLES + THREE MEASURED DIAGNOSES)
 
-**Everything committed, NOT PUSHED** (owner held the deploy all session). Working
-tree clean, 690 tests, all gates green on `master`. ~18 commits ahead of origin.
+Working tree clean before the probe; 691 tests, all gates green on `master`.
+Commits through `74a516e` are on `origin/master` (LIVE — the "NOT PUSHED / ~18
+ahead" claim was stale; corrected in Current state above).
 
-**► THE NEXT CONCRETE TASK: build the EARLY-GAME PROBE.** Everything below funnels
-to this. The economy rebalance blocks shifts, the economy rebalance's numbers
-must be measured on an early-game arm that does not exist yet, and the last three
-contracts all died the SAME way — measuring the flattering arm. Build the probe
-FIRST, then write numbers. Spec is in the box at the bottom of this block.
+**► THE EARLY-GAME PROBE IS BUILT** (`test/economyProbe.test.ts`, gated
+`ECONOMY_PROBE=1`; shared builds now in `test/fixtures/builds.ts`, reused by
+`edProbe`). It was adversarially reviewed (READY-WITH-FIXES, all 8 findings
+folded) and its numbers are in `ECONOMY_STAGE1_CONTRACT.md` (MEASURED block).
+
+**► THE NEXT CONCRETE TASK: DERIVE the ECONOMY Stage-1 v2 numbers** from the
+probe's raw per-arm streams (the levers are linear, so solve analytically — no
+sweep). The probe proved the naïve Stage-1 unwinnable: the same fee-cut + flat
+per-tile utilities that leave the mature build at 20–41% put the throughput-capped
+starter at **−67%**, and CT goes net-negative. v2 must concentrate utilities on
+EQUIPMENT rooms (imaging/OR — the starter owns none), trim fees gentler than 50%,
+and treat starting cash as a co-lever. Then re-run the shock + per-room P&L at the
+derived numbers, write v2, review, THEN implement. Full direction: the MEASURED
+block in `ECONOMY_STAGE1_CONTRACT.md`. The original probe spec is in the box at
+the bottom of this block, retained for provenance.
 
 | commit | what |
 |---|---|
@@ -185,7 +201,12 @@ negative from day one (fixed per-room cost ÷ ~5× lower starter revenue-per-roo
 **Every contract that deferred/asserted numbers off the mature build was wrong.
 Build the early-game measurement FIRST; derive numbers from the solvency floor.**
 
-> ## ► THE PROBE TO BUILD NEXT (economy Stage-1 v2 prerequisite)
+> ## ► THE PROBE — NOW BUILT (spec retained for provenance)
+>
+> **DONE 2026-07-19:** `test/economyProbe.test.ts` implements this spec (early-game
+> + reference + compact + a MATURE shock arm with a mid-run rep collapse, per-room
+> P&L, raw streams for the analytical solve). Reviewed; results in the
+> ECONOMY_STAGE1_CONTRACT MEASURED block. The spec below is what was asked for.
 >
 > A `test/economyProbe.test.ts` (gated like `edProbe`, `OBS_PROBE`/`ED_PROBE`
 > precedent) with, critically, an **EARLY-GAME ARM that does not exist today**:

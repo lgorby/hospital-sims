@@ -86,6 +86,64 @@ teach. Needs a v2 — and the early-game measurement must come FIRST. **No code.
 
 ---
 
+## MEASURED — the early-game probe is BUILT (2026-07-19, v2 step 1 DONE)
+
+`test/economyProbe.test.ts` (gated `ECONOMY_PROBE=1`), 5 seeds, injects the three
+levers from outside `src/` (fee scale, size-scaled utilities, per-repair). Shared
+builds extracted to `test/fixtures/builds.ts` (also consumed by `edProbe`).
+Reviewed adversarially (READY-WITH-FIXES); all 8 findings folded. Run:
+`ECONOMY_PROBE=1 npx vitest run test/economyProbe.test.ts --disable-console-intercept`.
+
+**Raw per-arm streams ($/day, full fee):**
+
+| arm | grossRev | vending | payroll | util-tiles | breaks/d |
+|---|---|---|---|---|---|
+| EARLY-GAME (rep 300, ~$34k post-build) | 1,062 | 66 | 530 | 40 tiles → $468 @candidate | 0 |
+| REFERENCE (mature) | 18,774 | 149 | 3,060 | 154 tiles → $4,010 @candidate | 1.16 |
+| COMPACT (mature) | 25,706 | 134 | 3,060 | 154 tiles → $4,010 @candidate | 1.16 |
+
+**Margins:** BASELINE (today) — EARLY 53% · REFERENCE **83.8%** · COMPACT **88.2%**
+(the ~82% disease, confirmed). BALLPARK (fee×0.5 + utilities + repairs) — EARLY
+**−67%** · REFERENCE 20% · COMPACT 41% · REFERENCE **2× payroll −15.7%** (⇒ 2×
+payroll BITES once the margin is tight — the shifts unblock). SHOCK (mature,
+rep→100 @day 6): trough → recovery, **recovered 5/5** — a tight-margin hospital
+survives and climbs back.
+
+**Three measured findings (were asserted, now numbers):**
+1. **Design MAJOR 1 QUANTIFIED.** The same levers that leave the mature build at
+   20–41% put the starter at **−67%**. Mature earns **18×** the starter's gross,
+   so a flat per-tile utility meaningful at scale ($4,010 = 21% of mature gross)
+   is **44% of the starter's** revenue. The starter is **throughput-starved**
+   (1 nurse → 5.4 discharged vs 11.3 turned away), so per-tile costs are
+   REGRESSIVE against it.
+2. **Design MAJOR 3 CONFIRMED.** CT goes **net-negative** under BALLPARK (−$51/day
+   REFERENCE, −$35 COMPACT, −$182 at 2× payroll) — a just-populated imaging room
+   turned into a loss, reversing the LIVE outpatient milestone.
+3. **Repairs are NOT a margin lever.** The starter has no breakable room (0
+   breakdowns) and mature repairs are only ~$552/day. Keep them thematic
+   (maintenance decision), not load-bearing for the margin collapse.
+
+**The analytical result (levers are linear): the naïve Stage-1 is unwinnable.**
+You cannot collapse the mature 82% via a uniform fee cut + flat per-tile utilities
+while keeping the throughput-capped starter growing. v2 numbers must therefore:
+- **Concentrate utilities on EQUIPMENT rooms (imaging/OR)**, near-zero on basic
+  clinical rooms. Mature utilities are already 81% imaging/OR; the starter owns
+  none, so this prices SIZE/equipment without punishing a small clinic — and it
+  is thematically correct (an MRI draws vastly more than an exam room). Also fixes
+  finding 2: raise imaging fees or lower the imaging util rate so CT stays > $0.
+- **Trim fees gentler than 50%** (or non-uniformly) — the starter is already near
+  a healthy 53%; the FAT is the mature build, and equipment utilities do most of
+  the collapsing.
+- **Treat starting cash / a migration grant as an explicit co-lever** (review
+  MAJOR 1) — the starter is not meant to grow fast; give it runway.
+- **Consider a gentler mature target (~25–30%, not 15%)** so the fee trim can stay
+  survivable for the starter.
+
+Remaining v2 steps (from the sequence above): derive the concrete rates from these
+streams, re-run the shock + per-room P&L at the derived numbers, then write v2.
+
+---
+
 _Original draft below, retained for provenance; superseded by the v2 requirements above._
 
 **Status (superseded):** CONTRACT DRAFT (2026-07-19).
