@@ -366,6 +366,32 @@ Both were hardened by independent adversarial reviews before any code was writte
 
 ## Next
 
+- **DEPARTMENTS EPIC — `docs/DEPARTMENTS_PLAN.md` (DRAFT, awaiting pre-impl
+  review).** Owner asks 2026-07-19: the OR should be "a collection of
+  different operating rooms inside of it", X-ray "a collection of rooms where
+  there can be more than one xray machine in the entire entity", and — if
+  patients aren't really seen there — respiratory therapy should lose its room
+  entirely. **Deep research (24 sources, 98 claims, top 25 adversarially
+  verified) says the game has ONE capacity axis and reality has THREE:**
+  AREA-scaled (dialysis — CBC §1224.36.2 permits one open room, 80 sq ft +
+  4-ft clearance per station; the game already has this right), EQUIPMENT-
+  scaled (X-ray/CT/MRI/nucMed/OR — capacity is the MACHINE measured as
+  per-scanner serial occupancy, so floor area buys nothing and you add a
+  walled suite), and STAFF-HOUR-scaled (respiratory therapy — **AARC's
+  methodology contains no spatial capacity unit at all**; RTs are mobile
+  bedside providers and APEX standards PROHIBIT treating several patients at
+  once). Two rows flagged weak, not laundered: the OR clearance-band claim
+  passed only 2-1, and the ED per-station evidence was **REFUTED 0-3** (a 2018
+  proposal, not adopted code). **The #1 blast-radius item: `save.ts:900`
+  validates room type with `asOneOf(o.type, ROOM_TYPES)`, so deleting `resp`
+  from `ROOM_DEFS` would make every LIVE save containing one refuse to load —
+  the plan recommends RETIRE (keep loadable, drop from the build menu) over
+  delete or migrate.** Stage 2's chosen shape deliberately avoids internal
+  wall edges: a department is a SET of ordinary Rooms, so every existing wall,
+  door, A*, reservation and capacity path is reused and the dispatcher needs
+  no change at all (`roomsOfType` already returns them). The design prize is
+  §5: suites add machines but NOT technicians, making "do I need a machine or
+  a tech?" a real diagnosis (ED_PLAN §7.2's movable bottleneck).
 - **STAFF LOUNGE — owner ask (2026-07-19), NOT SCOPED.** *"Add the option to
   create a staff lounge in the Comfort dropdown area. Staff need a place to
   take breaks and lunches."* The room itself is cheap — a `RoomDef` with
