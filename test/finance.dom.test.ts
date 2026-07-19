@@ -331,10 +331,71 @@ describe('departments (§5.1)', () => {
     // under an "Income today" column it read as one day's wages dwarfing one
     // day's income. It is a grid row, so the money lands in a money column
     // rather than under "Patients seen" (live-drive NIT 2).
-    const payroll = rowByLabel('Payroll (not allocated, lifetime)')!;
+    // It sits OUTSIDE the column grid (verification NIT): under any column
+    // header the figure read as that column's kind of number — first a
+    // patient count, then negative income for a department that doesn't
+    // exist. It belongs to no column because it belongs to no department.
+    const payroll = rowByLabel('Payroll (not allocated)')!;
     expect(payroll).not.toBeNull();
-    expect(cellTexts(payroll)).toEqual(['—', '—', '−$9,140', '—', '—']);
+    expect(payroll.classList.contains('finance-footer')).toBe(true);
+    expect(payroll.querySelectorAll('.finance-cell')).toHaveLength(0);
+    expect(payroll.querySelector('.bad')!.textContent).toBe('−$9,140');
+    expect(payroll.querySelector('.finance-footer-note')!.textContent).toContain('lifetime');
     expect(section('Departments').contains(payroll)).toBe(true);
+  });
+
+  /**
+   * The block sums what we CURRENTLY own, but `lifetime.revenue` remembers
+   * every fee ever billed — so revenue earned in a room since SOLD had no
+   * department to sit under, and the block was quietly short of Patient fees
+   * with nothing explaining the gap. This row is what makes it reconcile.
+   */
+  it('reconciles with lifetime revenue by naming income from sold rooms', () => {
+    const { world, modal } = fixture();
+    const room = [...world.rooms.values()][0]!;
+    room.revenueTotal = 400;
+    // $1,000 billed lifetime, $400 of it in a room we still own, no vending ⇒
+    // $600 was earned somewhere that no longer exists.
+    world.lifetime.revenue = 1000;
+    modal.open();
+
+    const sold = rowByLabel('Sold rooms (no longer owned)')!;
+    expect(sold).not.toBeNull();
+    expect(cellTexts(sold)[2]).toBe(money(600));
+
+    // And the block now adds up: every income-total cell plus the sold row
+    // equals lifetime revenue exactly.
+    const totals = [...section('Departments').querySelectorAll<HTMLElement>('.finance-row')]
+      .filter((r) => !r.classList.contains('finance-head'))
+      .map((r) => cellTexts(r)[2] ?? '—');
+    const sum = totals
+      .filter((t) => t !== '—')
+      .reduce((acc, t) => acc + Number(t.replace(/[^0-9]/g, '')), 0);
+    expect(sum).toBe(1000);
+  });
+
+  it('omits the sold-rooms row when everything earned is still owned', () => {
+    const { world, modal } = fixture();
+    const room = [...world.rooms.values()][0]!;
+    room.revenueTotal = 400;
+    world.lifetime.revenue = 400;
+    modal.open();
+    expect(rowByLabel('Sold rooms (no longer owned)')).toBeNull();
+  });
+
+  it('shows what the machines took today, not just their lifetime (v8)', () => {
+    const { world, modal } = fixture();
+    world.placeAmenity('vending', { col: 4, row: 4 });
+    const machine = world.amenityAt(4, 4)!;
+    machine.revenueToday = 35;
+    machine.revenueTotal = 220;
+    modal.open();
+
+    const amenities = rowByLabel('Amenities')!;
+    // Income today is a real figure now — it used to be a permanent em-dash
+    // because no per-day number existed anywhere in the game.
+    expect(cellTexts(amenities)[1]).toBe(money(35));
+    expect(cellTexts(amenities)[2]).toBe(money(220));
   });
 
   it('says "Capital invested", never "Spent" (it bills the free starting rooms)', () => {

@@ -342,9 +342,11 @@ export class FinanceModal extends PausingOverlay {
     // their own row: income is per-machine lifetime revenue, capital is what
     // the machines are worth, and the room columns read `—` because a machine
     // is not a room and has no patients-seen.
+    let vendingToday = 0;
     let vendingTotal = 0;
     let amenityCapital = 0;
     for (const amenity of world.amenities.values()) {
+      vendingToday += amenity.revenueToday;
       vendingTotal += amenity.revenueTotal;
       amenityCapital += amenitySellback(amenity.kind);
     }
@@ -354,9 +356,35 @@ export class FinanceModal extends PausingOverlay {
         'Amenities',
         [
           { text: String(world.amenities.size) },
-          { text: EM_DASH },
+          moneyCell(vendingToday, 'good'),
           moneyCell(vendingTotal, 'good'),
           moneyCell(amenityCapital),
+          { text: EM_DASH },
+        ],
+        template,
+      );
+    }
+
+    // THE reconciling line. Everything above sums what we CURRENTLY own, but
+    // `lifetime.revenue` remembers every fee ever billed — including fees
+    // earned in rooms since sold, which have no department left to sit under.
+    // Without this row the block was quietly short of Patient fees with
+    // nothing to explain the gap, and a player who sold a room would be told
+    // their hospital had earned less than it did. Derived, zero new state.
+    let ownedTotal = 0;
+    for (const room of world.rooms.values()) ownedTotal += room.revenueTotal;
+    // max(0) is defensive, not expected: a pre-v7 save restores rooms with
+    // counters 0 AND lifetime 0, so the two sides stay consistent.
+    const soldRoomIncome = Math.max(0, world.lifetime.revenue - ownedTotal - vendingTotal);
+    if (soldRoomIncome > 0) {
+      gridRow(
+        box,
+        'Sold rooms (no longer owned)',
+        [
+          { text: EM_DASH },
+          { text: EM_DASH },
+          moneyCell(soldRoomIncome, 'good'),
+          { text: EM_DASH },
           { text: EM_DASH },
         ],
         template,
@@ -370,18 +398,24 @@ export class FinanceModal extends PausingOverlay {
     // column it reads as one day's wages dwarfing one day's income, which is
     // a wrong conclusion about viability (review MINOR). Rendered as a grid
     // row so the money lands in a money column, not under "Patients seen".
-    gridRow(
-      box,
-      'Payroll (not allocated, lifetime)',
-      [
-        { text: EM_DASH },
-        { text: EM_DASH },
-        moneyCell(-world.lifetime.payroll, 'bad'),
-        { text: EM_DASH },
-        { text: EM_DASH },
-      ],
-      template,
-    );
+    // Rendered OUTSIDE the column grid (verification NIT): as a grid row its
+    // money landed under a column header — first "Patients seen", then
+    // "Income total", where it read as negative income for a department that
+    // does not exist. It belongs to no column because it belongs to no
+    // department; a bordered footer says that visually, the way the grid's Net
+    // row does.
+    const footer = document.createElement('div');
+    footer.className = 'modal-row finance-footer';
+    const label = document.createElement('span');
+    label.textContent = 'Payroll (not allocated)';
+    const value = document.createElement('span');
+    value.className = 'bad';
+    value.textContent = world.lifetime.payroll === 0 ? EM_DASH : money(-world.lifetime.payroll);
+    const note = document.createElement('span');
+    note.className = 'finance-footer-note';
+    note.textContent = 'lifetime · staff serve the whole hospital';
+    footer.append(label, note, value);
+    box.appendChild(footer);
   }
 }
 

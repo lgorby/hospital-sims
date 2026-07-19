@@ -975,6 +975,28 @@ body {
      the scroller would never engage and the overflow would escape the card. */
   min-height: 0;
   flex: 1 1 auto;
+  /* Chromium's overlay scrollbars leave NO track at rest, so the only cue that
+     content continues was a half-clipped row at the fold. Two things are
+     needed and the obvious pair is a trap: `scrollbar-gutter` RESERVES the
+     space (overlay scrollbars otherwise occupy none), and the ::-webkit rules
+     below PAINT the track — but declaring `scrollbar-width` silently disables
+     those pseudo-elements in Chromium, so the first attempt at this fix
+     rendered nothing at all. Measured: gutter+webkit = 10px reserved and
+     visible; adding `scrollbar-width` drops it back to the unstyled default. */
+  scrollbar-gutter: stable;
+}
+
+.finance-body::-webkit-scrollbar {
+  width: 10px;
+}
+
+.finance-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 5px;
+}
+
+.finance-body::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 /* Multi-column row: the grid template (label + N columns) is set inline,
@@ -1023,6 +1045,26 @@ body {
   color: #e8e6e0;
 }
 
+/* Payroll belongs to NO department, so it sits outside the column grid: as a
+   grid row its money landed under a column header and read as that column's
+   kind of number (verification NIT). A bordered footer says "hospital-wide"
+   visually, the way the grid's Net row separates itself. */
+.modal-row.finance-footer {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.25);
+  border-bottom: none;
+  margin-top: 4px;
+  padding-top: 6px;
+}
+
+.finance-footer-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: #8b9bb0;
+}
+
 /* Pre-v7 saves: "Total is since this save was upgraded" (§7 Q7). */
 .finance-note {
   font-size: 11px;
@@ -1055,11 +1097,17 @@ body {
    they read as "start … end" and invert the story on every rising week. */
 .finance-graph-frame {
   position: relative;
+  /* The plot is inset so the labels sit BESIDE the chart, not on top of it:
+     at zero inset the first data point shares the corner with its own label
+     and the line emerged from behind the chip (verification NIT). */
+  padding-left: 62px;
 }
 
 .finance-graph-scale {
   position: absolute;
   left: 0;
+  width: 56px;
+  text-align: right;
   font-size: 11px;
   color: #9fb0c5;
   background: rgba(20, 26, 34, 0.7);

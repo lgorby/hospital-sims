@@ -129,7 +129,10 @@ function advanceBreak(
     // Per-machine lifetime revenue (FINANCE_PLAN §4.2) — the RCT shop-window
     // read, so a badly-placed machine is visibly dead.
     const machine = nb.tile === undefined ? null : world.amenityAt(nb.tile.col, nb.tile.row);
-    if (machine?.kind === 'vending') machine.revenueTotal += BALANCE.needs.vendingPrice;
+    if (machine?.kind === 'vending') {
+      machine.revenueToday += BALANCE.needs.vendingPrice;
+      machine.revenueTotal += BALANCE.needs.vendingPrice;
+    }
     dropLitter(world, patient);
   }
   // clearNeedBreak re-runs assignWaitingSpot: the seat may be gone → the

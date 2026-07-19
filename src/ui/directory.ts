@@ -32,6 +32,11 @@ import { money } from './format';
  *  source — §9 invariant: insertion order is display order). */
 const CATEGORIES = Object.keys(CATEGORY_LABELS) as RoomCategory[];
 
+/** Amenity identity is its tile (the `world.amenities` keying convention). */
+function key(tile: { col: number; row: number }): string {
+  return `${tile.col},${tile.row}`;
+}
+
 export class DirectoryPanel {
   private panel!: HTMLElement;
   private list!: HTMLElement;
@@ -196,6 +201,11 @@ export class DirectoryPanel {
     const earnedByRoom = new Map<number, string>(
       rooms.filter((r) => roomEarns(r.type)).map((r) => [r.id, money(r.revenueToday)]),
     );
+    const earnedByAmenity = new Map<string, string>(
+      amenities
+        .filter((a) => a.kind === 'vending')
+        .map((a) => [key(a.tile), money(a.revenueToday)]),
+    );
     const subtotals = new Map<RoomCategory, string>(
       CATEGORIES.map((category) => [
         category,
@@ -216,7 +226,12 @@ export class DirectoryPanel {
         )
         .join('|'),
       [...subtotals.values()].join(','),
-      amenities.map((a) => `${a.kind}@${a.tile.col},${a.tile.row}:${this.amenityStatus(a)}`).join('|'),
+      amenities
+        .map(
+          (a) =>
+            `${a.kind}@${a.tile.col},${a.tile.row}:${this.amenityStatus(a)}:${earnedByAmenity.get(key(a.tile)) ?? ''}`,
+        )
+        .join('|'),
       staffCounts.join(','),
     ].join('||');
     if (renderKey === this.lastRenderKey) return;
@@ -266,7 +281,13 @@ export class DirectoryPanel {
             PROP_STYLE[amenity.kind].color,
             AMENITY_DEFS[amenity.kind].label,
             this.amenityStatus(amenity),
-            '', // amenity income lives on its inspect card (§4.2), not here
+            // A vending machine that took money today shows it, exactly like
+            // an earning room (verification NIT): a machine with $590 of
+            // takings and a blank column, next to an X-Ray reading "$0",
+            // was the panel contradicting itself. Non-earning amenities
+            // (trashcans, plants) stay blank — they are the `roomEarns`
+            // case, and a "$0" there is a category error, not a signal.
+            amenity.kind === 'vending' ? earnedByAmenity.get(key(amenity.tile)) ?? '' : '',
             () => {
               this.onJump(amenity.tile.col, amenity.tile.row);
               this.renderer.selected = {

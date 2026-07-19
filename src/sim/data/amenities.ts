@@ -31,6 +31,14 @@ export interface Amenity {
   tile: GridPoint;
   /** Trashcan contents (amenities Stage 2). */
   fill: number;
-  /** Lifetime revenue for vending machines (FINANCE_PLAN §4.2); 0 otherwise. */
+  /**
+   * Vending revenue (FINANCE_PLAN §4.2); 0 for trashcans and plants.
+   * `revenueToday` mirrors `Room.revenueToday` — same reset in the same
+   * `closeDay` step — so every "earned today" surface can read ONE thing.
+   * Without it a machine had no per-day figure anywhere in the game, which
+   * left the directory's earned column and the modal's Amenities row blank
+   * while the machine was visibly taking money.
+   */
+  revenueToday: number;
   revenueTotal: number;
 }

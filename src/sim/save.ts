@@ -28,7 +28,7 @@ import { World, type Mess, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 7;
+export const SAVE_VERSION = 8;
 
 /**
  * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
@@ -87,6 +87,14 @@ export const SAVE_VERSION = 7;
  * invisibly low (§3.2). NOTE this is the first bump that adds NO role —
  * `topUpCandidates` stays a no-op, nothing draws `world.rng` differently, and
  * the fixed harness seed is deliberately NOT re-pinned.
+ *
+ * v7 → v8 (finances follow-up): amenities gain `revenueToday`, the per-DAY
+ * partner of the v7 `revenueTotal` — machines had no per-day figure anywhere,
+ * so the directory's earned column and the modal's Amenities row sat blank
+ * while a machine was visibly taking money. Migration is a read-time default
+ * of 0, which is also the honest value: a v7 save recorded no such number,
+ * and the running day's takings are unknowable after the fact. Like v7 this
+ * adds NO role, so the harness seed stays un-re-pinned.
  * Anything below 1 or above SAVE_VERSION is refused.
  */
 export function isLoadableVersion(version: number): boolean {
@@ -244,6 +252,9 @@ export interface SavedAmenity {
   /** v7 (finances, §4.2): per-machine lifetime revenue (vending only earns).
    *  Pre-v7 saves restore 0. FROZEN position — after fill. */
   revenueTotal: number;
+  /** v8: the per-DAY partner, reset in the same closeDay step as rooms.
+   *  Pre-v8 saves restore 0. FROZEN position — after revenueTotal. */
+  revenueToday: number;
 }
 
 /**
@@ -492,6 +503,7 @@ const CASH_KEYS = Object.keys(emptyCashTotals()) as CashTallyKey[];
  *  DayTally key by construction), so a v8 addition auto-defaults on v7 saves
  *  exactly as `readTally` does — no second version table. */
 const V7 = 7;
+const V8 = 8; // amenities gain revenueToday (the per-day partner of v7's total)
 function cashKeyVersion(key: CashTallyKey): number {
   return Math.max(V7, TALLY_KEY_VERSIONS[key] ?? 1);
 }
@@ -879,7 +891,13 @@ function readRoom(value: unknown, label: string, saveVersion: number): Room {
 // ------------------------------------------------------------------ amenities
 
 function writeAmenity(a: Amenity): SavedAmenity {
-  return { kind: a.kind, tile: writePoint(a.tile), fill: a.fill, revenueTotal: a.revenueTotal };
+  return {
+    kind: a.kind,
+    tile: writePoint(a.tile),
+    fill: a.fill,
+    revenueTotal: a.revenueTotal,
+    revenueToday: a.revenueToday,
+  };
 }
 
 /** Version-aware since v7 (the readRoom precedent): pre-v7 machines restore
@@ -889,11 +907,20 @@ function readAmenity(value: unknown, label: string, saveVersion: number): Amenit
   const revenueTotal =
     saveVersion < V7 ? 0 : asNumber(o.revenueTotal, `${label}.revenueTotal`);
   if (revenueTotal < 0) fail(`${label}.revenueTotal`, 'a non-negative income total');
+  const revenueToday =
+    saveVersion < V8 ? 0 : asNumber(o.revenueToday, `${label}.revenueToday`);
+  if (revenueToday < 0) fail(`${label}.revenueToday`, 'a non-negative income total');
+  // The same pairwise bound the rooms carry: one billing site moves both by
+  // the same amount, and closeDay only ever LOWERS the day figure.
+  if (revenueToday > revenueTotal) {
+    fail(`${label}.revenueToday`, "an income-today no greater than the machine's income total");
+  }
   return {
     kind: asOneOf(o.kind, AMENITY_IDS, `${label}.kind`),
     tile: readPoint(o.tile, `${label}.tile`),
     fill: asNumber(o.fill, `${label}.fill`),
     revenueTotal,
+    revenueToday,
   };
 }
 

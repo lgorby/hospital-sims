@@ -20,6 +20,19 @@ was inline in five places and drifted the moment `revenueTotal` was added);
 (7) the daily report's zero-suppression predicate is `=== 0`, not `<= 0`, so
 a future negative category cannot silently hide a real loss.
 
+**Polish pass (same day, owner ask "fix them all"), SAVE_VERSION 8:** the
+Departments block gained **`Sold rooms (no longer owned)`** — §5 sums only
+rooms currently owned, so income from a SOLD room had no departmental home and
+the block was quietly short of `Patient fees`; the derived row closes it.
+Amenities gained **`revenueToday`** (SAVE_VERSION 8) — v7 gave machines only a
+lifetime figure, so no per-day vending number existed anywhere and both the
+directory column and the modal's Amenities row rendered a permanent em-dash.
+Payroll moved out of the column grid into a bordered footer; the graph plot is
+inset so labels sit beside it; `.finance-body` forces a visible scrollbar.
+**§7 Q2 (per-room running costs) remains DEFERRED and is now scoped as its own
+milestone in `HANDOFF.md` — it is a balance change, not a display change, and
+it is what would turn this ledger into true P&L.**
+
 **Original status: v3 — TWO pre-implementation review rounds folded; READY TO
 FREEZE and build.** Owner
 ask (2026-07-18): *"Do games like this show the profit and loss somewhere for

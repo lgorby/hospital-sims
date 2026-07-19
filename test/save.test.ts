@@ -1370,7 +1370,10 @@ describe('v6 → v7 migration (finances, FINANCE_PLAN §9.7)', () => {
       expect(room.revenueTotal).toBe(0);
       expect(room.visitsTotal).toBe(0);
     }
-    for (const a of w.amenities.values()) expect(a.revenueTotal).toBe(0);
+    for (const a of w.amenities.values()) {
+      expect(a.revenueTotal).toBe(0);
+      expect(a.revenueToday).toBe(0); // v8
+    }
     expect(w.lifetime).toEqual(emptyCashTotals());
     expect(w.history).toEqual([]);
     // THE N2 assertion: the watermark IS the restored discharge count, so the
@@ -1459,6 +1462,41 @@ describe('load border: finances (v7, §9.7)', () => {
     const result = loadOf(save);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toContain('revenueToday');
+  });
+
+  // v8: machines gained the per-DAY partner of revenueTotal.
+  it('v8: a machine round-trips its day AND lifetime takings, and the pair is bounded', () => {
+    const world = new World(new EventBus(), 9);
+    setupNewGame(world);
+    world.placeAmenity('vending', { col: 4, row: 4 });
+    const machine = world.amenityAt(4, 4)!;
+    machine.revenueToday = 35;
+    machine.revenueTotal = 220;
+
+    const result = loadOf(JSON.parse(saveToString(world)) as SaveData);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const restored = result.world.amenityAt(4, 4)!;
+    expect(restored.revenueToday).toBe(35);
+    expect(restored.revenueTotal).toBe(220);
+
+    // …and today may never exceed the lifetime figure (the rooms' rule).
+    const hostile = JSON.parse(saveToString(world)) as SaveData;
+    hostile.amenities[0]!.revenueToday = 999_999;
+    hostile.amenities[0]!.revenueTotal = 0;
+    const rejected = loadOf(hostile);
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) expect(rejected.reason).toContain('revenueToday');
+  });
+
+  it('v7 saves load with amenity revenueToday defaulted to 0', () => {
+    const v7 = parsedFinanceSave();
+    v7.saveVersion = 7;
+    for (const a of v7.amenities) delete (a as Partial<typeof a>).revenueToday;
+    const result = loadOf(v7);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    for (const a of result.world.amenities.values()) expect(a.revenueToday).toBe(0);
   });
 
   it('rejects a negative amenity revenueTotal and a negative lifetime category', () => {

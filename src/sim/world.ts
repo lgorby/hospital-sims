@@ -1419,6 +1419,7 @@ export class World implements PathGrid {
       kind,
       tile: { col: tile.col, row: tile.row },
       fill: 0,
+      revenueToday: 0,
       revenueTotal: 0,
     });
     const cost = AMENITY_DEFS[kind].cost;
@@ -2048,6 +2049,9 @@ export class World implements PathGrid {
     // load-time trim keeps, §9.7).
     while (this.history.length > BALANCE.finance.historyCapDays) this.history.shift();
     for (const room of this.rooms.values()) room.revenueToday = 0;
+    // Machines reset in the SAME step as rooms — one "earned today" epoch, so
+    // no surface can mix a fresh room figure with a stale machine one.
+    for (const amenity of this.amenities.values()) amenity.revenueToday = 0;
     this.today = emptyDayTally();
     this.events.emit('dayEnded', report);
   }

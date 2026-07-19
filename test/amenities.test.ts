@@ -155,6 +155,7 @@ describe('placeAmenity / sellAmenity handlers (§1.7)', () => {
         tile,
         fill: 0,
         revenueTotal: 0,
+        revenueToday: 0,
       });
       // The rule's PAYOFF: a room over the amenity tile is rejected by the
       // existing object check — a walkable amenity would silently lose this.

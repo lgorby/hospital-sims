@@ -76,7 +76,7 @@ describe('DirectoryPanel (hospital inventory pullout)', () => {
     world.buildRoom('dialysis', { col: 10, row: 10, cols: 3, rows: 4 }, { col: 11, row: 14 }, true);
     world.buildRoom('xray', { col: 20, row: 10, cols: 3, rows: 4 }, { col: 21, row: 14 }, true);
     world.breakRoom(world.roomsOfType('xray')[0]!);
-    world.amenities.set('5,5', { kind: 'trashcan', tile: { col: 5, row: 5 }, fill: 3, revenueTotal: 0 });
+    world.amenities.set('5,5', { kind: 'trashcan', tile: { col: 5, row: 5 }, fill: 3, revenueTotal: 0, revenueToday: 0 });
     toggle.click();
 
     const content = text(root);

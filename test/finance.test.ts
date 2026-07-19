@@ -314,6 +314,24 @@ describe('closeDay FROZEN order (§9.5)', () => {
     expect(world.lifetime.revenue).toBeGreaterThanOrEqual(fee);
   });
 
+  // v8: machines reset in the SAME step as rooms, so no surface can pair a
+  // fresh room figure with a stale machine one.
+  it('resets amenity revenueToday alongside rooms, keeping the lifetime total', () => {
+    const world = treatmentWorld();
+    world.placeAmenity('vending', { col: 4, row: 4 });
+    const machine = world.amenityAt(4, 4)!;
+    machine.revenueToday = 35;
+    machine.revenueTotal = 220;
+
+    closeOneDay(world);
+
+    // The day figure is zeroed...
+    expect(machine.revenueToday).toBe(0);
+    // ...while the lifetime figure is NOT (it may have grown, since closing a
+    // day runs a day and patients may buy — the claim is that it never resets).
+    expect(machine.revenueTotal).toBeGreaterThanOrEqual(220);
+  });
+
   it('no dayEnded consumer can observe a nonzero revenueToday (the autosave rule)', () => {
     const world = treatmentWorld();
     const exam = world.roomsOfType('exam')[0]!;

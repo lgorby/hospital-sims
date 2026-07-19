@@ -52,7 +52,7 @@ function actionButton(root: HTMLElement): HTMLButtonElement {
 describe('InspectPanel (amenities Stage 1)', () => {
   it('amenity card: label + effect line + Sell wired through amenitySellback', () => {
     const { world, pushed, renderer, root, panel } = fixture();
-    world.amenities.set('3,4', { kind: 'vending', tile: { col: 3, row: 4 }, fill: 0, revenueTotal: 0 });
+    world.amenities.set('3,4', { kind: 'vending', tile: { col: 3, row: 4 }, fill: 0, revenueTotal: 0, revenueToday: 0 });
     renderer.selected = { kind: 'amenity', col: 3, row: 4 };
     panel.update();
 
@@ -140,7 +140,7 @@ describe('InspectPanel (amenities Stage 1)', () => {
 
   it('trashcan card shows a live Fill N/capacity line (Stage 2 §S2.5, frame-polled)', () => {
     const { world, renderer, root, panel } = fixture();
-    world.amenities.set('3,4', { kind: 'trashcan', tile: { col: 3, row: 4 }, fill: 3, revenueTotal: 0 });
+    world.amenities.set('3,4', { kind: 'trashcan', tile: { col: 3, row: 4 }, fill: 3, revenueTotal: 0, revenueToday: 0 });
     renderer.selected = { kind: 'amenity', col: 3, row: 4 };
     panel.update();
     // The denominator is the sim's overflow threshold (SSOT), never a literal.
@@ -355,14 +355,16 @@ describe('InspectPanel (FINANCE_PLAN §4 — per-unit income)', () => {
       tile: { col: 3, row: 4 },
       fill: 0,
       revenueTotal: 220,
+      revenueToday: 0,
     });
     world.amenities.set('6,4', {
       kind: 'trashcan',
       tile: { col: 6, row: 4 },
       fill: 0,
       revenueTotal: 0,
+      revenueToday: 0,
     });
-    world.amenities.set('9,4', { kind: 'plant', tile: { col: 9, row: 4 }, fill: 0, revenueTotal: 0 });
+    world.amenities.set('9,4', { kind: 'plant', tile: { col: 9, row: 4 }, fill: 0, revenueTotal: 0, revenueToday: 0 });
 
     renderer.selected = { kind: 'amenity', col: 3, row: 4 };
     panel.update();
