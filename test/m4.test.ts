@@ -86,7 +86,8 @@ describe('first-treatment wait pipeline (M4 review #4)', () => {
     setupNewGame(world);
     // Fracture is two-step (X-ray → casting): proves step 2 records nothing.
     world.buildRoom('triage', { col: 10, row: 28, cols: 2, rows: 2 }, { col: 12, row: 29 });
-    world.buildRoom('exam', { col: 14, row: 27, cols: 3, rows: 3 }, { col: 17, row: 28 });
+    // ED_PLAN Stage A: fracture casting moved to the ER.
+    world.buildRoom('er', { col: 14, row: 26, cols: 3, rows: 4 }, { col: 17, row: 27 });
     world.buildRoom('xray', { col: 24, row: 26, cols: 3, rows: 4 }, { col: 27, row: 27 });
     expect(world.rooms.size).toBe(5);
     world.addStaffMember('nurse', 5, ROLE_DEFS.nurse.salaryPerDay);

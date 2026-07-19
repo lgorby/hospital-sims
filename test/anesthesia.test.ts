@@ -140,7 +140,7 @@ describe('the partial-gather soft hold (§4 lever 4 — pre-impl review MAJOR 3)
    */
   it('does not hand a one-role-short surgery its staff away to a lower priority patient', () => {
     const world = orWorld();
-    world.buildRoom('exam', { col: 20, row: 10, cols: 3, rows: 3 }, { col: 21, row: 13 }, true);
+    world.buildRoom('er', { col: 20, row: 10, cols: 3, rows: 4 }, { col: 21, row: 14 }, true);
     world.addStaffMember('surgeon', 4, 500);
     world.addStaffMember('nurse', 4, 150);
 
@@ -174,7 +174,8 @@ describe('the partial-gather soft hold (§4 lever 4 — pre-impl review MAJOR 3)
     // The hold must not become a general brake: a satisfied top-priority
     // patient leaves everyone else free to dispatch in the SAME pass.
     const world = orWorld();
-    world.buildRoom('exam', { col: 20, row: 10, cols: 3, rows: 3 }, { col: 21, row: 13 }, true);
+    // The walk-in is a laceration, which ED_PLAN Stage A routes to the ER.
+    world.buildRoom('er', { col: 20, row: 10, cols: 3, rows: 4 }, { col: 21, row: 14 }, true);
     world.addStaffMember('surgeon', 4, 500);
     world.addStaffMember('anesthesiologist', 4, 420);
     world.addStaffMember('nurse', 4, 150);

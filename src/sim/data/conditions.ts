@@ -32,7 +32,9 @@ export const CONDITION_DEFS = {
     acuityMin: 3,
     acuityMax: 4,
     steps: [
-      { label: 'Sutures', room: 'exam', roles: ['nurse'], durationGameMinutes: 40, fee: 200 },
+      // ED_PLAN Stage A: lacerations are sutured in the emergency department,
+      // not a clinic exam room. Room CHANGED, chain length unchanged.
+      { label: 'Sutures', room: 'er', roles: ['nurse'], durationGameMinutes: 40, fee: 200 },
     ],
   },
   fracture: {
@@ -41,7 +43,8 @@ export const CONDITION_DEFS = {
     acuityMax: 3,
     steps: [
       { label: 'X-ray', room: 'xray', roles: ['radTech'], durationGameMinutes: 20, fee: 200 },
-      { label: 'Casting', room: 'exam', roles: ['doctor'], durationGameMinutes: 30, fee: 300 },
+      // ED_PLAN Stage A: fractures are reduced and cast in the ED.
+      { label: 'Casting', room: 'er', roles: ['doctor'], durationGameMinutes: 30, fee: 300 },
     ],
   },
   asthma: {
@@ -95,7 +98,9 @@ export const CONDITION_DEFS = {
     acuityMax: 3,
     steps: [
       { label: 'CT scan', room: 'ct', roles: ['radTech'], durationGameMinutes: 25, fee: 350 },
-      { label: 'Consult', room: 'exam', roles: ['doctor'], durationGameMinutes: 30, fee: 300 },
+      // ED_PLAN Stage A: renal colic is one of the most common ED
+      // presentations — the pain is what brings people in.
+      { label: 'Pain control', room: 'er', roles: ['doctor'], durationGameMinutes: 30, fee: 300 },
     ],
   },
   backInjury: {

@@ -106,10 +106,12 @@ describe('multi-step paths run end-to-end (fracture: X-ray → casting)', () => 
       rect: { col: 5, row: 24, cols: 3, rows: 4 },
       doorOutside: { col: 6, row: 28 },
     });
+    // ED_PLAN Stage A: fractures are cast in the ED, so this chain is
+    // X-ray → ER now. (3×4 is the ER's minimum footprint.)
     t.queue.push({
       type: 'buildRoom',
-      roomType: 'exam',
-      rect: { col: 14, row: 30, cols: 3, rows: 3 },
+      roomType: 'er',
+      rect: { col: 14, row: 29, cols: 3, rows: 4 },
       doorOutside: { col: 15, row: 33 },
     });
     t.apply();
