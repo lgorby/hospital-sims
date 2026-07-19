@@ -1,9 +1,34 @@
 # The Observation Unit — an EDOU department
 
-**Status:** CONTRACT v3 (2026-07-19). **Balance is MEASURED, not asserted** —
-the v2 design review's central demand. Ready for a fresh pair of adversarial
-pre-implementation reviews. **No code on `master` until findings are folded in;**
-a throwaway prototype lives on branch `observation-measurement`.
+**Status:** CONTRACT v3 — **NOT READY (v3 review, 2026-07-19).** Balance was
+measured, but I omitted the deciding metric and the review found it: **the ward
+discharges only 33–38% of its patients** (§0.2). Needs a re-measured v4. A
+throwaway prototype lives on branch `observation-measurement`.
+
+> **v3 REVIEW — the headline defect, verified by re-running my own probe.** I
+> anchored §6 on 68% bed occupancy and never printed discharge rate, which the
+> probe captured all along. Exposed: **full·REFERENCE 38.3%, COMPACT 33.3%;
+> every swept config 26–39%.** The 68% occupancy was inflow being THROTTLED, not
+> a healthy ward — this is v1's stranding defect, measured. **Diagnosis (mine,
+> after the review): a bed-throughput ceiling.** 2 beds × 360-min stays ≈ 8
+> discharges/day max, but rate 0.5 delivers ~11 arrivals/day, so ≥27% are turned
+> away by bed math alone, before any contention; the low-acuity walk-ins then
+> AMA while queued for a bed. **Salvage tested and FAILED:** routing the
+> assessment to a less-contended exam room instead of the ER gave 38.8% — no
+> better, because the ceiling is beds, not the assessment room.
+>
+> **v4 must:** match arrival rate to bed capacity (rate ~0.3, or shorter stays,
+> or more starting beds — measure it); and correct the claims the review
+> falsified — (a) "net-new revenue" was never actually measured (add revenue +
+> completions to the probe; the per-patient fee is $1,286 not $1,400); (b) §8.8
+> is wrong — `expansion1.test.ts:261` DOES fail (its two-way partition invariant
+> breaks on a third partition, 16≠18) and needs a fixture change; (c) withdraw
+> the "displacement is benign load-equilibrium" reframe — the harm didn't
+> dissolve, it moved to the abandoned obs patients; (d) "tia rides the case-mix
+> shift" is false (its `conditionWeights` is 0); (e) quote real per-config death
+> means, not "spread 0.0–0.6". **Genuinely sound and worth keeping:** expansion
+> binds at elevated demand and a $3,000 3rd bed pays back in ~1.4 days (the
+> review's arithmetic, stronger than mine); the tech never contends.
 **Owner ask:** *"add an observation area option to purchase for things like
 chest pains, strokes, headaches… expandable… a department that will have rooms
 in it like the ER and OR. Of course that is after they come back from
