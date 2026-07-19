@@ -44,11 +44,11 @@ hygiene.**
 
 | | |
 |---|---|
-| Tests | **677** (674 passed, 3 skipped), 48 files — `npm test` |
+| Tests | **690** (686 passed, 4 skipped), 49 files — `npm test` |
 | Gates | lint, `tsc --noEmit`, `vite build` all green; CI runs the full gate on every push to `master` and every PR |
 | `SAVE_VERSION` | **11** (`src/sim/save.ts:31`), v1–v11 loadable — **DEPLOYED, so one-way** |
 | Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 15 room types (14 buildable, `resp` retired) · 11 staff roles |
-| Working tree | clean; everything through `d172f58` is committed **and pushed (live)** |
+| Working tree | clean. `d172f58` and earlier are pushed (LIVE). **`8ec700d`, `2288399`, `f9ecbbb` and this doc update are committed but NOT PUSHED** — owner held the deploy 2026-07-19 |
 
 **SAVE_VERSION 11 is deployed, which makes it one-way.** Saves written by the
 live build cannot be opened by the previous one — that is the bump doing its
@@ -124,7 +124,74 @@ revisited.
 
 ## Next
 
-### START HERE (session handoff, 2026-07-19 evening)
+### START HERE (session handoff, 2026-07-19 late — THOUGHT BUBBLES session)
+
+**Three commits, NOT PUSHED** (owner held the deploy). Working tree clean,
+690 tests, all gates green.
+
+| commit | what |
+|---|---|
+| `8ec700d` | The measurement layer — COMPACT arm in `utilisationProbe`, elective-completion + per-condition + active-only-role counters, chestPain/fracture discharge floors in `harness.test.ts`. Landed GREEN ON THE PRE-CHANGE BUILD. |
+| `2288399` | Three contracts + their six adversarial reviews. Two parked, one to rewrite. |
+| `f9ecbbb` | **SHIPPED: in-world thought bubbles.** Render-only, no save cost. |
+
+**SIX independent adversarial reviews ran this session (two per contract, split
+lenses). NONE of the three contracts shipped as drafted.** That is the workflow
+working, not failing — every "no" arrived before code. Read `2288399`'s message
+for the full accounting; the load-bearing findings:
+
+1. **A new room type IS a SAVE_VERSION bump** (this file used to say otherwise
+   — fixed above). But a **per-patient thought ring is NOT**: `asRecord`
+   (`save.ts:407-410`) does no unknown-key check, so an old build silently
+   ignores an added field. Every bump in the `save.ts:33-138` policy log is
+   owed to a concrete old-build FAILURE. Check for one before spending a bump.
+2. **Splitting review lenses is what caught the biggest finding.** The
+   code/save reviewer audited the thought-ring bump's MECHANICS carefully and
+   never questioned whether it was NEEDED; the design reviewer killed it
+   outright. Run both lenses.
+3. **Reviewers who RUN the change beat reviewers who read it.** Two separate
+   contracts had their central claim falsified by a reviewer applying the diff
+   and running the suite. Ask for that explicitly.
+4. **`REFERENCE_BUILD` deaths are 0.20/day with a per-seed spread of 0.0–0.6.**
+   Any deaths-based threshold at 5 seeds is unfalsifiable. Measure the spread
+   BEFORE setting a threshold — the `IMAGING_4B` contract set three that could
+   not fire.
+
+**OBSERVATION EPIC — the rewrite spine is settled, contract not yet rewritten**
+(`docs/OBSERVATION_PLAN.md`, NOT READY, 12 + 13 findings). Do not implement the
+committed draft. The path both reviewers converged on:
+- **Native conditions (`tia`, `syncope`) instead of lengthening `chestPain`
+  and `headInjury`.** Honours the owner's stroke ask with the research's own
+  answer (acute stroke belongs in a thrombolysis pathway; TIA is the canonical
+  obs protocol), dissolves the stranding failure, and makes the measurement
+  clean by construction. A new condition id is free on a bump already spent.
+- **Nurse-tech staffing, not nurse-only.** PROVEN by a reviewer: a nurse-only
+  240-min ward starves the 3-nurse pool and `appendicitis` discharges ZERO
+  (`INVARIANTS.md:60`). Owner asked for nurse techs independently; they are the
+  root fix, not a patch on duration or roster.
+- **`tilesPerProp: 6`, not 8.** At 8, expanding 4×4→5×4 costs money and adds
+  ZERO beds — half of all expansions add nothing, gutting the owner's
+  "expanded with the increase in beds" ask.
+- Walkouts in the revert set (they moved most: 9→32 on one seed), re-baseline
+  on a ward-present build, RNG re-pins derived mechanically not predicted.
+
+**NEW OWNER ASKS 2026-07-19, none started, all scoped:**
+- **Nurse techs** — a role DISTINCT from EVS (owner ruling: "two entirely
+  different duties"). EVS attends a TILE, a nurse tech attends a PATIENT — new
+  claim shape, not a mess-system reskin. Patient load **6–9**. The design prize:
+  in reality the CNA is WHY observation runs at 1 RN : 5–8 beds, so techs are a
+  CAPACITY LEVER ("do I need a nurse or a tech?"), not a chore tax.
+- **12.5-hour shifts, 30-min lunches, rotation every 12h with overlap.**
+  **THE BIGGEST ITEM ON THE BOARD.** Staff currently work 24/7; shifts mean
+  ~2× headcount for the same coverage, so payroll roughly DOUBLES against an
+  economy tuned at M4 for continuous staff. A whole-economy rebalance, not a
+  feature — its own plan, research and measurement pass.
+- **Staff lounge (Comfort dropdown)** — couples to shifts: a lunch break IS a
+  shift concept, so designing the lounge alone makes it decoration. Note the
+  three-way interaction already recorded below: a ratio nurse who never returns
+  to `idle` never goes off shift and never takes a break either.
+
+### START HERE (previous session, 2026-07-19 evening)
 
 **Everything is committed AND PUSHED through `d172f58`; the working tree is
 clean.** Pushing to `master` auto-deploys, so this session's work is **LIVE**.
@@ -313,8 +380,15 @@ remain valid for a Stage 2a v2 — the code map was not what stopped the stage.
   which is either a bug to fix or, more interestingly, the pressure that makes
   the lounge matter. Decide that deliberately. (4) Morale/efficiency payoff vs
   pure decoration — a lounge with no mechanical effect is a money sink.
-  Save impact: new room type is fine, but a staff meter is new saved state ⇒
-  SAVE_VERSION bump.
+  Save impact: **a new room type is NOT "fine" — it is itself a bump.**
+  (Corrected 2026-07-19; the previous wording here was wrong and would have
+  misled a future session into shipping a save-breaking change.) `save.ts:917`
+  validates room type with `asOneOf(o.type, ROOM_TYPES)`, so a save carrying a
+  new type, opened by an older DEPLOYED build, dies on a shape error instead of
+  the clean "newer than this game understands" refusal — the exact failure
+  class that owed the v8→v9 (roles) and v10→v11 (condition ids) bumps. See the
+  policy log at `save.ts:99-135`. A staff meter would be new saved state on top
+  of that, but the bump is already owed by the room type alone.
 - **Click a patient to read THEIR thoughts: SCOPED, not built (owner ask
   2026-07-18).** Today the inspect card shows a patient's condition, acuity,
   vitals bars, state and billed total plus a mood emoji (🙂/💢/💀) — but their
