@@ -1,7 +1,9 @@
 # The Emergency Department epic — design + implementation plan (v1)
 
-**Status: Stage A SHIPPED; Stages B and C DRAFT — awaiting pre-implementation
-review.** Owner ask (2026-07-18): *"let's find out why the ER is not that busy.
+**Status: Stages A and B1 SHIPPED (B1 = ratio staffing + denser bays +
+close-to-expand, SAVE_VERSION 10 — see §5b for the measured outcome and
+`docs/ED_IMPL_PLAN.md` for the code contract). Stages B2 and C still DRAFT —
+B2 needs its own pre-implementation review before any code.** Owner ask (2026-07-18): *"let's find out why the ER is not that busy.
 This is a hospital setting and most hospitals [ERs] are some of the busiest
 departments"* — then, on seeing the diagnosis: *"let's implement the second and
 then the first and then the 3rd. We might need to have an ER entrance area with
@@ -97,6 +99,14 @@ physician work, so bed count overstates physician demand in a clogged ED.
 ### 3.2 The model (game translation)
 
 Three levels, matching the owner's description:
+
+> **SHIPPED VALUES DIFFER — see §5b.** This section is the design as
+> researched; three numbers changed before shipping and `rooms.ts` is
+> authoritative. Density landed at `perTiles: 6` (**2** bays at minimum size,
+> not 4 — 4 deletes the queueing pressure entirely). The doctor number landed
+> at **4**, not 15, because at 1 bed/6 tiles a 15-bed ED needs 90 tiles, so
+> 1:15 is inert at every buildable size. And sharing is NOT free: the
+> attention penalty discounts effective skill by concurrent load.
 
 1. **Beds** — the ED room's `capacity` slots; already exists (capacity epic).
    `traumaBed` density `perTiles: 12 → 3`, so a minimum 3×4 ED derives **4
@@ -211,6 +221,62 @@ traffic. Options, for the owner and the reviewer:
 
 **Recommendation: (2) as part of Stage B**, measured against the same 5-seed
 probe, with (1) as the fallback if 2 beds flattens the pressure entirely.
+
+## 5b. Stage B1 — MEASURED (2026-07-19, `test/edProbe.test.ts`)
+
+5 seeds × 5 days, reference build. Arms isolate density from the ratio because
+they are confounded (without the ratio, 2 bays demand 2 staff pairs).
+
+| Arm | ER visits | Discharged | **Died** | Walkouts | Surgeries | Profit/day |
+|---|---|---|---|---|---|---|
+| Stage A (baseline) | 41.0 | 114.4 | **4.4** | 41.6 | 11.2 | 12,098 |
+| **Density only** (`perTiles 12→6`) | 49.2 | **121.4** | **1.0** | 49.4 | 10.4 | 13,402 |
+| B1 (density + ratio + attention) | 53.0 | 120.6 | 3.6 | **43.0** | 7.2 | 12,709 |
+
+Short-staffed (1 nurse + 1 doctor), to test the ratio's own claim:
+
+| Arm | ER visits | Discharged | Died | Surgeries |
+|---|---|---|---|---|
+| Density only, lean | 20.8 | 63.6 | 12.4 | 2.4 |
+| B1, lean | **26.2** | 66.2 | 12.2 | **1.0** |
+
+**The honest read:**
+
+1. **The density change alone answers Stage A's death signal completely** —
+   deaths 4.4 → **1.0**, discharges 114 → 121, and it *also* beats the
+   pre-Stage-A baseline (124.2 discharged / 2.8 died) on deaths. The second
+   bay is the whole fix, exactly as §5's Erlang arithmetic predicted.
+2. **Ratio staffing is roughly NEUTRAL at reference staffing** and does not
+   pay for its complexity: −2.6 discharges, +2.4 deaths, −9.2 walkouts,
+   profit flat. Trading walkouts for deaths is a *bad* reputation trade
+   (deathLoss 25 vs amaLoss 8).
+3. **The ordering decision was falsified by measurement.** The v2 contract
+   specified "load-forward" (extend the engaged staffer first) as the payroll
+   brake. Measured, it cost **+1.8 deaths and −23% surgeries** by overloading
+   one nurse while colleagues stood idle — a hired staffer's salary is already
+   spent, so sharing is a saving at HIRE time, never at dispatch. Reversed to
+   **idle-first**, which recovered surgeries (8.0 → 10.2) and walkouts.
+4. **Even short-staffed, the ratio's win is one-sided**: +26% ER throughput,
+   but surgeries fall 2.4 → 1.0. It helps the ED by capturing scarce nurses
+   from the rest of the hospital. Defensible as realism; not obviously good.
+5. **THE OPEN BALANCE ISSUE, recorded not buried — the ED out-competes the
+   rest of the hospital for nurses.** Surgeries fall 11.2 → **7.2** (−36%)
+   against the Stage-A baseline. A ratio staffer never returns to `idle`
+   while any bay is live, and both `assignTriage` and `assignJobsForRole`
+   gate on idleness, so a busy ED holds its nurse continuously where pre-B1
+   she cycled back between patients. The post-impl review's MINOR 5 fix
+   (excluding gathering reservations from the attention penalty — a nurse
+   must not be slowed by a patient who has not arrived) made ED treatment
+   faster and therefore made this *worse*: ER visits 49.4 → 53.0, surgeries
+   10.2 → 7.2. The harness's per-condition floor still passes, so this is
+   inside the documented envelope, but it is a real signal.
+   **Candidate remedies, none implemented — they need their own measurement
+   pass:** (a) the Title-22 triage-RN carve-out, which the research already
+   supports (the triage nurse is excluded from the 1:4 count and must be
+   "immediately available at all times"); (b) forbid a ratio room from
+   binding the LAST free staffer of a role; (c) accept it as the intended
+   cost of a busy ED and let the player hire against it — which is only
+   honest if §5.3's capacity hints actually make the tradeoff visible.
 
 ## 6. Test/measurement protocol
 

@@ -8,8 +8,10 @@ import {
 } from './data/challenges';
 import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditions';
 import { FINANCE_CATEGORIES, type CashTotals } from './data/finance';
+import type { RoleId } from './data/roles';
 import {
   ROOM_DEFS,
+  roomStaffRatio,
   type PropDensity,
   type RoomCategory,
   type RoomFailure,
@@ -34,6 +36,28 @@ export function successChance(averageSkill: number, health: number): number {
   const lowHealth = Math.max(0, (t.lowHealthFloor - health) / t.lowHealthFloor);
   const p = t.successBase + t.successPerSkill * (averageSkill - 1) - t.lowHealthPenalty * lowHealth;
   return Math.min(t.successMax, Math.max(t.successMin, p));
+}
+
+/**
+ * ED epic Stage B1: how many concurrent reservations one staffer of `role`
+ * may hold in a room of `roomType`. THE reader for `RoomDef.staffRatio` —
+ * absent room, absent role and every non-ratio room all answer 1, which is
+ * the pre-B1 exclusive binding.
+ */
+export function staffRatioFor(roomType: RoomType, role: RoleId): number {
+  return roomStaffRatio(roomType)?.[role] ?? 1;
+}
+
+/**
+ * ED epic Stage B1 — effective skill for DURATION at concurrent `load`
+ * (1 = undivided attention, and then this is the identity). Clamped to the
+ * `BALANCE.stats` 1–5 scale, which is the scale SSOT (audit #7).
+ * `successChance` deliberately does NOT consume this — see the balance
+ * comment on `attentionSkillPenaltyPerPatient`.
+ */
+export function attentionSkill(skill: number, load: number): number {
+  const penalty = BALANCE.treatment.attentionSkillPenaltyPerPatient * Math.max(0, load - 1);
+  return Math.min(BALANCE.stats.max, Math.max(BALANCE.stats.min, skill - penalty));
 }
 
 /** GDD §2: duration = base × skill modifier × quality modifier, in ticks. */

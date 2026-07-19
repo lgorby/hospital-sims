@@ -169,8 +169,10 @@ describe('Stage B review MAJORs (regressions of record)', () => {
     const tile = world.tileAt(22, 20)!;
     expect(tile.object).toBeNull();
     expect(tile.walkable).toBe(true);
-    // And the second bed still landed (elsewhere): capacity grew.
-    expect(world.capacityOf(room)).toBe(2);
+    // And the extra beds still landed (elsewhere): capacity grew.
+    // 2 → 4 at ED Stage B1's density (1 bed / 6 tiles); the assertion's point
+    // is that the top-up SUCCEEDED around the occupant, not the exact count.
+    expect(world.capacityOf(room)).toBe(4);
   });
 
   it('MAJOR 2: an expansion that would pocket space behind equipment is REJECTED', () => {
@@ -196,13 +198,13 @@ describe('Stage B review MAJORs (regressions of record)', () => {
 });
 
 describe('world.expandRoom (the command path)', () => {
-  it('ER 3×4 → 4×6: capacity 1→2, second bed placed, FIRST bed byte-preserved, priced + quality recomputed', () => {
+  it('ER 3×4 → 4×6: capacity 2→4, beds added, FIRST beds byte-preserved, priced + quality recomputed', () => {
     const { world, queue } = setup();
     const room = build(world, 'er', { col: 20, row: 20, cols: 3, rows: 4 });
     const bedTilesBefore = rectTiles(room.rect).filter(
       (t) => world.tileAt(t.col, t.row)!.object === 'traumaBed',
     );
-    expect(world.capacityOf(room)).toBe(1);
+    expect(world.capacityOf(room)).toBe(2); // ED Stage B1 density: 3×4 = 2 bays
     const cashBefore = world.cash;
     const newRect = { col: 20, row: 20, cols: 4, rows: 6 };
     const price = expandPrice('er', room.rect, newRect);
@@ -214,7 +216,7 @@ describe('world.expandRoom (the command path)', () => {
     world.applyCommands(queue);
 
     expect(room.rect).toEqual(newRect);
-    expect(world.capacityOf(room)).toBe(2);
+    expect(world.capacityOf(room)).toBe(4); // 2 → 4 bays at ED B1 density
     expect(changed).toEqual([room.id]);
     expect(cashBefore - world.cash).toBe(price);
     expect(world.today.construction).toBe(price);
@@ -285,7 +287,7 @@ describe('world.expandRoom (the command path)', () => {
     if (!result.ok) return;
     const loaded = [...result.world.rooms.values()].find((r) => r.type === 'er')!;
     expect(loaded.rect).toEqual({ col: 20, row: 20, cols: 4, rows: 6 });
-    expect(result.world.capacityOf(loaded)).toBe(2);
+    expect(result.world.capacityOf(loaded)).toBe(4);
   });
 
   it('expandRoom is a NORMAL command — allowed in challenge mode', () => {

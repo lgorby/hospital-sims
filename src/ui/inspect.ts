@@ -6,7 +6,13 @@ import { CONDITION_DEFS } from '../sim/data/conditions';
 import { ROOM_DEFS } from '../sim/data/rooms';
 import { ROLE_DEFS } from '../sim/data/roles';
 import { BALANCE } from '../sim/data/balance';
-import { amenitySellback, moodOf, roomEarns, sellbackAmount } from '../sim/formulas';
+import {
+  amenitySellback,
+  moodOf,
+  roomEarns,
+  sellbackAmount,
+  staffRatioFor,
+} from '../sim/formulas';
 import type { PatientStage } from '../sim/entities/patient';
 import type { Reservation, StaffDuty } from '../sim/entities/staff';
 import type { World } from '../sim/world';
@@ -38,6 +44,10 @@ export class InspectPanel {
   private actionButton!: HTMLButtonElement;
   /** Stage B: 'Expand' on room selections (above the Sell action). */
   private expandButton!: HTMLButtonElement;
+  /** ED B1 (§5.3): 'Close'/'Reopen' on room selections — the drain gesture
+   *  that makes a permanently-busy room expandable. Sits between Expand and
+   *  Sell, i.e. next to the two rejection reasons it exists to resolve. */
+  private closeButton!: HTMLButtonElement;
   private shownKey = '';
 
   constructor(
@@ -68,11 +78,14 @@ export class InspectPanel {
     this.expandButton = document.createElement('button');
     this.expandButton.className = 'inspect-action';
     this.expandButton.setAttribute('data-ui', '');
+    this.closeButton = document.createElement('button');
+    this.closeButton.className = 'inspect-action';
+    this.closeButton.setAttribute('data-ui', '');
     this.actionButton = document.createElement('button');
     this.actionButton.className = 'inspect-action';
     this.actionButton.setAttribute('data-ui', '');
 
-    this.panel.append(header, this.body, this.expandButton, this.actionButton);
+    this.panel.append(header, this.body, this.expandButton, this.closeButton, this.actionButton);
     parent.appendChild(this.panel);
   }
 
@@ -153,6 +166,24 @@ export class InspectPanel {
     } else {
       freshExpand.style.display = 'none';
     }
+    // ED B1 (§5.3): Close/Reopen, rebuilt fresh for the same reason. The
+    // `closed` flag is read at CLICK time, never captured here — the card is
+    // wired once per selection identity but the room can be closed by any
+    // other path (and the UI never caches authoritative state).
+    const freshClose = document.createElement('button');
+    freshClose.className = 'inspect-action';
+    freshClose.setAttribute('data-ui', '');
+    this.closeButton.replaceWith(freshClose);
+    this.closeButton = freshClose;
+    if (selection.kind === 'room') {
+      freshClose.addEventListener('click', () => {
+        const room = this.world.rooms.get(selection.id);
+        if (!room) return;
+        this.commands.push({ type: 'setRoomClosed', roomId: selection.id, closed: !room.closed });
+      });
+    } else {
+      freshClose.style.display = 'none';
+    }
   }
 
   /** Phase of the reservation a reserved stage/duty is bound to (else undefined). */
@@ -205,6 +236,21 @@ export class InspectPanel {
     if (selection.kind === 'staff') {
       const s = this.world.staff.get(selection.id)!;
       const stars = '★'.repeat(s.skill) + '☆'.repeat(MAX_SKILL_STARS - s.skill);
+      // ED B1 (§5.1/§5.2): the staffer's whole PANEL, not the witness alone.
+      // A ratio staffer's reservations are all in ONE room (impl plan §1), so
+      // the first one identifies the room the ratio applies in.
+      const panel = this.world.reservationsOfStaff(s.id);
+      const panelRoom = panel.length > 0 ? this.world.rooms.get(panel[0]!.roomId) : undefined;
+      // Only rooms that actually SHARE a staffer get a load readout — a 1:1
+      // exam room must not sprout "(1/1)" noise on every card.
+      const ratio = panelRoom ? staffRatioFor(panelRoom.type, s.role) : 1;
+      const panelLine =
+        panelRoom && ratio > 1
+          ? this.line(
+              'Panel',
+              `${ROOM_DEFS[panelRoom.type].label} ${this.world.staffLoadIn(s.id, panelRoom.id)}/${ratio}`,
+            )
+          : '';
       this.body.innerHTML =
         `<div class="inspect-name">${esc(s.name.full)}, ${s.age}</div>` +
         this.line('Role', ROLE_DEFS[s.role].label) +
@@ -219,11 +265,13 @@ export class InspectPanel {
           // walking tech reads "Heading to a repair", not "Repairing".
           staffDutyLabel(
             s.duty,
-            this.reservationPhase(s.duty),
+            // ED B1 §5.1: the PANEL's phases, not the witness reservation's.
+            panel.map((r) => r.phase),
             s.duty.kind === 'job' ? this.world.jobs.get(s.duty.jobId)?.kind : undefined,
             s.duty.kind === 'job' ? this.world.jobs.get(s.duty.jobId)?.phase : undefined,
           ) + (s.firing ? ' (leaving after this patient)' : ''),
-        );
+        ) +
+        panelLine;
       return;
     }
     if (selection.kind === 'amenity') {
@@ -301,9 +349,17 @@ export class InspectPanel {
         }
       }
     }
+    // ED B1 (§5.3): the player's own close reads as a DRAIN, not a fault —
+    // gathering reservations were cancelled on close, so anything still live
+    // is an active treatment running to completion. Broken wins the line:
+    // `setRoomClosed` is a no-op on a broken room, so "repair it" is the only
+    // actionable status there.
+    const draining = room.closed && reservations.length > 0;
     const statusLine = broken
       ? this.line('Status', `OUT OF SERVICE — repair ${repairUnderway ? 'underway' : 'pending'}`)
-      : '';
+      : room.closed
+        ? this.line('Status', draining ? 'CLOSED — draining' : 'CLOSED')
+        : '';
     const capRule = def.capacity;
     let capacityLine = '';
     // While broken the status line REPLACES the perProp capacity readout —
@@ -312,7 +368,10 @@ export class InspectPanel {
     // (pre-impl MINOR 4) — they just gain the status line. The restroom's
     // "In use" line below keeps rendering while broken: in-flight claimants
     // legitimately finish (deliberate, §S3.6).
-    if (capRule.kind === 'perProp' && !broken) {
+    // ED B1: a CLOSED room reads capacityOf 0 through the same line broken
+    // rooms do, so it replaces the capacity readout for the same reason — a
+    // draining "Beds 2/0" is exactly the confusion the status line prevents.
+    if (capRule.kind === 'perProp' && !broken && !room.closed) {
       const total = this.world.capacityOf(room);
       const used = stallClaims
         ? stallClaims.size
@@ -334,6 +393,30 @@ export class InspectPanel {
           (s) => s.duty.kind === 'post' && s.duty.roomId === room.id,
         )
       : [];
+    // ED B1 (§5.2) — per-staffer load, the readout that makes "another nurse
+    // or another bay?" answerable: "1 nurse (3/4) · 1 doctor (2/4)". Only
+    // roles this room type actually SHARES (ratio > 1) appear, so a 1:1 room
+    // renders nothing rather than "(1/1)" noise on every card. Staff ids come
+    // from the live reservations, deduped and id-sorted for a stable line.
+    const loadParts: string[] = [];
+    for (const role of def.staffedBy) {
+      const ratio = staffRatioFor(room.type, role);
+      if (ratio <= 1) continue;
+      const ids = new Set<number>();
+      for (const r of reservations) {
+        for (const id of r.staffIds) {
+          if (this.world.staff.get(id)?.role === role) ids.add(id);
+        }
+      }
+      if (ids.size === 0) continue;
+      const each = [...ids]
+        .sort((a, b) => a - b)
+        .map((id) => `${this.world.staffLoadIn(id, room.id)}/${ratio}`)
+        .join(', ');
+      const noun = ROLE_DEFS[role].label.toLowerCase();
+      loadParts.push(`${ids.size} ${noun}${ids.size === 1 ? '' : 's'} (${each})`);
+    }
+    const loadLine = loadParts.length > 0 ? this.line('Staffing', loadParts.join(' · ')) : '';
     // FINANCE_PLAN §4.1 — the RCT ride-window Income tab, per room. Rendered
     // only for rooms that can BILL: roomEarns is derived from CONDITION_DEFS,
     // so a corridor or a waiting room renders nothing rather than a permanent
@@ -356,6 +439,7 @@ export class InspectPanel {
       statusLine +
       capacityLine +
       (runBy ? this.line('Run by', runBy) : '') +
+      loadLine +
       (hasPost ? this.line('Posted', posted.map((s) => s.name.short).join(', ') || '—') : '') +
       // "Treating" would be dishonest for a self-service room (§3.3).
       this.line(stallClaims ? 'In use' : 'Treating', occupant) +
@@ -371,7 +455,35 @@ export class InspectPanel {
     // room (validateRoomExpand: 'Out of service — repair it first'); mirror
     // the Sell reject idiom above. Re-set EVERY frame, not in wireAction —
     // repair completion must re-enable the button without a re-selection.
-    this.expandButton.textContent = broken ? 'Expand — Out of service — repair it first' : 'Expand';
-    this.expandButton.disabled = broken;
+    // ED B1 (§5.3): the OTHER validateRoomExpand reject gets the same
+    // treatment. It was previously invisible until the player had already
+    // dragged a rect — and it is the whole reason Close exists, so it must be
+    // legible RIGHT NEXT to the Close button that resolves it.
+    this.expandButton.textContent = broken
+      ? 'Expand — Out of service — repair it first'
+      : reservations.length > 0
+        ? 'Expand — Room is busy — wait for treatments to finish'
+        : 'Expand';
+    this.expandButton.disabled = broken || reservations.length > 0;
+    // Close/Reopen. A broken room can't be closed (setRoomClosed no-ops on
+    // one), so the button says why rather than dead-clicking. While the room
+    // is busy the label names the OUTCOME, which is the sentence that connects
+    // the Expand/Sell rejects above to this gesture.
+    // `room.closed` is tested FIRST and reopening is never disabled
+    // (post-impl review MAJOR 1): a closed room still drains its actives, and
+    // a draining treatment can break it — so closed AND broken is reachable.
+    // Testing `broken` first rendered a dead, unexplained "Reopen"; disabling
+    // it stranded the room permanently, since `setRoomClosed` now allows
+    // reopening a broken room (harmless — capacity stays 0 until repair).
+    this.closeButton.textContent = room.closed
+      ? draining
+        ? 'Reopen — still draining'
+        : 'Reopen'
+      : broken
+        ? 'Close — Out of service — repair it first'
+        : reservations.length > 0
+          ? 'Close — stop new patients so it can drain'
+          : 'Close';
+    this.closeButton.disabled = broken && !room.closed;
   }
 }

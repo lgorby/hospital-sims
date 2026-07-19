@@ -79,15 +79,31 @@ const JOB_ENROUTE_LABELS: Record<Job['kind'], string> = {
 };
 
 /** Player-facing staff duty; phase splits walking-to-patient from treating.
- *  For jobs, `jobPhase` splits en-route from at-work the same way. */
+ *  For jobs, `jobPhase` splits en-route from at-work the same way.
+ *
+ *  ED epic Stage B1 (§5.1): `duty.reservationId` is now only ONE WITNESS of a
+ *  panel of reservations, so a phase read from it LIED — a nurse holding a
+ *  gathering AND an active reservation read "Walking to a patient" while
+ *  standing still mid-treatment. The caller therefore passes the phases of the
+ *  WHOLE panel: "active" is ANY of them active, and a panel of N > 1 says so.
+ *  At N = 1 (every non-ratio room, by construction) the wording is unchanged. */
 export function staffDutyLabel(
   duty: StaffDuty,
-  reservationPhase?: Reservation['phase'],
+  panelPhases?: readonly Reservation['phase'][],
   jobKind?: Job['kind'],
   jobPhase?: Job['phase'],
 ): string {
   if (duty.kind === 'reserved') {
-    return reservationPhase === 'active' ? 'Treating a patient' : 'Walking to a patient';
+    const active = panelPhases?.includes('active') ?? false;
+    // A panel of 2+ gathering reservations is real (a nurse can be dispatched
+    // to a second bay while still walking to the first), so the plural line
+    // splits the same way the singular one does rather than claiming
+    // treatment that has not started.
+    if (panelPhases !== undefined && panelPhases.length > 1) {
+      const n = panelPhases.length;
+      return active ? `Treating ${n} patients` : `Walking to ${n} patients`;
+    }
+    return active ? 'Treating a patient' : 'Walking to a patient';
   }
   if (duty.kind === 'job' && jobKind !== undefined) {
     return jobPhase === 'working' ? JOB_KIND_LABELS[jobKind] : JOB_ENROUTE_LABELS[jobKind];

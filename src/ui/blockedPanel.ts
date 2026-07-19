@@ -75,6 +75,10 @@ export class BlockedPanel {
   update(): void {
     if (this.world.clock.tick === this.lastTick) return;
     this.lastTick = this.world.clock.tick;
+    // ED B1 §5.3's capacity / ratio-cap rows come from `computeBlockedNeeds`
+    // like every other row — they are `kind: 'capacity'` needs, so the panel
+    // and the dispatcher's toasts share one wording source and one
+    // availability test (a UI-side copy of `availableStaff` would drift).
     const needs = computeBlockedNeeds(this.world);
     // Rebuild only on real change (labels or urgency) — not 10×/s forever.
     const renderKey = needs.map((n) => `${n.urgent ? '!' : '~'}${n.label}`).join('|');

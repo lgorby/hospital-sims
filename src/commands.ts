@@ -11,6 +11,8 @@ import type { GridPoint, Rect } from './sim/types';
 export type Command =
   | { type: 'buildRoom'; roomType: RoomType; rect: Rect; doorOutside: GridPoint | null }
   | { type: 'expandRoom'; roomId: number; rect: Rect }
+  /** ED B1: close a room so it drains and can then be expanded or sold. */
+  | { type: 'setRoomClosed'; roomId: number; closed: boolean }
   | { type: 'sellRoom'; roomId: number }
   | { type: 'placeAmenity'; kind: AmenityId; col: number; row: number }
   | { type: 'sellAmenity'; col: number; row: number }

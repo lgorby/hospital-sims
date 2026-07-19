@@ -156,11 +156,18 @@ describe('dual-staff ER (chest pain: doctor + nurse)', () => {
     });
 
     t.world.tick();
-    // Exactly ONE reservation with BOTH roles — never a partial hold.
-    expect(t.world.reservations.size).toBe(1);
-    expect([...t.world.reservations.values()][0]!.staffIds.length).toBe(
-      CONDITION_DEFS.chestPain.steps[0]!.roles.length,
-    );
+    // ED Stage B1: the minimum ER is now 2 bays and staffs by RATIO, so BOTH
+    // chest pains dispatch at once onto the SAME doctor+nurse pair. Pre-B1
+    // this asserted one reservation and the second patient waited. The
+    // all-or-nothing invariant is untouched and is what this test guards:
+    // every reservation carries the full role set, never a partial hold.
+    expect(t.world.reservations.size).toBe(2);
+    for (const r of t.world.reservations.values()) {
+      expect(r.staffIds.length).toBe(CONDITION_DEFS.chestPain.steps[0]!.roles.length);
+    }
+    // One pair covers both bays — with only one pair hired, idle-first has
+    // nobody else to pull, so the ratio shares them (graceful degradation).
+    expect(new Set([...t.world.reservations.values()].flatMap((r) => r.staffIds)).size).toBe(2);
 
     let discharged = 0;
     t.events.on('patientDischarged', () => discharged++);

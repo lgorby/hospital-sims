@@ -428,13 +428,45 @@ export class World implements PathGrid {
     // Stage 3 (§5.2): a broken room disables — hasOpenSlot gates every
     // dispatch path and freeStallIndex returns null for restrooms. Actives
     // finish (transiently negative openSlots is the verified-safe case).
-    if (room.brokenSince !== null) return 0;
+    // Broken (Stage 3, a dice roll) and closed (ED B1, the player's choice)
+    // disable a room identically — this ONE line gates every dispatch path.
+    if (room.brokenSince !== null || room.closed) return 0;
     return ROOM_DEFS[room.type].capacity.kind === 'single' ? 1 : this.slotOrigins(room).length;
   }
 
   /** Live reservations currently holding this room (any phase). */
   reservationsOn(roomId: number): Reservation[] {
     return [...this.reservations.values()].filter((r) => r.roomId === roomId);
+  }
+
+  /**
+   * ED epic Stage B1: every live reservation naming this staffer — their
+   * "panel". A staffer's LOAD is DERIVED, never separately tracked (the
+   * restroom-occupancy precedent), so there is no counter to leak and no new
+   * saved state. Id-ascending: `releaseReservation` picks a witness from this
+   * and the sim must be deterministic.
+   */
+  reservationsOfStaff(staffId: number): Reservation[] {
+    return [...this.reservations.values()]
+      .filter((r) => r.staffIds.includes(staffId))
+      .sort((a, b) => a.id - b.id);
+  }
+
+  /** …of which how many are in this room (the ratio is per-room — §1). */
+  staffLoadIn(staffId: number, roomId: number, opts: { activeOnly?: boolean } = {}): number {
+    let load = 0;
+    for (const r of this.reservations.values()) {
+      if (r.roomId !== roomId || !r.staffIds.includes(staffId)) continue;
+      // `activeOnly` is for the ATTENTION PENALTY (post-impl review MINOR 5).
+      // Dispatch capacity must count gathering reservations — they are held
+      // slots. Divided attention must not: a nurse merely WALKING toward bay 2
+      // was permanently slowing bay 1's whole treatment, and kept the penalty
+      // even if bay 2's gather was then cancelled, because `ticksRemaining` is
+      // frozen at promotion. Only patients actually being treated divide her.
+      if (opts.activeOnly && r.phase !== 'active') continue;
+      load += 1;
+    }
+    return load;
   }
 
   /** Free capacity slots — the dispatcher reserves while this is > 0. */
@@ -639,6 +671,9 @@ export class World implements PathGrid {
       case 'expandRoom':
         this.expandRoom(command.roomId, command.rect);
         return;
+      case 'setRoomClosed':
+        this.setRoomClosed(command.roomId, command.closed);
+        return;
       case 'sellRoom':
         this.sellRoom(command.roomId);
         return;
@@ -731,6 +766,7 @@ export class World implements PathGrid {
       quality: roomQuality(type, rect),
       wear: 0,
       brokenSince: null,
+      closed: false,
       revenueToday: 0,
       revenueTotal: 0,
       visitsTotal: 0,
@@ -863,12 +899,56 @@ export class World implements PathGrid {
       tile.object = spec.id;
       if (!spec.walkable) tile.walkable = false;
     }
-    if (spec.walkable || this.roomInteriorConnected(room)) return true;
+    if (spec.walkable || (this.roomInteriorConnected(room) && this.everySlotApproachable(room, spec))) {
+      return true;
+    }
     for (const tile of strip) {
       tile.object = null;
       tile.walkable = true;
     }
     return false;
+  }
+
+  /**
+   * A capacity SLOT strip must have somewhere to stand beside it (ED Stage
+   * B1) — the "structurally workable anchor" rule Stage 3 established for
+   * repair jobs, applied to beds. Without it, a dense room packs its slot
+   * props into solid rows: `roomInteriorConnected` still passes (the
+   * remaining tiles are connected to each other) but the innermost beds have
+   * NO walkable orthogonal neighbour, so `slotAnchorTile` silently falls
+   * through to a random interior tile and the "bay" is a bed nobody can reach.
+   * Refusing the placement instead keeps capacity HONEST: it derives from
+   * what actually landed, so the room reports the number of usable bays.
+   * Non-slot and walkable props (chairs are sat ON) are unaffected.
+   */
+  private everySlotApproachable(room: Room, spec: PropSpec): boolean {
+    const def = ROOM_DEFS[room.type];
+    const cap = def.capacity;
+    if (cap.kind !== 'perProp' || cap.prop !== spec.id) return true;
+    // Only rooms that anchor a RESERVATION beside the slot prop. In a
+    // self-service room the patient occupies the prop itself — a restroom
+    // stall is claimed and stood IN (occupancy derives from `stallClaims`,
+    // never `reservationsOn`) and a waiting chair is sat ON — so "somewhere
+    // to stand beside it" is meaningless there, and imposing it would rewrite
+    // restroom layouts for no gain. Staffed ⇔ treated-beside, which is
+    // exactly the `slotAnchorTile` consumer set.
+    if (def.staffedBy.length === 0) return true;
+    // EVERY strip, not just the one just placed: the check is order-dependent
+    // because a later bed can consume the last walkable neighbour of an
+    // earlier one. Verifying the whole set after each placement is what turns
+    // a solid block of beds into a staggered, reachable ward.
+    const stripLen = PROP_STYLE[spec.id].tiles;
+    return this.stripOrigins(room.rect, cap.prop).every((origin) => {
+      for (let i = 0; i < stripLen; i++) {
+        for (const step of ORTHOGONAL_STEPS) {
+          const p = { col: origin.col + i + step.col, row: origin.row + step.row };
+          if (!rectContains(room.rect, p)) continue;
+          if (room.door && samePoint(room.door.inside, p)) continue;
+          if (this.tileAt(p.col, p.row)!.walkable) return true;
+        }
+      }
+      return false;
+    });
   }
 
   /** Every walkable tile of the room reachable from its door-inside tile. */
@@ -1021,16 +1101,26 @@ export class World implements PathGrid {
       return;
     }
     if (member.duty.kind === 'reserved') {
-      const reservation = this.reservations.get(member.duty.reservationId);
-      if (reservation && reservation.phase === 'active') {
-        member.firing = true; // finishes the current patient first (GDD §4)
+      // ED epic Stage B1: act on the WHOLE panel, not just the witness
+      // reservation. Firing a ratio nurse who holds four bays used to cancel
+      // one and remove her, leaving three reservations with a `staffIds`
+      // entry naming a deleted staffer — `promoteGatheredReservations` does
+      // `world.staff.get(id)!` and would blow up on the next tick. At N=1 the
+      // panel has one entry and this is byte-identical to the old two
+      // branches. The snapshot is a fresh array, so cancelling under it is
+      // safe (a cancel can never delete a DIFFERENT panel member).
+      const panel = this.reservationsOfStaff(member.id);
+      // Gathering is not mid-treatment (M3 ruling): cancel per Flow rule 8 —
+      // patient re-queued with wait clock intact, co-staff released. No
+      // corridor hint; nothing's blocked.
+      for (const r of panel) {
+        if (r.phase === 'gathering') this.cancelReservation(r, { hint: false });
+      }
+      if (panel.some((r) => r.phase === 'active')) {
+        member.firing = true; // finishes what it is already treating (GDD §4)
         this.events.emit('staffUpdated', { staffId: member.id });
         return;
       }
-      // Gathering is not mid-treatment (M3 ruling): cancel per Flow rule 8 —
-      // patient re-queued with wait clock intact, co-staff released — and the
-      // fired member leaves immediately. No corridor hint; nothing's blocked.
-      if (reservation) this.cancelReservation(reservation, { hint: false });
       if (this.staff.has(member.id)) this.removeStaff(member);
       return;
     }
@@ -1230,6 +1320,46 @@ export class World implements PathGrid {
       if (this.jobAt(p) === null) return p;
     }
     return { col: room.rect.col, row: room.rect.row }; // every tile job-held — unreachable in practice
+  }
+
+  /**
+   * ED epic Stage B1 (owner ask): close or reopen a room. Closing borrows
+   * `breakRoom`'s disable-never-harm contract EXACTLY — flag, then a rule-8
+   * cancel of gathering reservations, while ACTIVE treatments run to
+   * completion — so a close is a drain, never a patient thrown out of a bed.
+   * `capacityOf` returns 0 meanwhile, which is the one line that stops new
+   * dispatch. No repair job and no burst: nothing is broken.
+   *
+   * This is what makes a busy room expandable: `validateRoomExpand` and
+   * `validateRoomSell` both reject while any reservation is live, so without
+   * a way to stop the inflow the ED — the room that most needs more bays —
+   * could never grow. Idempotent, and a no-op on a broken room (it is
+   * already disabled; letting the two flags interleave would just complicate
+   * the repair path for no gain).
+   */
+  setRoomClosed(roomId: number, closed: boolean): void {
+    const room = this.rooms.get(roomId);
+    if (!room || room.closed === closed) return;
+    // The broken guard is ASYMMETRIC on purpose (post-impl review MAJOR 1).
+    // Refusing to CLOSE a broken room is right — it is already disabled. But
+    // refusing to REOPEN one strands the room forever: a closed room still
+    // drains its actives, `applyRoomUse` still rolls wear on them, so the last
+    // draining treatment can break a room that is already closed. Both flags
+    // set, reopen refused, and after the repair `closed` is still true with no
+    // hint (capacity needs deliberately stay silent on closed rooms) — a
+    // department that silently serves nobody. Reopening is always harmless:
+    // `capacityOf` returns 0 while broken regardless.
+    if (closed && room.brokenSince !== null) return;
+    room.closed = closed;
+    if (closed) {
+      for (const reservation of [...this.reservations.values()]) {
+        if (reservation.roomId === room.id && reservation.phase === 'gathering') {
+          // Not a layout problem — no corridor hint (Flow rule 8, hint:false).
+          this.cancelReservation(reservation, { hint: false });
+        }
+      }
+    }
+    this.events.emit('roomChanged', { roomId: room.id });
   }
 
   /**
@@ -1793,12 +1923,43 @@ export class World implements PathGrid {
     }
   }
 
-  /** Free the room and return staff to idle (or remove them if fired mid-job). */
+  /**
+   * Free the room and return staff to idle (or remove them if fired mid-job).
+   *
+   * ED epic Stage B1: a RATIO staffer may hold several reservations in this
+   * room, so releasing ONE must not free their whole panel — a death in bay 1
+   * must not walk the nurse out of bays 2-4. The remaining-load branch below
+   * is the whole of that fix: Flow rules 7 and 8 both funnel through here
+   * (`releasePatientHoldings` scopes to the patient's one reservation, and
+   * `cancelReservation` calls this), so neither needs its own change.
+   */
   releaseReservation(reservation: Reservation): void {
-    this.reservations.delete(reservation.id);
+    // Idempotence: a second call on an already-detached reservation would
+    // recompute `remaining` from a panel that no longer holds it and could
+    // step out a staffer who has just been legitimately re-bound. No live
+    // double-release path exists today, but `fireStaff` below is the first
+    // caller-controlled release ORDERING in the codebase (review MINOR).
+    if (!this.reservations.delete(reservation.id)) return;
     for (const staffId of reservation.staffIds) {
       const member = this.staff.get(staffId);
       if (!member) continue;
+      const remaining = this.reservationsOfStaff(member.id);
+      if (remaining.length > 0) {
+        // Re-point the witness and leave them standing: `duty` is no longer
+        // "the reservation I hold" but "A reservation I hold". Prefer an
+        // ACTIVE one — the lowest id is the OLDEST, hence the likeliest to be
+        // stale-gathering while another is under way, which is exactly what
+        // made the inspect card read "Walking to a patient" at a nurse who
+        // was standing still mid-treatment. Firing is deferred to the LAST
+        // release; `availableStaff` excludes `firing`, so the panel drains
+        // and takes no new patients meanwhile.
+        member.duty = {
+          kind: 'reserved',
+          reservationId: (remaining.find((r) => r.phase === 'active') ?? remaining[0]!).id,
+        };
+        this.events.emit('staffUpdated', { staffId: member.id });
+        continue;
+      }
       member.duty = { kind: 'idle' };
       if (member.firing) {
         this.removeStaff(member);

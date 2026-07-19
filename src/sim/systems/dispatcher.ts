@@ -6,7 +6,13 @@ import { ROOM_DEFS } from '../data/rooms';
 import type { Room } from '../entities/room';
 import type { Patient } from '../entities/patient';
 import type { Job, Reservation, Staff } from '../entities/staff';
-import { checkInCapacity, effectivePriority, treatmentDurationTicks } from '../formulas';
+import {
+  attentionSkill,
+  checkInCapacity,
+  effectivePriority,
+  staffRatioFor,
+  treatmentDurationTicks,
+} from '../formulas';
 import { computeBlockedNeeds } from '../needs';
 import { findPath } from '../path/astar';
 import { ORTHOGONAL_STEPS, samePoint, type GridPoint } from '../types';
@@ -39,12 +45,97 @@ export function updateDispatcher(world: World): void {
  */
 function emitUrgentNeedHints(world: World): void {
   for (const need of computeBlockedNeeds(world)) {
-    if (need.urgent) world.hintOnce(`need:${need.key}`, need.label);
+    // Capacity/ratio saturation is PANEL-ONLY (post-impl review MINOR 4).
+    // `hintOnce` keys persist per save, and these keys are room-TYPE keyed, so
+    // toasting them would announce "ER Bay is full" exactly once in the
+    // lifetime of a save for a state that recurs every busy afternoon — the
+    // same defect the `broken:<id>:<since>` instance key exists to avoid.
+    // The persistent BlockedPanel row is the right surface for a standing
+    // condition; a one-shot toast is for a new fact.
+    if (need.urgent && need.kind !== 'capacity') world.hintOnce(`need:${need.key}`, need.label);
   }
 }
 
 function idleStaff(world: World, filter: (s: Staff) => boolean): Staff[] {
   return [...world.staff.values()].filter((s) => s.duty.kind === 'idle' && !s.firing && filter(s));
+}
+
+/**
+ * ED epic Stage B1: staff who can take a reservation IN THIS ROOM. Replaces
+ * `idleStaff` for the two patient-dispatch callers; `postStandingStaff` and
+ * `assignJobsForRole` deliberately keep `idleStaff` — a ratio nurse holding
+ * live bays is NOT available for a mop or a standing post.
+ *
+ * A staffer qualifies while their load in this room is under the room's ratio
+ * for their role (1 everywhere but the ED, hence bit-identical elsewhere).
+ * `held` carries the partial-gather soft hold's per-staffer units AND the room
+ * they were secured for, this pass — see `assignTreatment`. The room matters:
+ * a staffer's reservations are all in ONE room (§1), so being held for room A
+ * makes them unavailable in room B OUTRIGHT, not merely down one unit. Keying
+ * on units alone would let a nurse secured by a one-role-short surgery be
+ * handed to a lower-priority ER patient — the exact starvation the soft hold
+ * exists to prevent, reintroduced through the ratio.
+ *
+ * Return order is IDLE-FIRST — least-loaded first, ties by ascending staff id.
+ *
+ * The v2 contract specified the opposite ("load-forward", extend the engaged
+ * staffer before pulling a fresh one) on the theory that it was the payroll
+ * brake. THE 3-ARM PROBE FALSIFIED THAT (ED_PLAN §6): load-forward cost 1.8
+ * extra deaths and 23% of the hospital's surgeries versus density alone,
+ * because it overloads one nurse — paying the attention penalty on every bay
+ * — while her colleagues stand idle. A hired staffer's salary is already
+ * spent, so sharing is only ever a saving at HIRE time, never at dispatch.
+ *
+ * Idle-first makes the ratio what it should be: GRACEFUL DEGRADATION. Fully
+ * staffed, the ED behaves exactly as it did pre-B1 (one staffer per bay, full
+ * speed). Short-staffed, the extra bays still run — slower, via the attention
+ * penalty — instead of standing empty. THAT is the payroll brake and the
+ * movable bottleneck (ED_PLAN §7.2): 4 bays are fast on 4 nurses and slow on
+ * 1, and choosing between them is the player's decision.
+ *
+ * The order is total: loads are integers and ties break on unique staff ids.
+ */
+function availableStaff(
+  world: World,
+  room: Room,
+  filter: (s: Staff) => boolean,
+  held?: ReadonlyMap<number, SoftHold>,
+): Staff[] {
+  // Load snapshot taken ONCE per call, never memoized across a pass:
+  // `makeReservation` mutates `world.reservations` between calls and later
+  // patients MUST see the updated loads (that is how patient 2 in the same
+  // pass ranks the already-engaged nurse first). Computing this inside a
+  // comparator instead would be O(S·logS·R) per role per patient per tick.
+  const loads = new Map<number, number>();
+  for (const r of world.reservations.values()) {
+    if (r.roomId !== room.id) continue;
+    for (const id of r.staffIds) loads.set(id, (loads.get(id) ?? 0) + 1);
+  }
+  const eligible = [...world.staff.values()].filter((s) => {
+    if (s.firing || !filter(s)) return false;
+    const load = loads.get(s.id) ?? 0;
+    // An engaged staffer is only extendable within THIS room: their witness
+    // duty must name a reservation here (§1 — a ratio staffer's reservations
+    // are all in one room, and this is the induction step that keeps it true).
+    if (s.duty.kind !== 'idle') {
+      if (s.duty.kind !== 'reserved') return false;
+      const witness = world.reservations.get(s.duty.reservationId);
+      if (!witness || witness.roomId !== room.id) return false;
+    }
+    const hold = held?.get(s.id);
+    if (hold && hold.roomId !== room.id) return false;
+    return load + (hold?.units ?? 0) < staffRatioFor(room.type, s.role);
+  });
+  return eligible.sort(
+    (a, b) => (loads.get(a.id) ?? 0) - (loads.get(b.id) ?? 0) || a.id - b.id,
+  );
+}
+
+/** One pass-local partial-gather hold: units of a staffer's ratio capacity
+ *  promised to a higher-priority patient, and the room they were promised to. */
+interface SoftHold {
+  roomId: number;
+  units: number;
 }
 
 /** Stage A: a room accepts dispatch while it has an open capacity slot —
@@ -216,6 +307,14 @@ function makeReservation(
       : world.freeInteriorTile(room, room.door?.inside);
   world.setWalkerTarget(patient, patientSpot);
   for (const member of staffMembers) {
+    // ED epic Stage B1: only bind and walk a staffer who was IDLE. An already
+    // engaged one's duty witnesses a live reservation in THIS room and they
+    // are standing in it (or walking to it) — re-pathing would yank them off
+    // the walk their first reservation is gathering on. This gate is also the
+    // guarantee behind `promoteGatheredReservations`: it is the only thing
+    // that could `setWalkerTarget` an already-arrived ratio staffer, so
+    // `walkerArrived` can never flip false under a gathering reservation.
+    if (member.duty.kind !== 'idle') continue;
     member.duty = { kind: 'reserved', reservationId: reservation.id };
     world.setWalkerTarget(member, world.freeInteriorTile(room, patientSpot));
   }
@@ -255,13 +354,21 @@ function assignTriage(world: World): void {
   );
   if (waiting.length === 0) return;
   // Flow rule 5 hints moved to emitUrgentNeedHints (HINTS_PLAN §2.2).
+  // ED epic Stage B1: `availableStaff` needs the room, so the nurse can no
+  // longer be picked BEFORE it. Guard semantics are preserved EXACTLY —
+  // `continue` for an unreachable/full bay (skip this patient), `return` for
+  // no nurse (abort the pass) — and the zero-bays early return keeps the
+  // reorder cheap: without it a hospital with no triage nurse would run
+  // `canReachRoom` (an A* `findPath`) per patient per tick on the game's
+  // busiest funnel, where the old code did one staff scan and returned.
+  // Triage has no `staffRatio`, so N=1 and the staffing outcome is unchanged.
+  const bays = world.roomsOfType('triage');
+  if (bays.length === 0) return;
   for (const patient of waiting) {
-    const nurse = idleStaff(world, (s) => s.role === 'nurse')[0];
-    if (!nurse) return;
-    const bay = world
-      .roomsOfType('triage')
-      .find((r) => hasOpenSlot(world, r) && canReachRoom(world, patient, r));
+    const bay = bays.find((r) => hasOpenSlot(world, r) && canReachRoom(world, patient, r));
     if (!bay) continue;
+    const nurse = availableStaff(world, bay, (s) => s.role === 'nurse')[0];
+    if (!nurse) return;
     makeReservation(world, 'triage', patient, bay, [nurse], 0);
   }
 }
@@ -282,31 +389,70 @@ function assignTreatment(world: World): void {
   // after a CANCELLATION, never after a failed gather, so nothing else ages
   // surgery's claim. Purely local — nothing is committed, the set dies with
   // the pass, and all-or-nothing is untouched (Flow rules 7/8).
-  const heldForHigherPriority = new Set<number>();
+  //
+  // ED epic Stage B1: this is now a UNITS map (staffId → units held this
+  // pass), not an identity set. Holding a ratio staffer's ENTIRE capacity
+  // because one gather came up a role short would starve the rest of the pass
+  // — an ED doctor covering 4 bays would be locked out wholesale over a single
+  // missing nurse. `availableStaff` adds the held units to the live load, so
+  // the hold reserves exactly the one unit that patient secured.
+  const heldForHigherPriority = new Map<number, SoftHold>();
 
   for (const patient of waiting) {
     const def = CONDITION_DEFS[patient.condition];
     const step = def.steps[patient.stepIndex];
     if (!step) continue;
     // Flow rule 5 hints moved to emitUrgentNeedHints (HINTS_PLAN §2.2).
-    const room = world
+    // Post-impl review MINOR 3: candidate rooms are TRIED, not first-matched.
+    // `availableStaff` is room-scoped, so a first match could pick ER1 while
+    // the only staffer with spare ratio capacity is engaged in ER2 — the
+    // patient would then wait forever beside a usable bay. Single-room
+    // hospitals (every current build) take the first candidate as before.
+    const candidates = world
       .roomsOfType(step.room)
-      .find((r) => hasOpenSlot(world, r) && canReachRoom(world, patient, r));
-    if (!room) continue;
+      .filter((r) => hasOpenSlot(world, r) && canReachRoom(world, patient, r));
+    if (candidates.length === 0) continue;
     // All-or-nothing (tech plan §5): every required role or nothing at all.
-    const chosen: Staff[] = [];
-    for (const role of step.roles) {
-      const member = idleStaff(
-        world,
-        (s) => s.role === role && !chosen.includes(s) && !heldForHigherPriority.has(s.id),
-      )[0];
-      if (!member) break;
-      chosen.push(member);
+    let room: Room | null = null;
+    let chosen: Staff[] = [];
+    for (const candidate of candidates) {
+      const picked: Staff[] = [];
+      for (const role of step.roles) {
+        // The identity exclusion (`!held.has(s.id)`) is GONE on purpose: the
+        // units term inside `availableStaff` is its only replacement, and
+        // leaving both would make the units accounting inert. `picked` still
+        // excludes by identity — one staffer can't fill two roles of a step.
+        const member = availableStaff(
+          world,
+          candidate,
+          (s) => s.role === role && !picked.includes(s),
+          heldForHigherPriority,
+        )[0];
+        if (!member) break;
+        picked.push(member);
+      }
+      if (picked.length === step.roles.length) {
+        room = candidate;
+        chosen = picked;
+        break;
+      }
+      // Remember the best partial gather for the hold below: the FIRST
+      // candidate's, matching pre-review behaviour when only one room exists.
+      if (chosen.length === 0) chosen = picked;
     }
-    if (chosen.length !== step.roles.length) {
+    if (!room) {
       // Hold what this patient DID secure: they outrank everyone left in the
-      // list, so giving their staff away below is the starvation.
-      for (const member of chosen) heldForHigherPriority.add(member.id);
+      // list, so giving their staff away below is the starvation. One UNIT
+      // each, not the whole staffer.
+      for (const member of chosen) {
+        // A staffer held for room A is rejected outright in room B by
+        // `availableStaff`, so they can never reach `chosen` for a second
+        // room — any prior hold is necessarily for THAT staffer's room, which
+        // is the one they are engaged in (or the first candidate if idle).
+        const prior = heldForHigherPriority.get(member.id);
+        const heldRoom = prior?.roomId ?? candidates[0]!.id;
+        heldForHigherPriority.set(member.id, { roomId: heldRoom, units: (prior?.units ?? 0) + 1 });
+      }
       continue;
     }
     makeReservation(world, 'treatment', patient, room, chosen, patient.stepIndex);
@@ -550,7 +696,19 @@ function promoteGatheredReservations(world: World): void {
         world.today.waitCount += 1;
       }
       const step = CONDITION_DEFS[patient.condition].steps[reservation.stepIndex]!;
-      const averageSkill = members.reduce((sum, m) => sum + m.skill, 0) / members.length;
+      // ED epic Stage B1 — the attention penalty. A ratio staffer split across
+      // several bays treats each one more slowly, so each member contributes
+      // skill discounted by their CONCURRENT LOAD in this room. At load 1 the
+      // discount is 0, so every non-ratio room is bit-identical to pre-B1.
+      // Duration only: the `successChance` roll in treatment.ts deliberately
+      // keeps RAW skill, because deaths must stay tied to a health/acuity
+      // story rather than to staffing arithmetic (balance.ts comment).
+      const averageSkill =
+        members.reduce(
+          (sum, m) =>
+            sum + attentionSkill(m.skill, world.staffLoadIn(m.id, room.id, { activeOnly: true })),
+          0,
+        ) / members.length;
       reservation.ticksRemaining = treatmentDurationTicks(
         step.durationGameMinutes,
         averageSkill,

@@ -36,6 +36,16 @@ export interface Room {
    */
   brokenSince: number | null;
   /**
+   * ED epic Stage B1 (owner ask 2026-07-19): the player has CLOSED this room.
+   * Same disable-never-harm semantics as `brokenSince` — `capacityOf` returns
+   * 0, gathering reservations cancel, active treatments finish — but under
+   * the player's control. It exists because a busy room can never be expanded
+   * or sold: both validations reject while ANY reservation is live, so the
+   * department that most needs more bays is the one you can never grow.
+   * Closing lets it DRAIN, then grow.
+   */
+  closed: boolean;
+  /**
    * Per-unit income (FINANCE_PLAN §4.1, the RCT ride-window analog) — credited
    * at the ONE treatment billing choke point (`billFee` with a `roomId`).
    * `revenueToday` resets in `closeDay` BEFORE `dayEnded` is emitted, so the

@@ -68,25 +68,37 @@ describe('density-driven prop placement (§3.2)', () => {
       rows: ROOM_DEFS[t].minRows,
     });
     expect(propTargetCount(ROOM_DEFS.waiting.props[0]!.density, min('waiting'))).toBe(6);
-    expect(propTargetCount(ROOM_DEFS.er.props[0]!.density, min('er'))).toBe(1);
     expect(propTargetCount(ROOM_DEFS.dialysis.props[0]!.density, min('dialysis'))).toBe(2);
     expect(propTargetCount(ROOM_DEFS.exam.props[0]!.density, min('exam'))).toBe(1);
   });
 
+  it('the ER is the DELIBERATE exception to the pre-epic-count rule (ED Stage B1)', () => {
+    // CAPACITY_PLAN §3.2's rule — a min-size room derives exactly its pre-epic
+    // count — held for every room until ED_PLAN Stage B1, which halves the ER's
+    // density (12 → 6 tiles/bed) so a minimum 3×4 derives TWO bays. That is the
+    // answer to Stage A's death signal: at λ≈0.54/h and ~63 min mean occupancy,
+    // 1 bay queues ~53 min (a 120-min stroke freezes the department) and 2 bays
+    // ~9 min. It is a CONTRACT CHANGE, not a re-pin — hence its own test.
+    const min = { col: 0, row: 0, cols: ROOM_DEFS.er.minCols, rows: ROOM_DEFS.er.minRows };
+    expect(propTargetCount(ROOM_DEFS.er.props[0]!.density, min)).toBe(2);
+    // Existing SAVED rooms are unaffected: capacity derives from PLACED prop
+    // tiles in the grid, not from the density rule (see the v9 save fixture).
+  });
+
   it('a grown ER derives more beds; fixed props stay fixed', () => {
-    // 4×6 = 24 tiles at 1 bed / 12 tiles → 2 beds.
+    // 4×6 = 24 tiles at 1 bed / 6 tiles → 4 beds (Stage B1 density).
     const rect = { col: 0, row: 0, cols: 4, rows: 6 };
-    expect(propTargetCount(ROOM_DEFS.er.props[0]!.density, rect)).toBe(2);
+    expect(propTargetCount(ROOM_DEFS.er.props[0]!.density, rect)).toBe(4);
     expect(propTargetCount(ROOM_DEFS.exam.props[0]!.density, rect)).toBe(1);
   });
 
-  it('a built grown ER actually places 2 bed strips; slotOrigins sees both', () => {
+  it('a built grown ER actually places 4 bed strips; slotOrigins sees them all', () => {
     const { world } = setup();
     build(world, 'er', { col: 20, row: 20, cols: 4, rows: 6 });
     const room = [...world.rooms.values()].find((r) => r.type === 'er')!;
     const origins = world.slotOrigins(room);
-    expect(origins).toHaveLength(2);
-    expect(world.capacityOf(room)).toBe(2);
+    expect(origins).toHaveLength(4);
+    expect(world.capacityOf(room)).toBe(4);
     // Strip consumption: each origin is the WEST end of a 2-tile strip.
     for (const origin of origins) {
       expect(world.tileAt(origin.col, origin.row)!.object).toBe('traumaBed');
@@ -110,7 +122,7 @@ describe('multi-slot dispatch (§3.3)', () => {
     expect(world.openSlots(room)).toBe(0);
   });
 
-  it('a 2-bed ER runs two dual-staff treatments at once — the owner scenario', () => {
+  it('a FULLY staffed multi-bed ER gives each bay its OWN pair (idle-first, ED B1)', () => {
     const { world } = setup();
     build(world, 'er', { col: 20, row: 20, cols: 4, rows: 6 });
     hire(world, 'doctor', 2);
@@ -121,7 +133,12 @@ describe('multi-slot dispatch (§3.3)', () => {
     const room = [...world.rooms.values()].find((r) => r.type === 'er')!;
     const reservations = world.reservationsOn(room.id);
     expect(reservations).toHaveLength(2);
-    // Each reservation brings its OWN doctor+nurse pair — 4 staff total.
+    // ED_PLAN Stage B1: `availableStaff` is IDLE-FIRST. A hired staffer's
+    // salary is already spent, so overloading one while a colleague stands
+    // idle is pure loss — the 3-arm probe measured the load-forward
+    // alternative at +1.8 deaths and -23% surgeries against density alone.
+    // With staff to spare the ED behaves exactly as it did pre-B1; the ratio
+    // is GRACEFUL DEGRADATION for the short-staffed case (next test).
     const staffUsed = new Set(reservations.flatMap((r) => r.staffIds));
     expect(staffUsed.size).toBe(4);
     // Distinct anchors: the two patients walk to DIFFERENT bedside tiles.
@@ -129,6 +146,25 @@ describe('multi-slot dispatch (§3.3)', () => {
       (r) => world.patients.get(r.patientId)!.target ?? world.patients.get(r.patientId)!.at,
     );
     expect(samePoint(targets[0]!, targets[1]!)).toBe(false);
+  });
+
+  it('a SHORT-staffed multi-bed ER shares one pair across bays — the ratio (ED B1)', () => {
+    const { world } = setup();
+    build(world, 'er', { col: 20, row: 20, cols: 4, rows: 6 });
+    hire(world, 'doctor', 1);
+    hire(world, 'nurse', 1);
+    waitingPatient(world, 'chestPain', 1);
+    waitingPatient(world, 'chestPain', 1);
+    world.tick();
+    const room = [...world.rooms.values()].find((r) => r.type === 'er')!;
+    const reservations = world.reservationsOn(room.id);
+    // The point of ratio staffing: with nobody left to pull, the second bay
+    // still runs on the pair already there instead of standing empty. Pre-B1
+    // this was ONE reservation and an idle bay.
+    expect(reservations).toHaveLength(2);
+    const staffUsed = new Set(reservations.flatMap((r) => r.staffIds));
+    expect(staffUsed.size).toBe(2);
+    for (const id of staffUsed) expect(world.staffLoadIn(id, room.id)).toBe(2);
   });
 
   it('a single-capacity room still never double-books', () => {

@@ -1,8 +1,8 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-18 (ED epic Stage A SHIPPED — the ER is now the
-busiest department; Stages B/C drafted in `docs/ED_PLAN.md`. SAVE_VERSION 9,
-585 tests, all gates green)
+**Last updated:** 2026-07-19 (ED epic Stage B1 SHIPPED — ratio staffing, the
+attention penalty, denser ED beds, close/reopen-to-expand; Stages B2/C still
+drafted in `docs/ED_PLAN.md`. SAVE_VERSION 10, 644 tests, all gates green)
 **OWNER DECISIONS PENDING (adopt-unless-vetoed, all review-recommended):**
 (1) the clean-day +2 cleanliness rep bonus requires ≥1 arrival that day (the
 wait-bonus "an empty hospital isn't fast" principle — ratified §4.2 didn't
@@ -37,6 +37,7 @@ Both were hardened by independent adversarial reviews before any code was writte
 
 | Commit | Contents |
 |---|---|
+| *(ED stage B1)* | **Emergency Department epic Stage B1 — ratio staffing, denser bays, close-to-expand (SAVE_VERSION 10)**, built from the twice-pre-reviewed `docs/ED_IMPL_PLAN.md`. **THE HEADLINE IS THE MEASUREMENT, NOT THE MECHANIC** (`ED_PLAN` §5b, 3-arm × 5-seed probe): **the DENSITY change alone answers Stage A's death signal — deaths 4.4 → 1.0, discharged 114 → 121** (`traumaBed` 1 bed/12 tiles → 1/6, min 2, so a minimum 3×4 ER derives 2 bays; Erlang: 1 bay queues ~53 min with a 120-min stroke freezing the department, 2 bays ~9 min, 4 bays ~1 min = pressure deleted). **Ratio staffing measured NEUTRAL** (`er.staffRatio {nurse:4, doctor:4}` — Title 22's 1:4 kept; the researched 1:15 doctor number was DROPPED as inert at every buildable size). **The probe FALSIFIED the contract's own ordering decision:** v2 specified load-forward ("extend the engaged staffer first") and both pre-impl reviewers called it the payroll brake; measured, it cost **+1.8 deaths and −23% surgeries**, because a hired staffer's salary is already spent — sharing saves money at HIRE time, never at dispatch. Reversed to **IDLE-FIRST**, making the ratio *graceful degradation*: fully staffed the ED behaves exactly as pre-B1, short-staffed the extra bays run slower rather than standing empty (ED_PLAN §7.2's movable bottleneck). **The attention penalty** (`attentionSkillPenaltyPerPatient` 0.5, `formulas.attentionSkill`, DURATION only — `successChance` keeps RAW skill so deaths stay tied to health/acuity, not staffing arithmetic; `activeOnly` load so a nurse walking to bay 2 doesn't slow bay 1). Load is **DERIVED** (`reservationsOfStaff`/`staffLoadIn`, the restroom-occupancy precedent) — ratio staffing adds NO saved state; `duty` stays a single `reservationId` reinterpreted as **A** witness, not **THE** binding. `releaseReservation` gains an idempotence guard + the remaining-panel branch (re-point to an ACTIVE reservation, no idle/step-out) — that ONE branch IS the Flow-rule-7 and rule-8 fix; `fireStaff` acts on the whole panel (without it, firing a ratio nurse left reservations naming a deleted staffer and `promoteGatheredReservations` would throw). **`Room.closed` + `setRoomClosed`** (owner ask mid-stage: "an area needs to be closed down before being able to expand it because it may be so busy that people will always be in the area") reuses `breakRoom`'s disable-never-harm contract — capacity 0, gathering cancelled, actives DRAIN — closing the loop on B1's own "expand to add bays" remedy, since expand/sell both reject while any reservation is live. `tryPlaceStripAt` now requires EVERY capacity-slot strip to keep a walkable orthogonal neighbour (found during implementation: at 1 bed/6 tiles placement packed beds into solid rows leaving inner bays nobody could stand beside; scoped to STAFFED rooms — in a restroom you occupy the stall, and imposing it there would have rewritten restroom layouts and broken a Stage-3 regression of record). Save border closes the **one-directional duty↔reservation gap** (3 new rules: witness validity, total coverage, ratio bound + one-room), reasoned safe for v9-and-older because pre-v10 dispatch required `duty.kind === 'idle'` so no old save can have a staffer in two reservations. Reviews: 2 pre-impl (code/contract 6 MAJOR incl. two UNIMPLEMENTABLE sections + a phantom `needs.ts` audit naming code that does not exist; design/balance 4 MAJOR incl. the payroll brake being exactly $0 for bays 2–4) → owner ratified the ratio numbers + the movable-bottleneck goal → post-impl (3 MAJOR: an unreopenable closed+broken room, a 135s zero-assertion probe in the default gate, 2 missing contract tests; all fixed, probe now `ED_PROBE=1`-gated so the suite runs 11s not 133s). **OPEN, recorded not buried (`ED_PLAN` §5b item 5): the ED out-competes the rest of the hospital for nurses — surgeries 11.2 → 7.2 (−36%)**, because a ratio staffer never returns to `idle` while `assignTriage`/`assignJobsForRole` gate on idleness. Harness per-condition floor still passes. Three candidate remedies scoped, none implemented — each needs its own measurement pass. 59 net-new tests |
 | *(ED stage A)* | **Emergency Department epic Stage A — route the real ED cases through the ER** (`docs/ED_PLAN.md`). Owner: "why is the ER not that busy? most hospitals' ERs are one of the busiest departments." DIAGNOSED BY MEASUREMENT, not assumption (a 5-day reference run instrumented with the finances epic's `visitsTotal`): only 3 of 14 conditions routed to the ER = **12.8%** of arrival weight, and TWO of those three were gated behind a CT scan first (2 rad techs serve 4 scanner rooms), so only chest pain arrived directly. Exam saw 76 visits to the ER's 13. Root cause is a MODELLING choice, not a bug — the ER was a specialty room while a real ED is the hospital's front door. Stage A's principle: **change the ROOM of existing steps, never lengthen chains** (realism with no added contention). Laceration sutures, fracture casting and kidney-stone pain control move exam → er; `roles` unchanged and still a subset of `er.staffedBy`. **Measured, 5 seeds × 5 days: ER visits 15.6 → 39.6 avg (now the busiest department), exam 74 → 37, ER-routed weight 12.8% → 41.9%.** Honest cost, recorded not buried: throughput −9%, deaths 2.8 → 4.2 avg (one seed tripled to 10), walkouts 47.6 → 37.0 — patients give up less and die slightly more, the signature of a CAPACITY bottleneck (the reference ER is 3×4 = ONE trauma bed now absorbing 40% of arrivals). Harness envelope still green. ED_PLAN §5 owns the fix and recommends denser beds as part of Stage B. Stages B (ambulance arrivals + ED entrance/waiting/triage — the owner's ask) and C (ungate the CT dependency: ER → CT → ER) are DRAFTED, awaiting pre-impl review. 3 test fixtures updated (they built exam rooms for flows that now need an ER) |
 | *(anesthesia)* | **The anesthesiologist role — a three-role OR (SAVE_VERSION 9)**: owner ask "the game actually needs to model anesthesiology". `ROLE_DEFS.anesthesiologist` ($420/day — between nurse and surgeon, the brake on over-hiring; crimson `0xc1121f`, clear of the teal/green clinical cluster and colour-checked in frame against the one standing red object, the vending machine) joins `surgery.staffedBy` AND both surgery steps (gallstones, appendicitis — the only two). **THE finding, from the pre-impl review (MAJOR 2): the new role has NO competing demand, so it does not make the gather harder in the way the plan assumed — the binding constraint remains the NURSE (7 condition steps + triage, and `assignTriage` runs BEFORE `assignTreatment` and drains idle nurses unconditionally). v1's compensation was therefore calibrated against a largely illusory cost.** What earned the milestone is **§4 lever 4, the partial-gather soft hold** (review MAJOR 3): a failed gather used to hand its partially-secured staff to a LOWER-priority patient later in the SAME dispatch pass — surgery grabs surgeon+nurse, misses the third role, gives up, and the nurse goes to a walk-in; next tick the third role is free and the nurse is gone. Now the top-priority patient's secured staff are held for the rest of the pass (a local `Set`, discarded at pass end — nothing committed, no new state, no save impact, all-or-nothing untouched). **Verified non-vacuous: with the hold reverted the regression test fails, with it restored it passes.** Balance: surgeries shorter + dearer (gallstones 120→90 min / $1,500→$2,000; appendicitis 100→80 / $1,800→$2,300) to fund the third salary; harness `STANDARD_STAFF` gains the role (review MAJOR 1 — a ROSTER change, not a re-pin: without it both surgical conditions discharge ZERO for every seed). SAVE_VERSION 9 (review MINOR — the bump is for the OTHER direction: an older DEPLOYED build opening a new save would die on an unknown role instead of refusing cleanly; `topUpCandidates` already handles loading old saves). Backward fixtures v1/v4/v5/v6 now filter post-version roles BY NAME with a shared `expectPoolLacks` premise (review MAJOR 4 — the old `ROLE_IDS.length - N` arithmetic stayed true as the roster grew, so each new role silently left them holding candidates that version could never have had, hollowing out the guard for the v1→v2 unhirable-surgeon bug). Hints name the role with NO code change (`needs.ts` iterates `step.roles`) — asserted, not assumed. **The re-pin sweep the plan feared did not materialize: only 2 tests needed changes, both semantic, because the fixed-seed suites assert properties rather than brittle rng values.** 10 net-new tests (585 total) |
 | *(finances polish)* | **Finances polish pass (SAVE_VERSION 8)** — the owner's "fix them all" sweep over the leftovers the two reviews had ranked as NIT/MINOR. **The one that matters: `Sold rooms (no longer owned)`** — the Departments block summed only rooms we CURRENTLY own, so income earned in a room since sold vanished from the ledger with nothing to explain the shortfall against `Patient fees`; the new row is `lifetime.revenue − Σ owned − Σ vending` (derived, zero new state, `max(0)` defensive) and makes the block reconcile exactly. **SAVE_VERSION 8**: `amenity.revenueToday`, the per-DAY partner of v7's `revenueTotal` — a machine had no per-day figure ANYWHERE, which is why the directory column and the modal's Amenities row sat blank while it was visibly taking money; reset in the SAME `closeDay` step as rooms (one "earned today" epoch), pairwise-bounded at the border like rooms, read-time default 0 on v7 (the honest value — the running day's takings are unknowable after the fact). Payroll moved OUT of the column grid into a bordered `.finance-footer` with a "lifetime · staff serve the whole hospital" note (under a column header its figure read as that column's kind of number — first a patient count, then negative income for a department that doesn't exist). Persistent styled scrollbar on `.finance-body` (Chromium's overlay scrollbars left no track, so a half-clipped row was doing all the affordance work); graph plot inset 62px so the labels sit BESIDE the chart instead of the first data point sharing a corner with its own label; directory shows vending's earned-today. 6 net-new tests (575 total). **Deliberately NOT done** (owner told, not silently skipped): per-room running costs — a game-wide balance change, now scoped as its own milestone in Next. |
@@ -131,6 +132,53 @@ Both were hardened by independent adversarial reviews before any code was writte
 - **`MidnightModalCoordinator` is the single `dayEnded` subscriber (Phase 2)** — it opens the daily report XOR the challenge result card per midnight, decided by a synchronous return value (not event order — kills the v1 race). The challenge controller once-latches on the FIRST of its two terminals (`dayEnded`@goal.day → reached, `gameOver` before → dnf) and emits `challengeComplete` exactly once; the DNF folds into the game-over screen. `scoreChallenge` (formulas.ts) is the ONE metric→number fn, reading `SCORE_METRICS[metric].kind/field/unit`.
 - **A visible `.modal-overlay` owns the clock — enforced by `PausingOverlay` (Phase 2)** — the daily report + challenge card extend it (pause-on-open/restore-on-Continue is single-sourced). The catch-up loop (`loop.ts`) HALTS when a mid-frame tick pauses it (`&& this.speedValue > 0`), so the sim never advances behind a just-opened "paused" overlay and a bankruptcy can't stack game-over on the reached card. Only one overlay is ever visible.
 
+- **A staffer's LOAD is DERIVED, never tracked** (ED B1): count the
+  reservations whose `staffIds` name them (`reservationsOfStaff`/
+  `staffLoadIn`) — the restroom-occupancy precedent. `Staff.duty` is still a
+  single `reservationId`, but it now means **A** reservation they hold, not
+  **THE** one. Consequently `releaseReservation` idles + steps out ONLY when
+  the remaining panel is empty, and otherwise re-points the witness at a
+  remaining (ACTIVE-preferred) reservation. That one branch IS the Flow-rule-7
+  and rule-8 fix; neither needed its own change. `fireStaff` must act on the
+  WHOLE panel or it leaves reservations naming a deleted staffer.
+- **A ratio staffer's reservations are all in ONE room** (ED B1) — enforced by
+  induction (`makeReservation`'s `wasIdle` gate + `availableStaff`'s
+  witness-room test + the within-panel re-point) and by the v10 save border.
+  It is what makes "zone" mean anything and why the soft hold keys on
+  (staffer, room, units): a nurse secured for surgery must be unavailable in
+  the ER OUTRIGHT, not merely down one unit.
+- **`availableStaff` is IDLE-FIRST, and that was a MEASURED reversal** (ED B1,
+  `ED_PLAN` §5b): the contract specified load-forward and both pre-impl
+  reviewers endorsed it; the 3-arm probe measured +1.8 deaths and −23%
+  surgeries. A hired staffer's salary is already spent, so sharing is a saving
+  at HIRE time, never at dispatch. Don't "optimise" this back.
+- **The attention penalty is DURATION-ONLY and counts ACTIVE load only**
+  (ED B1): `successChance` keeps RAW skill so deaths stay tied to a
+  health/acuity story rather than staffing arithmetic, and a nurse walking to
+  bay 2 must not slow bay 1 (`staffLoadIn(..., {activeOnly:true})`).
+- **`closed` and `brokenSince` disable a room identically** (ED B1) — one line
+  in `capacityOf` gates every dispatch path — but the broken guard in
+  `setRoomClosed` is ASYMMETRIC: closing a broken room is refused, REOPENING
+  one is always allowed. A closed room still drains its actives and a draining
+  treatment can still break it, so closed+broken is reachable; refusing the
+  reopen stranded the room permanently.
+- **Capacity/ratio needs are PANEL-ONLY** (ED B1): `hintOnce` keys persist per
+  save and `capacity:<roomType>` is type-keyed, so toasting it would announce
+  a recurring state exactly once in a save's lifetime — the defect the
+  `broken:<id>:<since>` instance key exists to avoid.
+- **The SHORTAGE scan covers EVERY staffed room and names the ROLE**
+  (`capacityNeeds` in needs.ts, owner ask 2026-07-19). The existence-based
+  scan answers "is it built / is anyone hired"; this one answers "is anyone
+  FREE", which is the game's most common real failure and was previously
+  silent — a player watched patients die outside an idle OR with no
+  explanation. Three states: no free slot → expand; every X busy → hire an X
+  *for this room*; role not hired → the existing `role:<id>` row, never
+  duplicated. `waitingTriage` counts, so a starved triage queue surfaces.
+  **The transient-flash problem is solved by `capacityHintWaitGameMinutes`,
+  NOT by scoping to ratio rooms** — every 1:1 room is briefly "all staff busy"
+  between patients, so only a patient stuck for a real interval counts. Naming
+  which role binds in which area IS the mechanic (ED_PLAN §7.2: diagnosing the
+  binding resource is meant to be the skill).
 - **`needBreak` is a SUB-STATE, never a stage** (amenities Stage 1, the `lost`
   precedent): stage stays `waiting`/`waitingTriage`, `waitingSince` keeps
   aging, the dispatcher's `dispatchable` skips on-break patients, and stall/
@@ -318,6 +366,25 @@ Both were hardened by independent adversarial reviews before any code was writte
 
 ## Next
 
+- **STAFF LOUNGE — owner ask (2026-07-19), NOT SCOPED.** *"Add the option to
+  create a staff lounge in the Comfort dropdown area. Staff need a place to
+  take breaks and lunches."* The room itself is cheap — a `RoomDef` with
+  `category: 'comfort'`; the build menu derives categories from
+  `CATEGORY_LABELS`, so it appears automatically. **The real work is what a
+  break MEANS**, and it needs its own plan + pre-implementation review:
+  (1) a staff fatigue/hunger meter — the patient bladder/thirst precedent from
+  Amenities Stage 1 (`decay.ts` + the rng-rolled spawn values); (2) a break
+  SIDE-TRIP, which should follow `patientNeeds.ts`'s `needBreak` sub-state
+  rather than inventing a new stage (stage stays put, the dispatcher skips
+  on-break staff, claims derive from live break state — no bookkeeping to
+  leak); (3) the balance question: does a staffer on break leave the available
+  pool? **That interacts directly with ED B1's nurse capture** (`ED_PLAN` §5b
+  item 5) — a ratio nurse who never returns to `idle` also never gets a break,
+  which is either a bug to fix or, more interestingly, the pressure that makes
+  the lounge matter. Decide that deliberately. (4) Morale/efficiency payoff vs
+  pure decoration — a lounge with no mechanical effect is a money sink.
+  Save impact: new room type is fine, but a staff meter is new saved state ⇒
+  SAVE_VERSION bump.
 - **Art pass: DONE** (procedural upgrade — see commit table; the §2.6 atlas contract stayed intact, so a real sprite atlas remains a future drop-in). This was the deploy prerequisite (owner ruling).
 - **Deploy: DONE (2026-07-17).** Live at **https://hospital-sims.vercel.app** — Vercel, `hospital-sims` team, project `hospital-sims`, production branch `master` (= GitHub default; no master/main mismatch). Git integration connected → every push to `master` auto-deploys to production, other branches get preview URLs. Deployed via Vercel CLI (`vercel link` + `vercel deploy --prod`) after the dashboard import produced no build; git auto-deploy verified with a live push. **Public GitHub repo: `lgorby/hospital-sims`** — full tree tracked, including `CLAUDE.md` (initially kept private + scrubbed from pre-publish history via `git filter-branch`, then re-added on owner request so it syncs across machines — nothing private in it; it appears from commit `10d35e5` forward). Full pre-publish history preserved on branch `pre-public-master` (local + pushed to `origin` as an archive — never merge it into `master`; the histories intentionally diverge). `.vercel/` is gitignored (local link config). The build output is a pure static site (`vite build` → `dist/`), portable to any static host — a hosting choice, not a dependency. Redeploy manually if ever needed: `vercel deploy --prod --scope hospital-sims`.
 - **Optional art polish (art-review recommendations, not defects):** three green-family role colors cluster — nurse (teal), respiratory therapist (green), surgeon (dark green); RT vs surgeon differ only by the surgeon's mask. Reads fine in-world (cap/mask disambiguate) but nudging `ROLE_DEFS` colors apart in `roles.ts` would help at a glance. Also consider making staff role colors more hue-spread generally. Deferred pending an owner call + a visual check.

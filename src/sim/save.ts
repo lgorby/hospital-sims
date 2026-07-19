@@ -18,7 +18,7 @@ import {
 import type { NeedBreak, Patient, PatientStage } from './entities/patient';
 import type { Room } from './entities/room';
 import type { Candidate, Job, Reservation, Staff, StaffDuty } from './entities/staff';
-import { treatmentDurationTicks } from './formulas';
+import { staffRatioFor, treatmentDurationTicks } from './formulas';
 import type { GridPoint, Rect } from './types';
 import { World, type Mess, type Tile } from './world';
 
@@ -28,7 +28,7 @@ import { World, type Mess, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 9;
+export const SAVE_VERSION = 10;
 
 /**
  * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
@@ -106,6 +106,19 @@ export const SAVE_VERSION = 9;
  * confusing shape error instead of the clean "newer than this game
  * understands" refusal. Every prior role addition shipped with a bump and so
  * had that guard; skipping it would have been the first regression of it.
+ *
+ * v9 → v10 (ED epic Stage B1, ED_IMPL_PLAN §4): rooms gain `closed` (the
+ * player-controlled drain that makes a busy room expandable). Migration is a
+ * read-time default of false — pre-v10 rooms were always open.
+ *
+ * The bump ALSO covers RATIO STAFFING, which adds no field at all: a
+ * staffer's load is DERIVED from the reservations naming them, so `duty`
+ * keeps its single `reservationId`. The bump exists for the OTHER direction,
+ * exactly as v9's did — a v10 save has one nurse in several reservations'
+ * `staffIds`, and an older DEPLOYED build opening it would release the first,
+ * idle her, walk her out and silently strand the rest of her panel. Silent
+ * corruption, where a version refusal is clean. The v10 border additionally
+ * closes the one-directional duty↔reservation gap (see `loadWorld`).
  * Anything below 1 or above SAVE_VERSION is refused.
  */
 export function isLoadableVersion(version: number): boolean {
@@ -232,6 +245,8 @@ export interface SavedRoom {
   wear: number;
   /** v6: breakdown tick, null = in service. Pre-v6 saves restore null. */
   brokenSince: number | null;
+  /** ED B1 (v10): player-closed. Pre-v10 saves restore false. */
+  closed: boolean;
   /** v7 (finances, §9.7): per-unit income + completed treatment steps. Pre-v7
    *  saves restore 0. FROZEN positions — after brokenSince (byte-identity). */
   revenueToday: number;
@@ -844,6 +859,7 @@ function writeRoom(room: Room): SavedRoom {
     quality: room.quality,
     wear: room.wear,
     brokenSince: room.brokenSince,
+    closed: room.closed,
     revenueToday: room.revenueToday,
     revenueTotal: room.revenueTotal,
     visitsTotal: room.visitsTotal,
@@ -893,6 +909,7 @@ function readRoom(value: unknown, label: string, saveVersion: number): Room {
     quality: asNumber(o.quality, `${label}.quality`),
     wear,
     brokenSince: saveVersion < 6 ? null : asIntOrNull(o.brokenSince, `${label}.brokenSince`),
+    closed: saveVersion < 10 ? false : asBool(o.closed, `${label}.closed`),
     revenueToday,
     revenueTotal,
     visitsTotal,
@@ -1642,6 +1659,20 @@ function validateReferences(data: RestorePayload): void {
         `staff[${i}].duty.reservationId`,
         'a reservation',
       );
+      // ED B1 rule 1 — WITNESS VALIDITY. Until v10 this border was
+      // ONE-DIRECTIONAL: the duty had to name a live reservation, but nothing
+      // checked that reservation lists this staffer (contrast the job border
+      // just below, which has always enforced the back-reference). Under ratio
+      // staffing `duty` is one witness of a PANEL, so an unchecked witness is
+      // no longer merely odd — it is a staffer the release path can never free.
+      const witnessId = s.duty.reservationId;
+      const witness = data.reservations.find((r) => r.id === witnessId);
+      if (witness && !witness.staffIds.includes(s.id)) {
+        fail(
+          `staff[${i}].duty.reservationId`,
+          `a reservation that lists this staffer (reservation ${witness.id} does not)`,
+        );
+      }
     }
     if (s.duty.kind === 'job') {
       const job = jobsById.get(s.duty.jobId);
@@ -1653,6 +1684,57 @@ function validateReferences(data: RestorePayload): void {
       }
     }
   });
+
+  // -- ED B1 rules 2 + 3: the reservation→staff direction, and the ratio bound.
+  //
+  // Rule 2 (TOTAL COVERAGE): every id in every `staffIds` belongs to a staffer
+  // on `reserved` duty. Their witness may name a DIFFERENT reservation — that
+  // is exactly what the ratio permits — so this is deliberately weaker than
+  // the job border's exact back-reference, and no stronger.
+  //
+  // Rule 3 (RATIO BOUND + ONE ROOM): a staffer's reservations all sit in one
+  // room, and there are no more of them than that room's ratio for their role.
+  // This is the invariant the whole model rests on, and it is the border's job
+  // — the sim must never load a nurse holding nine bays or straddling two
+  // departments. Safe for v9-and-older by construction: pre-v10 dispatch bound
+  // `duty` unconditionally and required `duty.kind === 'idle'` to pick anyone,
+  // so no old save can have a staffer in two reservations at all, and rule 3's
+  // bound is ≥1 for every room/role. Per the slot-capacity comment above, the
+  // border may be STRICTER than the sim, never more permissive.
+  const panels = new Map<number, SavedReservation[]>();
+  data.reservations.forEach((r, i) => {
+    r.staffIds.forEach((id, j) => {
+      const member = staffById.get(id);
+      if (!member) return; // already reported by the resolve pass above
+      if (member.duty.kind !== 'reserved') {
+        fail(
+          `reservations[${i}].staffIds[${j}]`,
+          `a staffer on reserved duty (staff ${id} is '${member.duty.kind}')`,
+        );
+      }
+      panels.set(id, [...(panels.get(id) ?? []), r]);
+    });
+  });
+  for (const [staffId, held] of panels) {
+    const member = staffById.get(staffId)!;
+    const rooms = new Set(held.map((r) => r.roomId));
+    if (rooms.size > 1) {
+      fail(
+        `staff[${staffId}] reservations`,
+        `all in ONE room (staff ${staffId} holds reservations in ${rooms.size} rooms)`,
+      );
+      continue;
+    }
+    const room = roomsById.get(held[0]!.roomId);
+    if (!room) continue; // already reported
+    const ratio = staffRatioFor(room.type, member.role);
+    if (held.length > ratio) {
+      fail(
+        `staff[${staffId}] reservations`,
+        `at most the room's ratio of ${ratio} for a ${member.role} (holds ${held.length})`,
+      );
+    }
+  }
 
   // -- check-in queues: room + patients resolve, each patient in ≤1 position
   const queuedPatientIds = new Set<number>();

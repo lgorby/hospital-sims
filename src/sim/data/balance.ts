@@ -114,6 +114,21 @@ export const BALANCE = {
     durationQualityFactor: 0.02,
     /** Quality can never speed a treatment beyond this multiplier (exploit guard). */
     durationQualityFloor: 0.7,
+    /**
+     * ED epic Stage B1 — the attention penalty. A ratio staffer split across
+     * N bays treats each one more SLOWLY: effective skill drops by this much
+     * per extra concurrent patient (ED_PLAN §7.5 — most of a stay is spent
+     * waiting on shared resources; contention made visible as TIME, the
+     * currency the player already reads). Without it, sharing is free and a
+     * second ED nurse is strictly dominated below the ratio cap, while a
+     * skill-5 nurse becomes worth 4× more in the ER than anywhere else —
+     * inverting the hiring market `salaryPerSkillStep` is priced for.
+     * DURATION ONLY: `successChance` stays on RAW skill, because deaths are
+     * the ED's loudest signal and must stay tied to a health/acuity story
+     * rather than to staffing arithmetic. At load 1 the penalty is 0, so
+     * every non-ratio room is bit-identical to pre-B1.
+     */
+    attentionSkillPenaltyPerPatient: 0.5,
   },
   reputation: {
     starting: 300,
@@ -159,6 +174,16 @@ export const BALANCE = {
      * exact state that created the doomed reservation, once per tick, forever.
      */
     cancelRetryGameMinutes: 5,
+    /**
+     * How long a patient must have been waiting before a room/role SHORTAGE
+     * is reported (ED B1, owner ask: "continued hints if we need more
+     * particular staff to cover areas"). Every 1:1 room is momentarily
+     * "all staff busy" between patients, and hinting on that would be exactly
+     * the transient noise the existence-based need scan avoids. A patient who
+     * has waited this long is blocked by a real shortage, not by a staffer
+     * mid-walk.
+     */
+    capacityHintWaitGameMinutes: 45,
   },
   /** Mood-bubble thresholds (GDD §10). `criticalHealthBelow` is shared by
    *  `moodOf` AND the Stage-2 vomit-eligibility gate (one threshold SSOT). */

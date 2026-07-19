@@ -117,6 +117,17 @@ interface RoomDef {
   readonly cost: number;
   /** Roles that can staff this room's work (empty = unstaffed, e.g. waiting room). */
   readonly staffedBy: readonly RoleId[];
+  /**
+   * ED epic Stage B1 (ED_PLAN §3.2): how many concurrent reservations ONE
+   * staffer of this role may hold IN THIS ROOM. An absent role — and every
+   * room without the field — is 1, i.e. today's exclusive binding, so ratio
+   * staffing is opt-in per room by construction. Read ONLY through
+   * `formulas.staffRatioFor`. Keys must be a subset of `staffedBy`
+   * (data.test.ts). A ratio staffer's reservations are all in ONE room:
+   * that is what makes "zone" mean anything, and it is the incentive to
+   * consolidate (two 2-bay ERs need 2 nurses; one 4-bay ER needs 1).
+   */
+  readonly staffRatio?: Readonly<Partial<Record<RoleId, number>>>;
   /** Placeholder floor tint (render palette lives with the data it colors). */
   readonly floorColor: number;
   /** Concurrent-patient rule (Stage A) — see CapacityRule. */
@@ -223,12 +234,27 @@ export const ROOM_DEFS = {
     cost: 10_000,
     floorColor: 0xe0a9a9,
     staffedBy: ['doctor', 'nurse'],
-    // The owner's ward scenario (Stage A): beds scale with the floor — 3×4
-    // min (12 tiles) derives exactly the pre-epic 1 bed; growth earns more,
-    // and each bed treats a patient CONCURRENTLY (with its own staff pair).
+    // ED epic Stage B1. Cal. Title 22 §70217 sets the ED nurse cap at 1:4
+    // INSTANTANEOUS (no shift averaging) — that is where `nurse: 4` comes
+    // from and it is kept. `doctor: 4` is DELIBERATELY NOT the researched
+    // 1:15 zone number: at `tilesPerProp: 6` a 15-bed ED needs 90 tiles, so
+    // 1:15 would be inert at every buildable size. 4 puts the physician
+    // threshold inside the range players actually build, which is what makes
+    // the binding constraint MOVE with the day's case mix (ED_PLAN §7.2):
+    // laceration (wt 20) is nurse-only, fracture + kidney stones (wt 23) are
+    // doctor-only, chest pain/head injury/stroke (wt 19) need both. Sharing
+    // is not free — see BALANCE.treatment.attentionSkillPenaltyPerPatient.
+    staffRatio: { nurse: 4, doctor: 4 },
+    // The owner's ward scenario (Stage A): beds scale with the floor. Stage B1
+    // halves the density (12 → 6) so the minimum 3×4 derives 2 bays, answering
+    // Stage A's death signal: at λ=0.54/h and ~63 min mean occupancy, 1 bay
+    // queues ~53 min with a 120-min stroke freezing the department, 2 bays
+    // ~9 min, and 4 bays ~1 min — which would delete the pressure entirely
+    // (ED_PLAN §5). Capacity derives from PLACED prop tiles, so this affects
+    // new builds and expansions only; existing saved ERs keep their one bed.
     capacity: { kind: 'perProp', prop: 'traumaBed', noun: 'Beds' },
     props: [
-      { id: 'traumaBed', walkable: false, density: { kind: 'perTiles', tilesPerProp: 12, min: 1 } },
+      { id: 'traumaBed', walkable: false, density: { kind: 'perTiles', tilesPerProp: 6, min: 2 } },
     ],
   },
   // ---- Expansion 1 (GDD §12): imaging suite + treatment departments.
@@ -386,4 +412,14 @@ export const ROOM_TYPES = Object.keys(ROOM_DEFS) as RoomType[];
  */
 export function roomFailure(type: RoomType): RoomFailure | undefined {
   return (ROOM_DEFS[type] as RoomDef).failure;
+}
+
+/**
+ * The one `staffRatio` accessor (ED Stage B1) — same widening as
+ * `roomFailure` above, for the same `as const` reason. Undefined = this room
+ * binds staff exclusively. Callers should prefer `formulas.staffRatioFor`,
+ * which applies the "absent ⇒ 1" default.
+ */
+export function roomStaffRatio(type: RoomType): Readonly<Partial<Record<RoleId, number>>> | undefined {
+  return (ROOM_DEFS[type] as RoomDef).staffRatio;
 }

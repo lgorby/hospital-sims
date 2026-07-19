@@ -1,7 +1,9 @@
+import { gameMinutesToTicks } from './clock';
 import { BALANCE } from './data/balance';
 import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditions';
 import { ROLE_DEFS, type RoleId } from './data/roles';
 import { ROOM_DEFS, type RoomType } from './data/rooms';
+import { staffRatioFor } from './formulas';
 import type { Patient } from './entities/patient';
 import type { World } from './world';
 
@@ -23,9 +25,10 @@ export interface BlockedNeed {
   /** Stable dedupe/hint key: 'room:<RoomType>' | 'role:<RoleId>' |
    *  'broken:<roomId>:<brokenSince>' (instance-keyed — Stage 3, design
    *  MINOR 8: hintedOnce persists per save, so a room-keyed toast would
-   *  announce only the FIRST breakdown ever). */
+   *  announce only the FIRST breakdown ever) | ED B1's
+   *  'capacity:<RoomType>' and 'capacity:<RoomType>:<RoleId>'. */
   key: string;
-  kind: 'room' | 'role' | 'broken';
+  kind: 'room' | 'role' | 'broken' | 'capacity';
   room?: RoomType;
   role?: RoleId;
   /** Live pre-terminal patients affected (deduped per need). */
@@ -270,11 +273,140 @@ export function computeBlockedNeeds(world: World): BlockedNeed[] {
     }
   }
 
+  needs.push(...capacityNeeds(world));
+
   // Total, deterministic order: urgent first, most-affected first, key tiebreak.
   needs.sort((a, b) => {
     if (a.urgent !== b.urgent) return a.urgent ? -1 : 1;
     if (a.patients !== b.patients) return b.patients - a.patients;
     return a.key < b.key ? -1 : 1;
   });
+  return needs;
+}
+
+/**
+ * ED epic Stage B1 §5.3 — the SHORTAGE scan (owner ask 2026-07-19: "continued
+ * hints if we need more particular staff to cover areas").
+ *
+ * The scan above is EXISTENCE-based ("is this room built / this role hired?"),
+ * deliberately, so a staffer's transient walk never flashes a hint. That left
+ * the game silent on its most common real failure: the room IS built, the
+ * nurse IS hired, and nothing is happening because every bay is occupied or
+ * every nurse is already busy. A player watched patients die outside an idle
+ * operating room with no explanation. The three states:
+ *
+ *   1. no free bay     → expand the room to add bays
+ *   2. every X is busy → hire another X for THIS room
+ *   3. role not hired  → already `role:<id>` above, deliberately NOT repeated
+ *
+ * State 1 is also THE remedy for an existing save whose ER still holds one
+ * bed: the density change only affects new builds and expansions, so without
+ * this row the game never tells that player what to do.
+ *
+ * SCOPE: every STAFFED room, not just ratio rooms. Naming the specific role
+ * per area is the point — the day's case mix decides whether the ED is short
+ * a nurse (lacerations) or a doctor (fractures, kidney stones), and
+ * diagnosing WHICH resource binds is meant to be the skill (ED_PLAN §7.2).
+ * The transient-flash problem that scoping to ratio rooms used to dodge is
+ * handled properly instead, by `capacityHintWaitGameMinutes`: a 1:1 room is
+ * briefly "all staff busy" between every patient, so only a patient who has
+ * been waiting a REAL interval counts as blocked by a shortage.
+ *
+ * Lives HERE, not in the UI, because `label` is the single wording source for
+ * the BlockedPanel AND the dispatcher's toasts, and because the availability
+ * test below must not drift from the dispatcher's `availableStaff`.
+ * Pure: reads world state, mutates nothing.
+ */
+function capacityNeeds(world: World): BlockedNeed[] {
+  const blockedFor = gameMinutesToTicks(BALANCE.dispatcher.capacityHintWaitGameMinutes);
+  const longWait = (p: Patient): boolean =>
+    p.waitingSince !== null && world.clock.tick - p.waitingSince >= blockedFor;
+
+  // Which room types have someone genuinely stuck outside them, and on which
+  // roles. `waitingTriage` is included: triage is a staffed room like any
+  // other, and a starved triage queue is the single loudest version of this
+  // failure (a ratio staffer never returns to `idle`, and `assignTriage`
+  // gates on availability — so a busy ED can hold the only nurse indefinitely
+  // and every arrival strands untriaged. ED_PLAN §5b item 5).
+  const blocked = new Map<RoomType, { roles: Set<RoleId>; patients: Set<number> }>();
+  const note = (type: RoomType, roles: readonly RoleId[], patientId: number): void => {
+    let entry = blocked.get(type);
+    if (!entry) {
+      entry = { roles: new Set(), patients: new Set() };
+      blocked.set(type, entry);
+    }
+    entry.patients.add(patientId);
+    for (const role of roles) entry.roles.add(role);
+  };
+  for (const patient of world.patients.values()) {
+    if (!longWait(patient)) continue;
+    if (patient.stage.kind === 'waitingTriage') {
+      note('triage', ROOM_DEFS.triage.staffedBy, patient.id);
+      continue;
+    }
+    if (patient.stage.kind !== 'waiting') continue;
+    const step = CONDITION_DEFS[patient.condition].steps[patient.stepIndex];
+    if (step) note(step.room, step.roles, patient.id);
+  }
+
+  const needs: BlockedNeed[] = [];
+  // Table order, not insertion order (determinism).
+  for (const type of Object.keys(ROOM_DEFS) as RoomType[]) {
+    const entry = blocked.get(type);
+    if (!entry) continue;
+    // Unbuilt is `room:<type>`; broken is `broken:<id>`; a CLOSED room is the
+    // player's own deliberate act and announces itself on the inspect card.
+    const open = world.roomsOfType(type).filter((r) => !r.closed && r.brokenSince === null);
+    if (open.length === 0) continue;
+
+    const label = ROOM_DEFS[type].label;
+    const withSlot = open.filter((r) => world.openSlots(r) > 0);
+    if (withSlot.length === 0) {
+      needs.push({
+        key: `capacity:${type}`,
+        kind: 'capacity',
+        room: type,
+        patients: entry.patients.size,
+        conditions: [],
+        urgent: true,
+        label: `${label} is full — expand it to add bays`,
+      });
+      continue;
+    }
+
+    // A slot is free, so the blocker is the staffer. This mirrors the
+    // dispatcher's `availableStaff` and must stay in step with it: idle takes
+    // any free slot; an engaged staffer qualifies only while their load IN
+    // THAT ROOM is under the ratio (1 for every non-ED room, so an engaged
+    // staffer never qualifies there); `firing`, posted and job-bound cannot.
+    for (const role of ROOM_DEFS[type].staffedBy) {
+      if (!entry.roles.has(role)) continue;
+      const ratio = staffRatioFor(type, role);
+      const hired = [...world.staff.values()].filter((s) => s.role === role);
+      if (hired.length === 0) continue; // state 3 — `role:<id>` already covers it
+      const someoneFree = hired.some((s) => {
+        if (s.firing) return false;
+        if (s.duty.kind === 'idle') return true;
+        if (s.duty.kind !== 'reserved') return false;
+        return withSlot.some((r) => {
+          const load = world.staffLoadIn(s.id, r.id);
+          return load > 0 && load < ratio;
+        });
+      });
+      if (someoneFree) continue;
+      needs.push({
+        key: `capacity:${type}:${role}`,
+        kind: 'capacity',
+        room: type,
+        role,
+        patients: entry.patients.size,
+        conditions: [],
+        urgent: true,
+        // Names the ROLE and the AREA: "which resource, and where" is the
+        // diagnosis the player is being asked to make.
+        label: `Every ${ROLE_DEFS[role].label} is busy — hire another for the ${label}`,
+      });
+    }
+  }
   return needs;
 }
