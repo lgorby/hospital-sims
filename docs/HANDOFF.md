@@ -3,7 +3,7 @@
 **Last updated:** 2026-07-19 (Departments epic Stage 1 SHIPPED — respiratory
 therapy retired, its care moved to the bedside; ED epic Stage B1 SHIPPED — ratio staffing, the
 attention penalty, denser ED beds, close/reopen-to-expand; Stages B2/C still
-drafted in `docs/ED_PLAN.md`. SAVE_VERSION 10, 644 tests, all gates green)
+drafted in `docs/ED_PLAN.md`. SAVE_VERSION 10, 652 tests, all gates green)
 **OWNER DECISIONS PENDING (adopt-unless-vetoed, all review-recommended):**
 (1) the clean-day +2 cleanliness rep bonus requires ≥1 arrival that day (the
 wait-bonus "an empty hospital isn't fast" principle — ratified §4.2 didn't
@@ -367,6 +367,51 @@ Both were hardened by independent adversarial reviews before any code was writte
 4. User cares about game feel: they requested the wayfinding/atrium mechanic, the character upgrade, and the overlap fix. Visual polish requests are welcome mid-milestone.
 
 ## Next
+
+### START HERE (session handoff, 2026-07-19)
+
+**Everything is committed; the working tree is clean.** But **8 commits are
+UNPUSHED**, including all of today's. `git push` to `master` **auto-deploys to
+production** (https://hospital-sims.vercel.app) — so pushing is a release, not
+a save. Confirm with the owner before pushing. Note SAVE_VERSION is now **10**:
+once deployed, saves written by the new build cannot be opened by the old one
+(that is the point of the bump); existing v9 saves load fine.
+
+**Shipped this session:** ED epic Stage B1 (`5ad3e2b`), the single-capacity
+hint fix (`41ee800`), the Departments plan (`cb580a1`), the pre-change harness
+guard (`8d2ad3d`), and Departments Stage 1 (`520cf21`). Full detail in the
+commit table above and in `docs/ED_PLAN.md` §5b / `docs/DEPARTMENTS_PLAN.md` §3.8.
+
+**Open threads, highest-value first:**
+
+1. **`ED_PLAN` §5b item 5 — the ED out-competes the hospital for nurses.**
+   Surgeries 11.2 → 7.2; a ratio staffer never returns to `idle` while triage
+   and the job queue both gate on idleness, so under sustained inflow a busy
+   ED can hold the only nurse indefinitely (pinned as characterization tests in
+   `test/edRatio.test.ts` — a patient died untriaged in one harness arm).
+   Three remedies scoped, NONE implemented; each needs its own measurement.
+   **This is the most important unresolved thing in the codebase.**
+2. **Departments Stage 2** — the owner's "OR is a collection of operating
+   rooms / X-ray is a collection of rooms" ask. `DEPARTMENTS_PLAN` §4 is DRAFT
+   and needs its OWN pre-implementation review. Chosen shape avoids internal
+   wall edges: a department is a SET of ordinary Rooms, so the dispatcher needs
+   no change (`roomsOfType` already returns them).
+3. **The Stage-1 capex risk** (`DEPARTMENTS_PLAN` §3.8 point 3): serving 17% of
+   arrival weight went from a $5,000 room to a $200/day hire. A 5-day probe
+   cannot see a one-time capital deletion — unmeasured, not proven safe.
+4. **Staff lounge** (owner ask) — see below. Collides with (1): a ratio nurse
+   who never idles would never get a break.
+5. **`ED_PLAN` §3b/§4** — Stage B2 (ED entrance/ambulance arrivals) and Stage C
+   (ungate the CT dependency). Both still DRAFT.
+
+**Workflow note that paid for itself repeatedly:** every stage this session ran
+plan → 2 independent adversarial pre-impl reviews → implement → post-impl
+review → fix ALL findings with a regression each. That caught 13 MAJORs in
+Stage 1 alone, including a retire mechanism that would not have compiled. It
+also twice overturned conclusions the model and both reviewers agreed on —
+the ED probe falsified `availableStaff`'s ordering, and a reviewer falsified
+the model's own reading of the RT research. **Measure; do not reason from the
+plan.**
 
 - **DEPARTMENTS EPIC — `docs/DEPARTMENTS_PLAN.md`. STAGE 1 SHIPPED (see the
   commit table). STAGE 2 (the department model — the owner's "OR is a
