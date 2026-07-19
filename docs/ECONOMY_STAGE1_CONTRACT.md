@@ -1,7 +1,94 @@
 # Economy Rebalance — Stage 1 CONTRACT (collapse the margin)
 
-**Status:** CONTRACT DRAFT (2026-07-19). Awaiting 2 independent adversarial
-pre-implementation reviews. **No code until findings are folded in.**
+**Status:** **NOT READY (2026-07-19, both reviews).** Design NOT READY (6
+MAJORs); code READY WITH FIXES. The contract repeated the exact
+measure-the-flattering-arm error the observation/shifts sagas were supposed to
+teach. Needs a v2 — and the early-game measurement must come FIRST. **No code.**
+
+> ## REVIEW OUTCOME
+>
+> ### The headline error (design MAJOR 1) — I did it AGAIN
+> §3 derives the lever magnitudes from the **mature build** while §4 declares the
+> **early-game arm** the one that decides. Utilities are a FIXED per-room cost;
+> the mature build earns ~$1,150/room/day, a 6-room starter ~5× less. So a
+> per-room utility tuned to leave the mature build at 15% margin **guarantees the
+> starter runs NEGATIVE from day one** (~−$1,000/day → bankrupt in ~10-13 days,
+> before a new player can grow). This is observation's occupancy-vs-discharge
+> mistake and shifts' reference-vs-early mistake, a third time, in the contract
+> that cited both. **Remedy: INVERT — set magnitudes from the early-game
+> solvency floor (the binding arm), then check the mature build isn't too fat.
+> Starting cash ($50k) is a co-lever, not an afterthought.**
+>
+> ### The other design MAJORs
+> 2. **Operating leverage → cash death-spiral the metrics can't see.** At 15%
+>    margin ~85% of cost is FIXED, so break-even is ~88% of baseline revenue — a
+>    ~12% throughput drop flips to a loss, and a rep dip (mult 0.95 at rep 300,
+>    linear to 0.5) is a ~47% arrival collapse → ~−$3k/day. §4 measures margin
+>    LEVEL, never recovery-from-shock. **Remedy: a mandated death-cluster / low-
+>    rep shock arm asserting cash SURVIVES and RECOVERS, not just steady margin.**
+> 3. **Per-tile utilities make the just-populated imaging/OR rooms net losses —
+>    reversing the LIVE outpatient milestone.** MRI ~$750/day post-cut vs ~$500
+>    utilities. **Remedy: per-room P&L checks for MRI/nucMed/CT/OR; scale
+>    utilities partly by USE or exempt idle high-capex rooms.**
+> 4. **"Utilities make the LAYOUT lesson economic" is PROVABLY FALSE** — REFERENCE
+>    and COMPACT use identical rects, so per-tile utilities are byte-identical
+>    between arms; sprawl pays the same as compact. Utilities price SIZE, layout
+>    is DISTANCE — orthogonal. (Upside: no double-count.) **Remedy: strike the
+>    claim, or price spread explicitly (per-corridor-tile / bounding-box).**
+> 5. **All-saves migration can bankrupt a WINNING live player on load** (v11
+>    deployed, one-way). Binary all-vs-new misses the cushioned option.
+>    **Remedy: a third option — a one-time migration cash grant preserving
+>    runway. If new-games-only, state that shifts + every future cost mechanic
+>    inherits the fork.**
+> 6. **Falsification bounds aren't in the contract; 15% used as both ceiling and
+>    target.** The reviewer wrote the bounds to adopt: **(a)** early-game starter
+>    reaches positive daily net by ~day 5-7 and never bankrupts under reasonable
+>    play; **(b)** an over-built config crosses −$10k in bounded time AND 2×
+>    payroll drops mature margin below ~30% (the shifts check); **(c)** mature
+>    well-run steady-state ~10-25% with a single death-cluster self-recovering.
+>    A per-ARM band, not one reference number.
+>
+> ### Design MINOR/NIT worth keeping
+> Re-verify surgery/OR P&L post-cut (anesthesia tuned fees to pay 3 salaries);
+> do NOT raise arrivals to patch the fee cut (re-opens the M4 death-spiral —
+> size the cut so 1.5/h stays winnable); the levers are LINEAR so solve the fee
+> scale ANALYTICALLY from separately-measured revenue/utilities/repairs, no 3-D
+> sweep; the reference build is **15 rooms not 13** (reception+waiting draw too);
+> vending is fee-exempt; measure margin at rep STEADY-STATE not mid-climb; drop
+> the "82% vs real 1-5%" framing (labor-only vs net-of-all — apples/oranges);
+> a broken room shouldn't draw full utilities (already double-penalised).
+>
+> ### Code review (READY WITH FIXES) — fold these into v2
+> - **MAJOR (one line): `TALLY_KEY_VERSIONS` at `save.ts:515` must gain
+>   `utilities: 12, repairs: 12`** or every v11 save throws on load
+>   (`asNumber(undefined)`). The `electiveTreated: 11` precedent. Not naming this
+>   is the difference between a clean migration and bricking live saves.
+> - Assign `reportOrder`/`showWhenZero` for the two rows; add
+>   `dailyReport.dom.test.ts` + `finance.dom.test.ts:302` to the touched list.
+> - De-vacuum the `dayNet` parity test (`finance.test.ts:88-92`) — set the new
+>   keys nonzero and update the reference formula, or it goes blind.
+> - Keep the fee bake UNIFORM to preserve the elective==emergency fee anchor
+>   (`conditions.ts:241-246`).
+> - **I over-sized the blast radius:** challenge tests are synthetic,
+>   `anesthesia`/`m3Roster` read fees from the table, the harness envelope is
+>   qualitative. Derive the affected set from what goes red, not a pre-planned
+>   sweep (the INVARIANTS.md:274-279 lesson).
+> - Verified SOUND: utilities accrual site, repair hook (no double-count),
+>   partition guard, SAVE_VERSION-12 necessity, determinism, early-game-probe
+>   constructibility.
+>
+> ### v2 SEQUENCE (the honest order)
+> 1. **Build the early-game probe** (starter build + $50k + minimal roster) and
+>    the separate cost-category reporting. 2. **Derive magnitudes from the early-
+>    game floor** analytically (levers are linear). 3. **Run the shock arm.**
+>    4. **Check per-room P&L + mature ceiling + 2× payroll.** 5. THEN write v2's
+>    numbers. The measurement leads; the contract follows.
+
+---
+
+_Original draft below, retained for provenance; superseded by the v2 requirements above._
+
+**Status (superseded):** CONTRACT DRAFT (2026-07-19).
 **Parent:** `docs/ECONOMY_REBALANCE_PLAN.md`.
 **Blocks:** the staff-shifts epic (nothing bites until this ships).
 **Save impact:** **SAVE_VERSION 11 → 12** (new `FINANCE_CATEGORIES` rows +
