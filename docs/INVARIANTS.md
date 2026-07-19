@@ -288,3 +288,51 @@ its own review — not a refactor.
   "Repairing") only while `working` — the room card's pending/underway
   split and the staff card must never contradict.
 
+
+## The outpatient stream (2026-07-19, SAVE_VERSION 11)
+
+- **An ELECTIVE condition is pre-triaged BY CONSTRUCTION** — `spawnPatient`
+  defaults `acuity` from the condition when the caller omits it. The default
+  lives at the CONSTRUCTOR, not the caller, and that placement is the
+  invariant: `debugSpawnPatient` (and any test fixture) would otherwise mint a
+  referral with `acuity: null`, which `processCheckIn` routes to `waiting`,
+  tripping the guard that makes the stage widening safe. **Found by
+  live-drive; the whole 674-test suite passed while it was live.**
+- **`checkingIn → waiting` is legal ONLY because `waiting` still requires
+  `acuity !== null`.** The stage table was widened deliberately for referrals;
+  the paired semantic invariant in `setPatientStage` is what stops the
+  shortcut being used to smuggle an untriaged emergency into the treatment
+  queue. Never relax the acuity check to "simplify" the table.
+- **The two arrival streams are DERIVED from the condition table, never
+  hand-kept.** `ElectiveConditionId` is a type-level filter over
+  `CONDITION_DEFS`, which is why `elective?: true` (not `boolean`) — a boolean
+  would not narrow. `conditionElective()` is the ONE accessor, matching the
+  `roomFailure`/`roomStaffRatio` widening idiom.
+- **`rollCondition` iterates `EMERGENCY_CONDITION_IDS`, not `CONDITION_IDS`** —
+  which also stops its float-residue fallback returning an elective.
+- **Elective ids carry `conditionWeights: 0`, and that is a COMPILE
+  requirement** (`formulas.ts` indexes the table by `ConditionId`), not a
+  balance choice. Zero also keeps `rollCondition`'s running total unchanged,
+  which is what keeps the emergency stream bit-identical until the elective
+  Bernoulli first fires.
+- **The clinic-hours check sits OUTSIDE `rng.chance`, the room-gate INSIDE.**
+  `chance` consumes a draw unconditionally, so the guard placement is what
+  makes every pre-clinic tick bit-identical to the pre-change build — a real
+  control window, pinned by test. Moving the hours check inside would diverge
+  the stream on every tick.
+- **The elective stream is ROOM-GATED** (`rollElectiveCondition` returns null
+  when the player owns no elective modality). Ungated it buries a new hospital
+  in referrals it cannot serve (~−80 rep/day against a starting 300) and
+  splits volume too thin to saturate anything. Gating is what makes it opt-in.
+- **`electiveNoShowLoss` is a SEPARATE number from `amaLoss`.** Flat `amaLoss`
+  against the +2 an elective discharge earns puts break-even at a 20% walkout
+  rate, and the baseline is ~25% — the stream would be reputation-negative in
+  expectation. Do NOT "simplify" by acuity-scaling `amaLoss`: that is shared
+  emergency behaviour.
+- **Electives are excluded from the door-to-treatment wait AVERAGE.** They skip
+  triage and would otherwise deflate it and cheapen the day-close bonus.
+  `firstTreatedAtTick` is still stamped — that is per-patient provenance, not a
+  hospital metric.
+- **`electiveTreated`/`electiveNoShow` are SUBSETS** of
+  `arrivals`/`treated`/`leftAma`, never additions. Do not sum them into
+  totals.

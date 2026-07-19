@@ -48,6 +48,37 @@ scoping notes kept for provenance).
 
 ## Completed epics and asks
 
+- **THE OUTPATIENT STREAM: SHIPPED (2026-07-19, SAVE_VERSION 11)** —
+  `docs/OUTPATIENT_IMPL_PLAN.md` v2 (both pre-impl reviews folded) and
+  `docs/IMAGING_PLAN.md` (the research that motivated it). The game had ONE
+  demand channel; research found MRI is ~83% elective/outpatient, so MRI and
+  nuclear medicine could never be busy however the emergency chains were
+  routed. A referral is "a patient who arrives already triaged" — no new
+  stage, no new lifecycle, no new `Patient` field. **Measured: MRI 3.9% →
+  16.8%, nucMed 3.3% → 13.5%, radTech 24% → 47.5%.** THE RATE BOTH THE PLAN
+  AND THE DESIGN REVIEW PROPOSED (1.0) WAS REJECTED BY THE PROBE — it tripped
+  the plan's own falsification condition on both layout arms (deaths 3.2 →
+  4.2, walkouts 39 → 45, surgeries 10.4 → 8.2; total discharges rose but ~55
+  were elective, so EMERGENCY discharges fell ~12%). The review's remedy —
+  "the pressure is the point, hire a third radiographer" — was ALSO falsified:
+  a third tech made deaths worse on both arms, because a scan holds a
+  single-capacity room for 40–45 min and a third tech cannot unblock a full
+  room. Shipped at 0.5; residual cost recorded, surgeries −12%. Also corrected
+  a reviewer: the "aged referral outranks a fresh stroke" MAJOR is
+  pre-existing aging behaviour affecting every low-acuity patient, measured
+  identical for an emergency flu at acuity 5. **A stage-guard defect was found
+  by LIVE-DRIVE that the whole 674-test suite missed** —
+  `debugSpawnPatient` minted referrals with `acuity: null`, tripping the
+  invariant that makes the stage widening safe; fixed at the constructor so
+  every spawn path is covered. 14 new tests.
+- **Follow-the-patient pulse: SHIPPED (2026-07-19, owner ask)** — thought-log
+  entries follow the PERSON, not the place. The handler had been dropping the
+  `patientId` the event always carried and jumping to where the thought
+  HAPPENED; the pulse also captured a fixed rect, so a walking patient left it
+  behind. Now re-reads the sprite position each frame, selects the patient so
+  the card tracks them, and adds a persistent selection ring — the live drive
+  showed that without it "follow their path" lasted 3.2 seconds.
+
 - **Art pass: DONE** (procedural upgrade — see commit table; the §2.6 atlas contract stayed intact, so a real sprite atlas remains a future drop-in). This was the deploy prerequisite (owner ruling).
 - **Camera input polish: DONE** (2026-07-17, trackpad complaint). `renderer.ts` wheel handler: plain wheel / two-finger scroll → pan both axes (fixes trackpad up/down, which the old wheel-zoom binding ate); ctrl/meta+wheel (= trackpad pinch) → continuous cursor-anchored zoom (MIN_ZOOM 0.5 .. MAX_ZOOM 2, was 3 discrete steps). Known tradeoff: a classic mouse wheel now pans; mouse users zoom via ctrl+wheel.
 - **Amenities epic: COMPLETE (2026-07-18)** — all three stages shipped

@@ -1,8 +1,9 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-19 — docs restructured (see below); Departments
-Stage 2a BLOCKED by measurement; the layout lesson opened
-(`docs/LAYOUT_PLAN.md`).
+**Last updated:** 2026-07-19 — **the OUTPATIENT STREAM shipped and is LIVE
+(SAVE_VERSION 11, one-way)**; docs restructured; Departments Stage 2a still
+blocked; the layout lesson opened (`docs/LAYOUT_PLAN.md`) with its Part B cut
+by review.
 
 ## Read order
 
@@ -43,16 +44,26 @@ hygiene.**
 
 | | |
 |---|---|
-| Tests | **655** (654 passed, 1 skipped), 45 files — `npm test` |
+| Tests | **677** (674 passed, 3 skipped), 48 files — `npm test` |
 | Gates | lint, `tsc --noEmit`, `vite build` all green; CI runs the full gate on every push to `master` and every PR |
-| `SAVE_VERSION` | **10** (`src/sim/save.ts:31`), v1–v10 loadable |
-| Content | 14 conditions · 15 room types (14 buildable, `resp` retired) · 11 staff roles |
-| Working tree | clean as of the last commit; everything through `8e199ef` is committed **and pushed** |
+| `SAVE_VERSION` | **11** (`src/sim/save.ts:31`), v1–v11 loadable — **DEPLOYED, so one-way** |
+| Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 15 room types (14 buildable, `resp` retired) · 11 staff roles |
+| Working tree | clean; everything through `d172f58` is committed **and pushed (live)** |
 
-**SAVE_VERSION 10 is deployed, which makes it one-way.** Saves written by the
+**SAVE_VERSION 11 is deployed, which makes it one-way.** Saves written by the
 live build cannot be opened by the previous one — that is the bump doing its
 job, but a rollback alone no longer undoes it: anyone who played post-deploy
-could not load their save. Existing v9 saves load fine.
+could not load their save. Existing v1–v10 saves load fine. The v11 bump adds
+NO field in either direction; it is owed to new CONTENT (two condition ids),
+because an older deployed build would die on
+`asOneOf(o.condition, CONDITION_IDS)` instead of refusing cleanly.
+
+**THE GAME NOW HAS TWO DEMAND CHANNELS.** Emergency walk-ins, and scheduled
+outpatient referrals that check in, skip triage, take one imaging study, pay
+and leave. Referrals are **room-gated** — they only arrive for modalities the
+player has built, which makes the stream opt-in and concentrates it on a
+single-scanner player. Measured effect: MRI utilisation 3.9% → 16.8%, nucMed
+3.3% → 13.5%, radTech 24% → 47.5%.
 
 Playable end-to-end: title screen (New Game / Continue / Load / Import) →
 `?seed=<n>` boots deterministically (the `/run-hospital-simms` driver relies on
@@ -113,98 +124,94 @@ revisited.
 
 ## Next
 
-### Open threads, highest-value first
+### START HERE (session handoff, 2026-07-19 evening)
 
-0. **MEASUREMENT VALIDITY — MEASURED, and the deltas are large. Read
-   `LAYOUT_PLAN` §3 before ratifying any balance decision.** `REFERENCE_BUILD`
-   is the fixture behind EVERY balance number this project has recorded. A
-   compact arm (same 13 rooms, same staffing, **identical payroll** — only
-   placement differs, triage door 7 tiles out instead of 18) measured:
-   **discharged +34%, died −44%, profit/day +60%.**
-   **The finding inside the finding (§3.2): sprawl was HIDING staff
-   contention.** The blocked counters move the OTHER way and by more — OR
-   gather blocked ×3.9, blocked-on-nurse ×7.5, doctor-blocked-in-exam ×12.3.
-   In the fixture, staff mostly WALK, so they are rarely contended; compact the
-   hospital and the staff become the binding constraint. The fixture does not
-   just shift numbers, **it changes which resource binds.**
-   Consequences (§3.3): §4.3 and the Departments block **stand** (imaging is
-   demand-driven and distance-independent; ~6.2% → ~8% is still nowhere near
-   saturated). §3.8's room-capture result is directionally safe but its
-   magnitude is a FLOOR. **`ED_PLAN` §5b RE-MEASURED — the guard SURVIVES** (§5b.1).
-   It earns MORE compact than on the fixture it was tuned against (profit
-   +6.6% vs +3.1%, surgeries +14%); no action needed on the deployed build.
-   But §5b's "improve rather than trade off" claim is layout-specific and was
-   corrected: compact, it IS a trade — walkouts move the wrong way (30.2 →
-   32.8) while surgeries and profit rise. The toggle was validated by
-   reproducing §5b's recorded "before" column to the decimal.
-   §3.4 recommends keeping BOTH arms rather than swapping the fixture, and
-   stating the layout with every future measurement.
-1. **The layout lesson** — `docs/LAYOUT_PLAN.md` (SCOPING DRAFT, owner ask
-   2026-07-19). Distance is a first-order throughput cost the game never
-   teaches: a triage reservation holds its room and its nurse for a mean 40.8
-   game-min against 9.6 min of treatment, and **88.8% of that is a nurse who
-   has already arrived, standing in the room waiting for the patient to walk**.
-   §4 lists what a contract must settle. Two things already FALSIFIED and
-   recorded so they are not retried: `newGame.ts` is NOT broken (its doors are
-   7 tiles out; the 18-tile triage is a test fixture, and the GDD makes "Build
-   a Triage Bay" the first checklist item by design), and a distance tiebreaker
-   in `availableStaff` measured as a wash and was reverted.
-2. **The capacity-hint defect** — own milestone (owner call 2026-07-19), now
-   MEASURED (commits `10d2609`, `2adcd4e`). The reviewer's imaging scenario is
-   NOT a live defect: `capacity:xray` fires 0.4% of ticks, because
-   `capacityHintWaitGameMinutes: 45` suppresses the transient flash. **The real
-   defect is triage: `capacity:triage` is shown 85% of all ticks** saying
-   "build another one" while triage rooms are ACTIVE only 17.3% of the time,
-   and in 68% of those ticks a nurse was IDLE. The slot is consumed by a
-   GATHER, not by treatment. That also settles the contested `continue` at
-   `needs.ts:375` in the reviewer's favour, against my objection: my argument
-   ("if no room has a free slot, hiring cannot help") holds for a genuinely
-   occupied room and fails for a gather-held one, which is the majority case.
-   Remedy still needs its own review — and note it interacts with (1), since
-   the honest remedy may be about the walk rather than the wording.
-3. **The imaging-demand balance pass** — `docs/IMAGING_PLAN.md` (SCOPING
-   DRAFT, owner ask 2026-07-19, research-backed). **The owner's ER->radiology
-   instinct is CONFIRMED**: research says radiology is a service the ED orders
-   MID-STAY and the patient returns from, not a gateway — and every game chain
-   runs imaging -> ER, which is backwards and caps imaging demand. **But the
-   bigger finding is §2.3: MRI is ~83% ELECTIVE/OUTPATIENT, and this game has
-   exactly one demand channel (emergency walk-ins), so MRI and nucMed can
-   never be busy no matter how chains are routed.** Also: 45.3% of arrivals
-   already get imaging (about right vs reality) — the error is five co-equal
-   rooms in proportions reality does not have (MRI ~12x over-weighted,
-   nucMed is not an ED modality at all). **§2.5 records what the research did
-   NOT answer**: room occupancy times, scanner throughput and technologist
-   ratios — so step durations and the radTech ratio cannot be
-   evidence-calibrated and must be measured in-game.
-   *(Superseded framing below — the prerequisite for Departments)*
-   Stage 2. `DEPARTMENTS_PLAN` §4.4 scopes it. Goal: a state where ONE scanner
-   genuinely saturates. **Build the per-room/per-role utilisation counter in
-   `edProbe` FIRST** — it does not exist (the probe's only load sampling is
-   hardcoded to the ER), and §6 named it as a required column without anyone
-   noticing there was nothing to read it from.
-4. **Departments Stage 2a — ⛔ BLOCKED behind (3).** Contracted, reviewed twice,
-   both **NOT READY**, stopped by measurement. Imaging rooms are idle 93–96% of
-   the day, so a second suite can never pay back, and the epic's self-described
-   "strongest design argument" — the movable machine-vs-tech bottleneck — does
-   not exist (radTechs run at ~11%). Full numbers in `DEPARTMENTS_PLAN` §4.3;
-   the 24 review findings are the v2 spec in `DEPARTMENTS_IMPL_PLAN` §9.
-   **§4.1's shape ("a department is a SET of ordinary Rooms") survived review
-   intact** — what is missing is a reason to build a second suite.
-5. **The Stage-1 capex risk** (`DEPARTMENTS_PLAN` §3.8 point 3) — see the
-   watch items above. Unmeasured, not proven safe. Pairs naturally with (3):
-   both are capital questions a 5-day probe cannot see.
-6. **Staff lounge** (owner ask) — scoped below. Collides with ED B1's nurse
-   capture: a ratio nurse who never idles would never get a break.
-7. **`ED_PLAN` §3b/§4** — Stage B2 (ED entrance/ambulance arrivals) and Stage C
-   (ungate the CT dependency: ER → CT → ER). Both still DRAFT.
+**Everything is committed AND PUSHED through `d172f58`; the working tree is
+clean.** Pushing to `master` auto-deploys, so this session's work is **LIVE**.
+Treat any future push the same way — it is a release decision for the owner.
 
-> **The lesson from Stage 2a, worth keeping at eye level.** The epic asked
-> "do suites make capacity too cheap?" — one direction. The answer was the
-> other direction: unaffordable at any price, because they produce nothing.
-> `ED_PLAN` §5 diagnosed the ER by measurement and found 12.8% of arrival
-> weight; nobody ran the same arithmetic on imaging, and the epic was built on
-> an assumption of contention the data tables contradict by a factor of ten.
-> **Measure the demand side before designing capacity for it.**
+**Shipped this session:** the docs split (this file was 108 KB and no longer
+fit in one read); the Departments Stage 2a contract, reviewed twice and
+BLOCKED by measurement; the utilisation probe and the layout/compact-arm
+measurements; the follow-the-patient pulse; the radiology research; and **the
+outpatient stream (SAVE_VERSION 11)**.
+
+**What to know before touching anything:**
+1. **SAVE_VERSION 11 is deployed and one-way.** Another bump is a real cost to
+   live players — spend it deliberately.
+2. **`edProbe` now carries TWO layout arms** (REFERENCE and COMPACT) plus a
+   `§5b guard × layout` matrix and an outpatient-with-3rd-radTech arm. Run
+   both arms for anything touching throughput or contention.
+   `test/utilisationProbe.test.ts` (`UTIL_PROBE=1`) gives per-room and
+   per-role utilisation, which nothing had before.
+3. **The per-milestone workflow is not optional and it keeps paying.** This
+   session it caught 8 MAJORs in one contract, 12 in another, and — twice —
+   overturned conclusions a reviewer and I had agreed on. Two contracts
+   returned NOT READY and were rewritten before a line of code was written.
+4. **Live-drive player-facing work.** A stage-guard defect shipped past the
+   entire 674-test suite and was caught only by driving the real game.
+
+**Open threads, highest-value first**
+
+0. **MEASUREMENT VALIDITY — read `LAYOUT_PLAN` §3 before ratifying any balance
+   decision.** `REFERENCE_BUILD` is the fixture behind every balance number
+   this project has recorded. A compact arm (same 13 rooms, same staffing,
+   **identical payroll** — only placement differs) measured **discharged +34%,
+   died −44%, profit/day +60%**, and — the finding inside the finding —
+   **sprawl was HIDING staff contention** (OR gather blocked ×3.9,
+   blocked-on-nurse ×7.5). The fixture does not just shift numbers, **it
+   changes which resource binds.** `edProbe` now carries BOTH arms; run both
+   for anything sensitive to throughput or contention, and state the layout
+   with every measurement.
+1. **The layout milestone, Part A only** — `docs/LAYOUT_IMPL_PLAN.md`.
+   **PART B IS CUT** by both reviews (its two named beneficiaries are type-
+   and data-excluded; it introduces an abandon livelock and blinds the §5b
+   guard). Part A survives but needs a v2 first — the header lists the five
+   fixes, including that the build ghost is TICK-keyed not input-keyed, and
+   that `findPath` to an unbuilt rect paths through where the wall will be.
+   The prize is real and measured: **distance is worth +34% throughput and the
+   game teaches none of it.**
+2. **The capacity-hint defect** — MEASURED. `capacity:triage` shows 85% of all
+   ticks saying "build another one" while triage rooms are ACTIVE 17.3% of the
+   time and a nurse is IDLE in 68% of those ticks; the slot is consumed by a
+   GATHER, not by treatment. `capacity:xray` fires 0.4% and is NOT a defect.
+   Remedy is entangled with (1) — the honest fix may be about the walk rather
+   than the wording.
+3. **Imaging §4A / §4B** (`IMAGING_PLAN`) — the chain inversion (every imaging
+   chain runs imaging → ER; reality is the ED ORDERS imaging mid-stay) and
+   adding imaging to conditions that realistically get it (chest pain, weight
+   10, currently gets none). §4B is the cheapest lever in the epic and raises
+   X-ray, the modality reality says should dominate.
+4. **Departments Stage 2a — STILL BLOCKED**, though less firmly. MRI moved
+   3.9% → 16.8% and `capacity:mri` now fires, so a second suite is closer to a
+   real decision. **Its own contract must re-run its §6 arms before the block
+   lifts** — do not lift it on the strength of the outpatient numbers alone.
+   The 24 review findings are the v2 spec in `DEPARTMENTS_IMPL_PLAN` §9.
+5. **Owner asks, scoped but not built:** buildable walls to contain patients
+   (a NEW primitive — walls today exist only as room boundary edges, one of
+   the five load-bearing architecture sentences); purchasable land (map dims
+   are BAKED INTO SAVES); hospital awards (reuse `SCORE_METRICS` +
+   `MidnightModalCoordinator` as a THIRD claimant, not a new `dayEnded`
+   subscriber); staff lounge.
+6. **The Stage-1 capex risk** (`DEPARTMENTS_PLAN` §3.8 point 3) — unmeasured.
+7. **`ED_PLAN` §3b/§4** — Stage B2 and Stage C, both DRAFT.
+
+> **THE LESSON, and it has now happened five times in a row.** Measurement
+> beats reasoning, including reasoning that a reviewer and I agreed on:
+> - Departments asked "do suites make capacity too cheap?" — one direction.
+>   The answer was the other: unaffordable at any price, because they produce
+>   nothing.
+> - The layout fixture turned out to be worth ±34% throughput, and to change
+>   WHICH resource binds.
+> - A distance tiebreaker in `availableStaff` looked like an obvious fix,
+>   measured as a wash, and was reverted.
+> - The outpatient rate BOTH the plan and the design review proposed (1.0)
+>   tripped the plan's own falsification condition; 0.5 shipped.
+> - That review's remedy for it ("the pressure is the point — hire a third
+>   radiographer") made deaths WORSE on both arms.
+>
+> **Measure the demand side before designing capacity for it, and measure the
+> remedy before believing it.**
 
 *(Resolved 2026-07-19: `ED_PLAN` §5b item 5, the ED out-competing the hospital
 for nurses — anti-capture guard on ratio extension, bounded by role headcount.
