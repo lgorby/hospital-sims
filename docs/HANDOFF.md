@@ -1,9 +1,26 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-20 — **SHIFTS STAGE 2 + 3a + MAINTENANCE NARRATION
-SHIPPED & DEPLOYED.** The staff-shifts epic advanced two stages and a warm-up
-feature landed, all LIVE at **SAVE_VERSION 15** (`origin/master` = `6584722`, CI
-green, Vercel auto-deploy; https://hospital-sims.vercel.app HTTP 200):
+**Last updated:** 2026-07-20 — **A 4-CHANGE QUICK-WINS POLISH ROUND SHIPPED &
+DEPLOYED** on top of the shifts epic. All LIVE at **SAVE_VERSION 15** (`origin/master`
+= `bc9eb69`, CI green in ~30s, Vercel auto-deploy; https://hospital-sims.vercel.app
+HTTP 200). **758 tests, 8 skipped.** The four (each: implement → independent
+adversarial review → fold findings + regression → gates → commit → owner-approved
+push) — render/UI-only, NO save bump on any:
+- **Staff role-colour spread** (`aac7d2c`) — the three scrub-cap roles (nurse teal,
+  respTherapist, surgeon) shared one green hue band (RT vs surgeon 1° apart); now
+  spread across the green→teal arc (RT lime 86°, surgeon mid-green 125°, nurse 173°).
+  `SCRUB_CAP_ROLES` is now an SSOT export; guarded by a hue-separation test.
+- **Sparks-decal legibility** (`5f9e620`) — the broken-room mechanical hazard decal
+  got a warm glow halo + bolder bolts so it reads at default zoom on the greyed floor.
+- **Ghost key folds in cash** (`774278d`) — DEFENSIVE: `drawGhost`'s revalidation key
+  keyed cash-freshness on the tick, which freezes while paused; the near-unreachable
+  stale-ghost is fixed (pure `ghostKey.ts` + tests). Low observable impact — see note.
+- **Restroom/lounge "On the way" split** (`bc9eb69`) — the self-service occupancy
+  line listed walkers still crossing under the "In use" header; walkers now get a
+  separate "On the way" line so "In use" reflects real occupancy.
+
+**The shifts epic below remains the substantive state** (SHIFTS Stage 2 + 3a +
+maintenance narration, all LIVE at SAVE_VERSION 15):
 - **SHIFTS Stage 2** (v14) — mid-shift lunches + the **`lounge`** room. Staggered
   per-staffer lunches (id-hash, rng-free) with a per-role coverage cap so the floor
   never empties ("never all at once"); a solo-of-a-role skips lunch; on-site lounge
@@ -65,11 +82,11 @@ hygiene.**
 
 | | |
 |---|---|
-| Tests | **747 passed, 8 skipped**, 55 files — `npm test`. The gated-probe skips are `shiftProbe`/`economyProbe`/`edProbe`/`utilisationProbe`/`staffBreakProbe` etc. (each `*_PROBE=1`). |
+| Tests | **758 passed, 8 skipped**, 56 files — `npm test`. The gated-probe skips are `shiftProbe`/`economyProbe`/`edProbe`/`utilisationProbe`/`staffBreakProbe` etc. (each `*_PROBE=1`). |
 | Gates | lint, `tsc --noEmit`, `vite build` all green; CI runs the full gate on every push to `master` and every PR |
 | `SAVE_VERSION` | **15** (`src/sim/save.ts:32`) — v1–v15 loadable. **v15 (SHIFTS Stage 3a `Staff.fatigue`, on top of v14's Stage 2 lunches + `lounge`) is DEPLOYED/LIVE** (2026-07-20). v15 is one-way; v<15 saves load inert (fatigue 0 until staff work a shift; lounge/lunch behaviour activates on their shifts). |
 | Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 16 room types (15 buildable inc. `lounge`, `resp` retired) · 11 staff roles |
-| Working tree | clean. **`origin/master` = `6584722` = LIVE** — SHIFTS Stage 2 + 3a + the lounge fixes + maintenance narration all pushed & deployed 2026-07-20 (CI green). Nothing local-only pending. |
+| Working tree | clean. **`origin/master` = `bc9eb69` = LIVE** — SHIFTS Stage 2 + 3a + lounge fixes + maintenance narration, PLUS the 2026-07-20 quick-wins polish round (role-colour spread, sparks decal, ghost-cash key, restroom "On the way" split), all pushed & deployed (CI green). Nothing local-only pending. |
 
 **SAVE_VERSION 11 is deployed, which makes it one-way.** Saves written by the
 live build cannot be opened by the previous one — that is the bump doing its
@@ -159,8 +176,8 @@ verified**). SAVE_VERSION **13 → 14 → 15**, one-way and now the DEPLOYED bas
 tests, 8 skip.** Provenance in `CHANGELOG.md` *(shifts 2)* / *(shifts 3a)*; do-not-regress
 rules in `INVARIANTS.md` ("SHIFTS Stage 2" / "SHIFTS Stage 3a"); contracts
 `docs/SHIFTS_STAGE2_CONTRACT.md`, `docs/SHIFTS_STAGE3A_CONTRACT.md` (both v2, all pre-impl +
-post-impl findings folded). **Working tree clean; `origin/master` = `6584722` = LIVE
-(Stage 2 + 3a + maintenance narration all pushed & deployed).**
+post-impl findings folded). **Working tree clean; `origin/master` = `bc9eb69` = LIVE
+(Stage 2 + 3a + maintenance narration + the 2026-07-20 quick-wins round all pushed & deployed).**
 
 **What shipped (Stage 2):** staggered per-staffer lunches (id-hash, rng-free) with a
 per-role coverage cap ("never all at once"); solo-of-a-role skips lunch; on-site lounge
@@ -186,7 +203,7 @@ render-only, no save bump; the NEEDS-ATTENTION broken row now narrates the repai
 (no-tech / waiting / {tech} en route / repairing). LIVE — see CHANGELOG
 *(maint narration)*. Don't rebuild it.)*
 
-*(DONE LOCAL 2026-07-20, AWAITING OWNER PUSH: **staff role-colour spread** —
+*(DONE + DEPLOYED 2026-07-20: **staff role-colour spread** —
 render-only, no save bump. The three scrub-cap roles (nurse/respTherapist/surgeon)
 used to cluster in one green hue band (RT vs surgeon were 1° apart, telling apart
 only by the surgeon's mask). Now spread across the green→teal arc: RT lime 86°,
@@ -195,7 +212,7 @@ SSOT export in `data/roles.ts` (renderer + guard both import it); regression tes
 `data.test.ts` "scrub-cap clinical roles are hue-separated". Reviewed (SHIP-able,
 drift finding folded). Committed local, NOT pushed.)*
 
-*(DONE LOCAL 2026-07-20, AWAITING OWNER PUSH: **sparks-decal legibility** —
+*(DONE + DEPLOYED 2026-07-20: **sparks-decal legibility** —
 render-only, no save bump. `hazardSparks` (broken-room MECHANICAL decal in
 `render/sprites.ts`) added a warm amber glow halo + bolder bolts/pinpoints so the
 fault reads at default zoom against the greyed floor (the banked Stage-3 NIT); it
@@ -207,7 +224,7 @@ test would break the renderer-free suite — a conscious call, same as `messDeca
 identical unguarded invariant. `hazardSteam` (piping) deliberately left as-is: it
 already has a filled water-film area, so it never had the all-thin-strokes problem.)*
 
-*(DONE LOCAL 2026-07-20, AWAITING OWNER PUSH: **build/expand/amenity ghost keys
+*(DONE + DEPLOYED 2026-07-20: **build/expand/amenity ghost keys
 fold in cash** — render-only, no save bump. `drawGhost`'s revalidation key used
 `clock.tick` as its cash-freshness proxy, but commands spend WHILE PAUSED (tick
 frozen), so the ghost color could go stale. Key extracted to a pure Pixi-free
@@ -222,7 +239,7 @@ reason. The same latent staleness applies to actors/geometry too — only cash w
 folded in (matching the NIT's framing); full coverage would want a world-revision
 counter, deferred as scope creep for an unreachable case.)*
 
-*(DONE LOCAL 2026-07-20, AWAITING OWNER PUSH: **restroom/lounge "On the way" split**
+*(DONE + DEPLOYED 2026-07-20: **restroom/lounge "On the way" split**
 — UI-only, no save bump. The self-service occupancy line (`inspect.ts`) listed
 walkers still crossing to a claimed stall/seat under the "In use" header (suffixed
 "(on the way)"), overstating occupancy. Now split: "In use" lists only actual

@@ -134,9 +134,16 @@ its own review — not a refactor.
   `revenue` tallied at the same `billFee` choke point, never re-added to
   dayNet.
 - **Restroom occupancy is read from `stallClaims`, never `reservationsOn`**
-  (self-service room — reservations are permanently empty there); walking
-  claimants render "(on the way)". Restroom expand/sell reject 'Occupied'
-  while ANY live claim references the room (walking counts).
+  (self-service room — reservations are permanently empty there). The inspect
+  card SPLITS derived claimants (restroom `stallClaims` / lounge
+  `loungeSeatClaims`) into an **"In use"** line (phase `using`) and a separate
+  **"On the way"** line (phase `walking`, rendered only when there are walkers)
+  — walkers must NOT be counted under "In use" (they overstate occupancy). The
+  capacity line ("Stalls X/Y") still counts a claimed-but-walking slot as
+  reserved — deliberate (the dispatcher sees no availability). Restroom
+  expand/sell reject 'Occupied' while ANY live claim references the room
+  (walking counts). Regression: `test/inspect.dom.test.ts` (restroom patient
+  split + lounge staff parity).
 - **The blocked panel is row-capped (8 + "+N more") with a CSS max-height**
   (live-drive MAJOR): it must never grow over — and click-block — the inspect
   card's buttons.
@@ -458,3 +465,23 @@ its own review — not a refactor.
 - **`electiveTreated`/`electiveNoShow` are SUBSETS** of
   `arrivals`/`treated`/`leftAma`, never additions. Do not sum them into
   totals.
+- **The scrub-cap clinical roles must stay hue-separated** (2026-07-20 quick-win,
+  art-review note). `nurse`, `respTherapist` and `surgeon` share the scrub-cap
+  sprite silhouette, so at iso scale they read ONLY by hue. The set is the SSOT
+  export `SCRUB_CAP_ROLES` in `data/roles.ts` — the renderer (`characters.ts`)
+  AND the guard both import it, so the silhouette set and the colour rule can't
+  drift; promoting a role to a scrub cap there automatically extends both. They
+  are spread across the green→teal arc (RT ~86°, surgeon ~125°, nurse ~173°).
+  Regression: `data.test.ts` "scrub-cap clinical roles are hue-separated" asserts
+  pairwise ≥25° (the old collision was 1°). Role `color` is render-only — read
+  solely by `characters.ts`, never serialized — so a colour edit is never a save
+  bump.
+- **The build/expand/amenity ghost revalidation key includes `cash`** (2026-07-20
+  quick-win, DEFENSIVE). `drawGhost` re-runs its validators (which reject on "Not
+  enough cash") only when the key from the pure `render/ghostKey.ts`
+  (`ghostValidityKey`) changes. The key must fold in `cash`, NOT rely on
+  `clock.tick` as a proxy — the tick freezes while paused, yet build/sell/place
+  commands still spend. (Near-unreachable in practice — `pointerleave` resets the
+  ghost on any UI click — so this hardens a wrong invariant, not a visible bug;
+  don't "optimise" cash back out.) Regression: `test/ghostKey.test.ts` (incl. an
+  exact-format lock so segment order can't drift).
