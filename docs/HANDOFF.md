@@ -22,10 +22,11 @@ day-only night deaths — stranded-at-boundary harm is unmeasured until walk-hom
 gather-cancel exist). Two review caveats to carry: the `+$70` day-only figure is a
 **reputation-floor** number (the 1-nurse starter crashes rep to 0 by day 2–3 even
 at baseline — a pre-existing fragility), so day-only is "survivable-but-tight," NOT
-a safe default. **GIT STATE: the ECONOMY + SHIFTS commits are LOCAL-only, NOT
-pushed** (through `4c973b1`) — a push re-baselines every live save under the tighter
-economy AND makes v13 one-way, so it is the owner's deploy call. Prior: outpatient
-stream LIVE (SAVE_VERSION 11); Departments Stage 2a still blocked.
+a safe default. **GIT STATE (2026-07-20): DEPLOYED — ECONOMY Stage-1 + the FULL
+SHIFTS Stage-1 mechanical implementation are pushed and LIVE (`9ae3b95`, CI green,
+Vercel auto-deploy). SAVE_VERSION 13 is now the deployed/one-way version; every live
+save re-baselined under the tighter economy on load.** See the START HERE block for
+the shipped feature list. Departments Stage 2a still blocked.
 
 ## Read order
 
@@ -68,9 +69,9 @@ hygiene.**
 |---|---|
 | Tests | **724** (718 passed, 6 skipped), 53 files — `npm test`. The 6th skip is `shiftProbe` (gated `SHIFT_PROBE=1`, like `economyProbe`). |
 | Gates | lint, `tsc --noEmit`, `vite build` all green; CI runs the full gate on every push to `master` and every PR |
-| `SAVE_VERSION` | **13** (`src/sim/save.ts:32`) LOCAL — v1–v13 loadable. **v11 is what's DEPLOYED/LIVE**; v12 (ECONOMY tally keys) + v13 (SHIFTS `shift`/`onFloor` staff fields, INERT) are committed local-only. Pushing makes v13 one-way AND re-baselines every live save under the tighter economy. |
+| `SAVE_VERSION` | **13** (`src/sim/save.ts:32`) — v1–v13 loadable. **v13 is DEPLOYED/LIVE** (2026-07-20 push): SHIFTS `shift`/`onFloor` staff fields are now ACTIVE (staff work shifts), and v12's ECONOMY tally keys are live. v<13 saves load + mint a night roster; the tighter economy re-baselines them. v13 is one-way (older deployed builds can't open a v13 save). |
 | Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 15 room types (14 buildable, `resp` retired) · 11 staff roles |
-| Working tree | clean. Commits through `74a516e` are on `origin/master` (LIVE). **Everything after is LOCAL-only** — the ECONOMY + SHIFTS work (`15ba628` econ probe → `a949452` ECONOMY impl → `4c973b1` shifts plumbing → the docs commits; `git log origin/master..` for the full list) — a push is the owner's deploy + save-re-baseline decision. |
+| Working tree | clean. **`origin/master` is at `9ae3b95` (LIVE)** — the ECONOMY + full SHIFTS Stage-1 line (`15ba628` econ probe → `a949452` ECONOMY impl → `4071eaa`…`c2ad7d7` shifts impl) shipped 2026-07-20, CI green. Nothing local-only pending. |
 
 **SAVE_VERSION 11 is deployed, which makes it one-way.** Saves written by the
 live build cannot be opened by the previous one — that is the bump doing its
@@ -154,9 +155,10 @@ revisited.
 
 ### START HERE (session handoff, 2026-07-20 — SHIFTS STAGE-1 MECHANICALLY SHIPPED, LIVE-DRIVEN, LOCAL-ONLY)
 
-Working tree clean; **724 tests (718 pass, 6 skip), all gates green** (tsc + lint +
-build); everything LOCAL-only, not pushed (a push re-baselines every live save under
-the tighter economy AND makes v13 one-way — owner's deploy call).
+Working tree clean; **725 tests (718 pass, 7 skip), all gates green** (tsc + lint +
+build). **SHIPPED + DEPLOYED 2026-07-20** (`9ae3b95`, CI green, Vercel auto-deploy):
+ECONOMY Stage-1 + the full SHIFTS Stage-1 line are LIVE. SAVE_VERSION 13 is one-way;
+live saves re-baseline under the tighter economy + mint a night roster on load.
 
 **► SHIFTS STAGE-1 IS NOW FULLY IMPLEMENTED** (plan `0a89ee8`, steps `4071eaa`…`c2ad7d7`).
 Staff work day/night shifts for real. What shipped, per the reviewed `SHIFTS_IMPL_PLAN.md`:
