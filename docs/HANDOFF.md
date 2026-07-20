@@ -66,7 +66,7 @@ hygiene.**
 
 | | |
 |---|---|
-| Tests | **700** (694 passed, 6 skipped), 52 files — `npm test`. The 6th skip is `shiftProbe` (gated `SHIFT_PROBE=1`, like `economyProbe`). |
+| Tests | **724** (718 passed, 6 skipped), 53 files — `npm test`. The 6th skip is `shiftProbe` (gated `SHIFT_PROBE=1`, like `economyProbe`). |
 | Gates | lint, `tsc --noEmit`, `vite build` all green; CI runs the full gate on every push to `master` and every PR |
 | `SAVE_VERSION` | **13** (`src/sim/save.ts:32`) LOCAL — v1–v13 loadable. **v11 is what's DEPLOYED/LIVE**; v12 (ECONOMY tally keys) + v13 (SHIFTS `shift`/`onFloor` staff fields, INERT) are committed local-only. Pushing makes v13 one-way AND re-baselines every live save under the tighter economy. |
 | Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 15 room types (14 buildable, `resp` retired) · 11 staff roles |
@@ -152,7 +152,48 @@ revisited.
 
 ## Next
 
-### START HERE (session handoff, 2026-07-19 late — SHIFTS STAGE-1: PROBE REVIEWED, PLUMBING LANDED INERT)
+### START HERE (session handoff, 2026-07-20 — SHIFTS STAGE-1 MECHANICALLY SHIPPED, LIVE-DRIVEN, LOCAL-ONLY)
+
+Working tree clean; **724 tests (718 pass, 6 skip), all gates green** (tsc + lint +
+build); everything LOCAL-only, not pushed (a push re-baselines every live save under
+the tighter economy AND makes v13 one-way — owner's deploy call).
+
+**► SHIFTS STAGE-1 IS NOW FULLY IMPLEMENTED** (plan `0a89ee8`, steps `4071eaa`…`c2ad7d7`).
+Staff work day/night shifts for real. What shipped, per the reviewed `SHIFTS_IMPL_PLAN.md`:
+- **Clock opens 06:00** (`BALANCE.time.dayStartMinute`; `isMidnight`→`isDayRollover`; day
+  rollover + daily report + autosave stay on the raw tick, now at 06:00). The offset
+  re-phased the spawn stream → harness seed re-pin 1338→1340, and the per-type economy
+  invariant became **mean-over-seeds** (single-seed P&L was repair-timing-noisy).
+- **`updateShifts`** per-tick reconciliation (`src/sim/systems/shifts.ts`): off-shift staff
+  cancel gathering bays, un-post, finish active bays/jobs, walk home → `onFloor=false`;
+  on-shift off-floor staff **respawn at the entrance and report to the OUTGOING same-role
+  worker's area** (owner ask — a new night receptionist reports to reception, not the door).
+- **Off-floor exclusion** everywhere a staffer is placed: `isTileClaimed`, renderer sprite
+  loop + `pickAt`, build/expand/sell occupancy, AND `staffNearby` (the post-impl-review
+  MAJOR — gone-home staff were still rescuing lost patients at the entrance).
+- **Player chooses the shift at hire** (hire-panel selector, default day); `setStaffShift`
+  command + inspect-card toggle; setup receptionist = day. Wage 0.6× applied ONCE in
+  `economy.ts` (hire assigns shift only — never pre-scale salary).
+- **Migration = mint a night roster** (`migrateMintNightRoster` in `loadWorld` for v<13):
+  day originals + night twins, payroll ~1.2×, one-time load notice. Deterministic.
+- **Night-unstaffed signal** (`needs.ts` `kind:'coverage'`, panel-only): "Night shift
+  unstaffed…" — LIVE-DRIVEN: at 19:33 the day crew is home, patients leave unseen, the
+  signal explains why (a decision, not a bug).
+- **The carried-open MAJOR is CLOSED** (`SHIFTS_STAGE1_CONTRACT.md` "POST-MECHANICS
+  RE-RUN"): the probe re-ran with real mechanics, tagged patients by arrival-shift, and
+  the pre-registered bound (day-only incremental stranded deaths < 0.2/day) is MET (~0.02).
+  The 06:00 open offsets the walk-home harm, so day-only is +$192/d — survivable-but-tight,
+  the intended pressure. Both a pre-impl (2 lenses) and a post-impl review ran.
+
+**► REMAINING SHIFTS MINORs (carried, non-blocking):** (1) the 4 migration probe arms +
+a MARGINAL-save arm are still unmeasured (migration CORRECTNESS is unit-tested in
+`save.test.ts`; the marginal-save balance question — does mint-night sink an already-tight
+live save? — is the open bit). (2) Staff lounge / lunches / fatigue are Stage 2–3.
+(3) Optional: respawn is instant placement (a door pop-in) — a walk-in polish was noted.
+
+**► THE PRIOR SHIFTS STATE (superseded, kept for provenance):**
+
+### PRIOR (2026-07-19 late — SHIFTS STAGE-1: PROBE REVIEWED, PLUMBING LANDED INERT)
 
 Working tree clean; **699 tests (693 pass, 6 skip), all gates green**; the ECONOMY
 + SHIFTS commits are LOCAL-only, not pushed (see Current state).
