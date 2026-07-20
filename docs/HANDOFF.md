@@ -66,7 +66,7 @@ hygiene.**
 
 | | |
 |---|---|
-| Tests | **699** (693 passed, 6 skipped), 52 files — `npm test`. The 6th skip is `shiftProbe` (gated `SHIFT_PROBE=1`, like `economyProbe`). |
+| Tests | **700** (694 passed, 6 skipped), 52 files — `npm test`. The 6th skip is `shiftProbe` (gated `SHIFT_PROBE=1`, like `economyProbe`). |
 | Gates | lint, `tsc --noEmit`, `vite build` all green; CI runs the full gate on every push to `master` and every PR |
 | `SAVE_VERSION` | **13** (`src/sim/save.ts:32`) LOCAL — v1–v13 loadable. **v11 is what's DEPLOYED/LIVE**; v12 (ECONOMY tally keys) + v13 (SHIFTS `shift`/`onFloor` staff fields, INERT) are committed local-only. Pushing makes v13 one-way AND re-baselines every live save under the tighter economy. |
 | Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 15 room types (14 buildable, `resp` retired) · 11 staff roles |
@@ -187,6 +187,18 @@ every derived number to the dollar). Findings are folded into
 - `+$70` is a **reputation-floor** number (the 1-nurse starter crashes rep to 0 by
   day 2–3 even at baseline — pre-existing fragility). Day-only = survivable-but-tight,
   NOT a safe default.
+
+**► PROBE RE-REVIEWED (2nd fresh-context adversarial pass, RAN it) → drift bug fixed**
+(`5a0ff9d`). The instrument had silently diverged from its own contract: it pre-scaled
+salary AND `economy.ts` now also applies `wageFactor` (landed in `4c973b1` after the
+probe), so the tree's "6a" arm was actually 0.6× (and "0.6×" was 0.36×) — which would
+have booby-trapped the mandated post-mechanics re-run into reporting day-only as
+"comfortable". Fixed: the probe assigns BASE salaries and sweeps `BALANCE.shifts.wageFactor`
+(the factor now applies exactly once); it reproduces the MEASURED block to the dollar.
+A regression (`economyStage1.test.ts` "SHIFTS wage mechanism") pins the wage charged
+once. **Locked decisions UNCHANGED** (they were validly measured at `5a907a8`). One
+open MINOR: the migration table still has no committed instrument — add its arms with
+the mechanical implementation. Folded into contract "### PROBE REVIEW 2".
 
 **► OWNER DECISIONS LOCKED** (`SHIFTS_STAGE1_CONTRACT.md` "### Locked decisions"):
 wage **0.6×** (applied at the HIRE path, not `addStaffMember`), **clock opens 06:00**
