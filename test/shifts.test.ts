@@ -244,6 +244,25 @@ describe('gather-cancel and active-bay survival at the boundary', () => {
     expect(p.stage.kind).toBe('waiting');
   });
 
+  it('an off-shift worker mid-JOB is not yanked home — she stays on the floor', () => {
+    const { world } = setup();
+    const mri = build(world, 'mri', { col: 14, row: 14, cols: 4, rows: 4 });
+    hireShift(world, 'maintenance', 'day');
+    const tech = [...world.staff.values()].find((s) => s.role === 'maintenance')!;
+    const queue = new CommandQueue();
+    queue.push({ type: 'debugBreakRoom', roomId: mri.id }); // → queues a repair job
+    world.applyCommands(queue);
+    let guard = 0;
+    while (tech.duty.kind !== 'job' && guard++ < 2000) world.tick();
+    expect(tech.duty.kind).toBe('job'); // premise: she picked up the repair
+
+    // Cross into night while she is mid-job — she is NOT walked home (busy).
+    world.clock.tick = tickForMinute(NIGHT_MINUTE) - 1;
+    world.tick();
+    expect(tech.onFloor).toBe(true);
+    expect(tech.duty.kind).toBe('job');
+  });
+
   it('an ACTIVE bay is NOT cancelled at the boundary — the staffer finishes it (anti-capture)', () => {
     const { world } = setup();
     const exam = build(world, 'exam', { col: 14, row: 14, cols: 3, rows: 3 });

@@ -298,6 +298,50 @@ gated probe cannot catch on its own. Findings, all folded:
   four migration arms to the probe when the mechanical implementation lands, so the
   table is re-runnable — deferred to that task, not this review.
 
+### POST-MECHANICS RE-RUN (2026-07-20) — the carried-open MAJOR is CLOSED
+The mechanical implementation shipped (updateShifts reconciliation, walk-home,
+off-floor exclusion, gather-cancel, the 06:00 clock re-base — commits `4071eaa`…
+`26359b4`). The shift probe was re-run **with the real mechanics live** and, as the
+review demanded, patients are now **tagged by arrival-shift** (`strandedDeaths`/
+`strandedAma` = patients who ARRIVED on the day shift but died/left during the night
+— stranded past the 18:30 boundary; the specific harm the gate-only probe could not
+see). **Pre-registered protocol satisfied: spread measured first, then a bound.**
+
+**Early-game (BINDING) arm, default 06:00–18:30 window, per-shift 0.6× (the ship config):**
+| posture | profit/d | strandedDeaths/d (spread) |
+|---|---|---|
+| BASELINE (always-on) | +$289 | **0.30** (0.10–0.50) |
+| DAY-ONLY | **+$192** (4/5 seeds pos) | **0.32** (0.10–0.50) |
+| 24/7 | +$541 | 0.24 (0.10–0.40) |
+
+**THE FINDING — day-only night harm is WITHIN BOUND (MAJOR closed):**
+- **Incremental stranded-death harm of day-only over the always-on baseline is ~0.02/day
+  — deep inside the 0.10–0.50 seed spread, i.e. indistinguishable from noise.** Almost
+  every "night death" is a day-arrival aging out overnight, which happens at BASELINE
+  too (full staffing); day-only barely adds to it. The **06:00 clock re-base is what
+  closes it** — the day crew now covers the arrival peak from tick 0, so few patients
+  are stranded past the boundary beyond baseline attrition.
+- **Pre-registered falsification bound (now set, from the measured spread):** *on the
+  early-game arm, day-only incremental stranded deaths over baseline stay < 0.2/day (a
+  fraction of the seed spread).* **MET** (0.02/day). The night-ROI-positive and
+  payroll-model conclusions are unchanged (0.6× day-only +$192, 24/7 +$541, night ROI
+  +$349/d).
+- **Day-only is now MORE viable than the gate-only probe showed** (+$192 vs the old
+  +$70): the mechanics' walk-home harm is more than offset by the 06:00 open. Framing
+  holds: **survivable-but-tight** (4/5 seeds positive; 90210 −$83), the intended
+  pressure — NOT a comfortable default.
+- **Mature (REFERENCE) arm:** day-only strands meaningfully more (0.72 vs 0.16 baseline)
+  AND runs at a loss (−$644/d) with rep crashing — but a mature hospital running
+  day-only is mis-managed by construction (under-serving its large day volume too), not
+  a viability claim. 24/7 is the mature posture (+$1,311, night ROI +$1,955).
+
+**Still-open MINOR (unchanged): the four migration arms have no probe instrument.** The
+mint-night migration's CORRECTNESS is now pinned by `save.test.ts` "v12 → v13 migration"
+(day originals + night twins, payroll 1.2×, determinism). The *marginal-save* balance
+question (does mint-night sink an already-tight live save?) is a measurement still worth
+adding, but it is a MINOR and the migration is owner-locked + correctness-tested — carried
+forward, not blocking.
+
 ### Migration MEASURED (the deferred fork) → mint a night roster
 On a HEALTHY mature save (REFERENCE, 5 days), when shifts turn on:
 | migration | profit/d | payroll | end rep |

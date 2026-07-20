@@ -2,7 +2,7 @@ import { describe, it } from 'vitest';
 
 import { TICKS_PER_DAY } from '../src/sim/clock';
 import { BALANCE } from '../src/sim/data/balance';
-import { shiftWageMultiplier } from '../src/sim/formulas';
+import { onShift, shiftWageMultiplier } from '../src/sim/formulas';
 import { ROLE_DEFS, type RoleId } from '../src/sim/data/roles';
 import type { ShiftId } from '../src/sim/data/shifts';
 import { EventBus } from '../src/events';
@@ -82,6 +82,11 @@ interface ShiftProbe {
   leftAma: number;
   diedNight: number;
   amaNight: number;
+  /** THE carried-open-MAJOR metric: patients who ARRIVED on the day shift but
+   *  died / left during the night — stranded past the 18:30 boundary. Only
+   *  meaningful now that the walk-home + gather-cancel mechanics exist. */
+  strandedDeaths: number;
+  strandedAma: number;
   repTrajectory: number[];
   days: number;
 }
@@ -165,17 +170,30 @@ function runShift(
     leftAma: 0,
     diedNight: 0,
     amaNight: 0,
+    strandedDeaths: 0,
+    strandedAma: 0,
     repTrajectory: [],
     days,
   };
+  // Tag each patient by the shift it ARRIVED on (the day crew's responsibility).
+  const arrivedOnDay = new Map<number, boolean>();
+  events.on('patientSpawned', ({ patientId }) =>
+    arrivedOnDay.set(patientId, onShift('day', world.clock.minuteOfDay)),
+  );
   events.on('patientDischarged', () => (p.discharged += 1));
-  events.on('patientDied', () => {
+  events.on('patientDied', ({ patientId }) => {
     p.died += 1;
-    if (inNight(world.clock.minuteOfDay)) p.diedNight += 1;
+    if (inNight(world.clock.minuteOfDay)) {
+      p.diedNight += 1;
+      if (arrivedOnDay.get(patientId)) p.strandedDeaths += 1;
+    }
   });
-  events.on('patientLeftAma', () => {
+  events.on('patientLeftAma', ({ patientId }) => {
     p.leftAma += 1;
-    if (inNight(world.clock.minuteOfDay)) p.amaNight += 1;
+    if (inNight(world.clock.minuteOfDay)) {
+      p.amaNight += 1;
+      if (arrivedOnDay.get(patientId)) p.strandedAma += 1;
+    }
   });
 
   const cash0 = world.cash;
@@ -204,7 +222,13 @@ function summarize(label: string, rows: ShiftProbe[]): number {
       `AMA/d ${avg((r) => r.leftAma / r.days).toFixed(1)}`,
       `nightDeaths/d ${avg((r) => r.diedNight / r.days).toFixed(2)}`,
       `nightAMA/d ${avg((r) => r.amaNight / r.days).toFixed(1)}`,
+      `strandedDeaths/d ${avg((r) => r.strandedDeaths / r.days).toFixed(2)}`,
+      `strandedAMA/d ${avg((r) => r.strandedAma / r.days).toFixed(1)}`,
     ].join(' | '),
+  );
+  console.log(
+    '  per-seed strandedDeaths: ' +
+      rows.map((r) => `${r.seed}:${(r.strandedDeaths / r.days).toFixed(2)}`).join('  '),
   );
   console.log(
     '  per-seed profit/d: ' + rows.map((r) => `${r.seed} $${r.profit.toFixed(0)}`).join('  '),
