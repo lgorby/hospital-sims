@@ -1,25 +1,30 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-19 (late) — **ECONOMY STAGE-1 IMPLEMENTED** (probe →
-derivation → implementation, 4 adversarial-review rounds; verdict SAFE TO COMMIT).
-The ~82% operating margin is collapsed to **~32%** via three levers (fee trim
-`feeScale 0.72`, size+usage-scaled utilities, per-repair costs). **SAVE_VERSION
-11→12; committed LOCAL, NOT pushed — pushing re-baselines every live save (owner's
-deploy call).** This UNBLOCKS the shifts epic (2× payroll now drops mature to
-~6%). **SHIFTS Stage-1 contract v2 written + reviewed** (both split lenses:
-mechanical READY-WITH-FIXES, design NOT-READY-as-drafted — it pre-committed to the
-whole-roster-payroll + morning-window levers the arithmetic says break the
-starter). **The shift probe HAS RUN** (`test/shiftProbe.test.ts`, gated): the derived model
-is a **PER-SHIFT WAGE (~0.6×)** — whole-roster payroll bankrupts the day-only
-starter (−$142/day), per-shift rescues it (+$70) and makes 24/7 profitable with
-**positive night ROI** (24/7-later is real, not a trap). **Next concrete task:
-owner picks the wage factor (rec. 0.6), measure the v12→v13 migration on a healthy
-save, review the probe, THEN implement** (save `onFloor`, per-tick reconciliation,
-walk-home, night signal, SAVE_VERSION 13). Full numbers in
-`SHIFTS_STAGE1_CONTRACT.md` "## MEASURED". NB the probe also found the 1-nurse
-starter crashes rep to 0 even at baseline — a pre-existing early-game fragility. **GIT STATE (corrected
-earlier): commits through `74a516e` were already pushed/LIVE (reflog); the
-economy commits `15ba628`/`ed03a49`/this one are LOCAL-only.** Prior: outpatient
+**Last updated:** 2026-07-19 (late) — **SHIFTS STAGE-1 PLUMBING LANDED (INERT),
+PROBE RUN + REVIEWED, DECISIONS LOCKED.** ECONOMY Stage-1 shipped first
+(`a949452`, SAVE_VERSION 11→12, ~82%→~32% margin), which unblocked shifts. Now:
+the `onShift` availability gate + `shift`/`onFloor` save fields + per-shift wage
+mechanism are all wired (`5a907a8`, `4c973b1`, **SAVE_VERSION 12→13**) but **INERT
+— `shift` defaults null = always-on**, so no live behaviour change yet. The
+**shift probe ran + was adversarially reviewed** (an independent fresh-context
+review corroborated every derived number): the model is a **PER-SHIFT WAGE (0.6×)**
+— whole-roster payroll bankrupts the day-only starter (−$142/d), 0.6× rescues it
+(+$70) and makes 24/7 profitable with **positive night ROI** (24/7-later is real).
+**Owner-ratified decisions** (in `SHIFTS_STAGE1_CONTRACT.md`): wage factor **0.6×**
+(day-only viability cliff is ~0.73), **clock opens 06:00**, **migration = mint a
+night roster** (only option that keeps a live save whole — measured). **Next
+concrete task: the actual MECHANICAL implementation** — `updateShifts` per-tick
+reconciliation, walk-home + off-floor exclusion (isTileClaimed/renderer/pickAt),
+gather-cancel at the boundary, the 06:00 clock re-base, a night-unstaffed render
+signal, the 9 regressions + harness re-tune, **THEN re-run the probe with the real
+mechanics** to close the one MAJOR review finding (the gate-only probe *undercounts*
+day-only night deaths — stranded-at-boundary harm is unmeasured until walk-home +
+gather-cancel exist). Two review caveats to carry: the `+$70` day-only figure is a
+**reputation-floor** number (the 1-nurse starter crashes rep to 0 by day 2–3 even
+at baseline — a pre-existing fragility), so day-only is "survivable-but-tight," NOT
+a safe default. **GIT STATE: 6 commits ahead of `origin/master`, LOCAL-only, NOT
+pushed** (through `4c973b1`) — a push re-baselines every live save under the tighter
+economy AND makes v13 one-way, so it is the owner's deploy call. Prior: outpatient
 stream LIVE (SAVE_VERSION 11); Departments Stage 2a still blocked.
 
 ## Read order
@@ -61,11 +66,11 @@ hygiene.**
 
 | | |
 |---|---|
-| Tests | **698** (693 passed, 5 skipped), 51 files — `npm test` |
+| Tests | **699** (693 passed, 6 skipped), 52 files — `npm test`. The 6th skip is `shiftProbe` (gated `SHIFT_PROBE=1`, like `economyProbe`). |
 | Gates | lint, `tsc --noEmit`, `vite build` all green; CI runs the full gate on every push to `master` and every PR |
-| `SAVE_VERSION` | **12** (`src/sim/save.ts:31`) LOCAL — v1–v12 loadable. **v11 is what's DEPLOYED/LIVE**; v12 (ECONOMY Stage-1 utilities/repairs tally keys) is committed local-only. Pushing makes v12 one-way AND re-baselines every live save under the tighter economy. |
+| `SAVE_VERSION` | **13** (`src/sim/save.ts:32`) LOCAL — v1–v13 loadable. **v11 is what's DEPLOYED/LIVE**; v12 (ECONOMY tally keys) + v13 (SHIFTS `shift`/`onFloor` staff fields, INERT) are committed local-only. Pushing makes v13 one-way AND re-baselines every live save under the tighter economy. |
 | Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 15 room types (14 buildable, `resp` retired) · 11 staff roles |
-| Working tree | clean. Commits through `74a516e` are on `origin/master` (LIVE). The three ECONOMY commits (`15ba628` probe, `ed03a49` derivation, + the implementation) are **LOCAL-only** — a push is the owner's deploy + save-re-baseline decision. |
+| Working tree | clean. Commits through `74a516e` are on `origin/master` (LIVE). **6 commits are LOCAL-only** (`15ba628` econ probe, `ed03a49` derivation, `a949452` ECONOMY impl, `55059b9` shifts contract v2, `5a907a8` shift gate+probe, `4c973b1` shifts plumbing) — a push is the owner's deploy + save-re-baseline decision. |
 
 **SAVE_VERSION 11 is deployed, which makes it one-way.** Saves written by the
 live build cannot be opened by the previous one — that is the bump doing its
@@ -147,7 +152,62 @@ revisited.
 
 ## Next
 
-### START HERE (session handoff, 2026-07-19 late — BUBBLES + THREE MEASURED DIAGNOSES)
+### START HERE (session handoff, 2026-07-19 late — SHIFTS STAGE-1: PROBE REVIEWED, PLUMBING LANDED INERT)
+
+Working tree clean; **699 tests (693 pass, 6 skip), all gates green**; 6 commits
+ahead of `origin/master`, LOCAL-only (see Current state).
+
+**► ECONOMY STAGE-1 SHIPPED** (`a949452`, SAVE_VERSION 11→12): the ~82% margin is
+collapsed to ~32% (feeScale + size/usage-scaled utilities + per-repair costs). This
+is what makes payroll matter, and it unblocked shifts.
+
+**► SHIFTS STAGE-1 — GATE + PROBE + PLUMBING LANDED, STILL INERT** (`5a907a8`,
+`4c973b1`, SAVE_VERSION 12→13). What exists now:
+- `onShift(shift, minuteOfDay)` pure gate in `formulas.ts`, ANDed into
+  `idleStaff`/`availableStaff`/`rolePool` — but **INERT: `shift` defaults `null` =
+  always-on**, so nothing changes for a live game yet.
+- `BALANCE.shifts` (day 360–1110 / night 1080–390), `shift` + `onFloor` as
+  `SavedStaff` fields, the per-shift wage mechanism, `readStaff` threaded with
+  `saveVersion`. Save round-trip regressions added.
+- `test/shiftProbe.test.ts` (gated `SHIFT_PROBE=1`) — the measurement instrument.
+
+**► THE PROBE RAN + WAS ADVERSARIALLY REVIEWED** (fresh-context review corroborated
+every derived number to the dollar). Findings are folded into
+`SHIFTS_STAGE1_CONTRACT.md` "## MEASURED" → "### PROBE REVIEW":
+- **Per-shift wage (0.6×) beats whole-roster (6a): DECISIVE, mechanically exact** —
+  the −$142→+$70 day-only gap is *precisely* the $212 payroll delta (rev/discharges
+  byte-identical between the two; rep-independent). ADOPT.
+- **Night ROI positive** (sign robust; magnitude is an unpaired 5-seed estimate).
+- **The viability cliff is factor ~0.73** (`day-only net ≈ 388 − 530·f`); 0.6 sits
+  comfortably below it.
+- **MAJOR (carried, not blocking):** the gate-only probe *undercounts* day-only
+  night deaths — it has no walk-home/gather-cancel, so stranded-at-boundary harm is
+  unmeasured. The §7a falsification metric is **not yet met**; re-run the probe once
+  the mechanics exist.
+- `+$70` is a **reputation-floor** number (the 1-nurse starter crashes rep to 0 by
+  day 2–3 even at baseline — pre-existing fragility). Day-only = survivable-but-tight,
+  NOT a safe default.
+
+**► OWNER DECISIONS LOCKED** (`SHIFTS_STAGE1_CONTRACT.md` "### Locked decisions"):
+wage **0.6×** (applied at the HIRE path, not `addStaffMember`), **clock opens 06:00**
+(`startMinuteOfDay` offset), **migration = mint a night roster** on v<13 load (the
+only measured option that keeps a healthy live save whole — parity halves coverage,
+day-only-discount crashes rep).
+
+**► THE NEXT CONCRETE TASK: the mechanical implementation** — a `updateShifts`
+per-tick reconciliation system (off-shift+on-floor+idle+no active reservation → walk
+home; on-shift+off-floor → respawn), off-floor exclusion from `isTileClaimed` /
+renderer sprite loop / `pickAt`, gather-cancel at the boundary (reuse the `firing`
+split), the 06:00 clock re-base, a night-unstaffed render signal, the 9 regressions
+(one per MAJOR) + harness re-tune, **THEN re-run the shift probe with the real
+mechanics** to close the MAJOR above before freezing the balance. Run the standard
+pre-impl + post-impl reviews.
+
+### PRIOR SESSION (2026-07-19 — BUBBLES + THREE MEASURED DIAGNOSES)
+
+*Superseded: the economy re-tune SHIPPED and shifts advanced to plumbing-inert
+since this was written (see START HERE above). Retained for the diagnoses and the
+measurement lesson, which still hold.*
 
 Working tree clean before the probe; 691 tests, all gates green on `master`.
 Commits through `74a516e` are on `origin/master` (LIVE — the "NOT PUSHED / ~18
