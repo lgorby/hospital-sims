@@ -10,6 +10,7 @@ import { ROLE_DEFS, type RoleId } from './data/roles';
 import { ROOM_DEFS, roomRetired, type RoomType } from './data/rooms';
 import { onShift, staffRatioFor } from './formulas';
 import type { Patient } from './entities/patient';
+import type { Room } from './entities/room';
 import type { World } from './world';
 
 /**
@@ -77,6 +78,31 @@ const CHECK_IN_STAGES = new Set<Patient['stage']['kind']>([
   'queuedCheckIn',
   'checkingIn',
 ]);
+
+/**
+ * Maintenance-dispatch narration (MAINT_NARRATION_PLAN): the broken row's live
+ * label from the repair job's state. Branches on PHASE first and only reads the
+ * tech name in the assigned/working arms — a null `staffId` (queued) or an
+ * unresolved staffer falls through to the tech-less wording, never
+ * "undefined en route". "waiting for a maintenance tech" (NOT "all busy"):
+ * since SHIFTS Stage-1 a hired tech may be OFF-SHIFT, so "busy" would be false.
+ */
+function brokenRoomLabel(world: World, room: Room, maintenanceHired: boolean): string {
+  const name = ROOM_DEFS[room.type].label;
+  const job = world.repairJobFor(room.id);
+  const tech =
+    job !== null && job.staffId !== null ? world.staff.get(job.staffId)?.name.short : undefined;
+  if (job === null) return `${name} is broken — needs repair`; // defensive (v6: one repair job)
+  if (job.phase === 'assigned' && tech !== undefined) return `${name} is broken — ${tech} en route`;
+  if (job.phase === 'working' && tech !== undefined) {
+    return `${name} is broken — ${tech} is repairing it`;
+  }
+  // queued (or an unresolved staffer): the tech-less wording — the unstaffed
+  // case that drives a hire, or the transient "waiting" while a hired tech frees.
+  return maintenanceHired
+    ? `${name} is broken — waiting for a maintenance tech`
+    : `${name} is broken — no maintenance staff available`;
+}
 
 export function computeBlockedNeeds(world: World): BlockedNeed[] {
   // Precompute presence once (O(P+S), HINTS_PLAN §2.1 perf note).
@@ -271,7 +297,11 @@ export function computeBlockedNeeds(world: World): BlockedNeed[] {
       patients: 0,
       conditions: [],
       urgent: true,
-      label: `${ROOM_DEFS[room.type].label} is broken — needs repair`,
+      // Maintenance-dispatch narration: the label tracks the repair job's live
+      // state (queued/en route/repairing), and names the UNSTAFFED case that
+      // drives a hire. The KEY is unchanged, so the toast once-guard and the
+      // panel's in-place update both still work.
+      label: brokenRoomLabel(world, room, hiredRoles.has('maintenance')),
     });
   }
 

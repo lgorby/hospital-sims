@@ -563,13 +563,12 @@ export class WorldRenderer {
       const failure = roomFailure(room.type)!; // broken ⇒ a failure def exists
       // breakRoom mints the repair job BEFORE emitting roomChanged (frozen
       // order), so the rect-origin fallback is defensive, not a real path.
-      let anchor: GridPoint = { col: room.rect.col, row: room.rect.row };
-      for (const job of this.world.jobs.values()) {
-        if (job.kind === 'repair' && job.roomId === room.id) {
-          anchor = job.tile;
-          break;
-        }
-      }
+      // The ONE room-keyed repair lookup (maintenance-narration dedup); the
+      // rect-origin fallback stays defensive (breakRoom mints the job first).
+      const anchor: GridPoint = this.world.repairJobFor(room.id)?.tile ?? {
+        col: room.rect.col,
+        row: room.rect.row,
+      };
       const sprite = new Sprite(this.textures.hazards.get(hazardKey(failure.kind))!);
       const { x, y } = toScreen(anchor.col, anchor.row);
       // The anchor is usually the machine's own (non-walkable prop) tile —

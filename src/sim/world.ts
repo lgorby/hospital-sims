@@ -1211,6 +1211,17 @@ export class World implements PathGrid {
     return null;
   }
 
+  /** The repair job for this room, if any (broken ⇔ one repair job, v6 border).
+   *  The ONE room-keyed repair lookup — the blocked panel's narration, the
+   *  inspect card's OUT-OF-SERVICE status, and the render overlay all read it,
+   *  so the "broken ⇔ one repair job" assumption isn't re-encoded per surface. */
+  repairJobFor(roomId: number): Job | null {
+    for (const job of this.jobs.values()) {
+      if (job.kind === 'repair' && job.roomId === roomId) return job;
+    }
+    return null;
+  }
+
   /**
    * Mint a queued job iff none targets the tile (one job per target, §4.3 —
    * the keyed check). The overflow path calls this with 'empty' BEFORE

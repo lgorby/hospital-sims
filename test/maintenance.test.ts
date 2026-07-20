@@ -780,7 +780,9 @@ describe('broken-room hints (§6 / §S3.6)', () => {
     let row = needs.find((n) => n.kind === 'broken');
     expect(row?.key).toBe(firstKey);
     expect(row?.urgent).toBe(true);
-    expect(row?.label).toBe('X-Ray is broken — needs repair');
+    // Maintenance-dispatch narration: with no tech hired the label now names the
+    // unstaffed state (the key is unchanged — that's what the once-guard reads).
+    expect(row?.label).toBe('X-Ray is broken — no maintenance staff available');
     // Repair (fixture write), advance, re-break: the key must CHANGE so the
     // second breakdown toasts again (hintedOnce persists per save).
     xray.brokenSince = null;
@@ -867,5 +869,58 @@ describe('broken-room hints (§6 / §S3.6)', () => {
     const needs = computeBlockedNeeds(world);
     expect(needs.some((n) => n.kind === 'broken')).toBe(false);
     expect(needs.some((n) => n.key === 'role:maintenance')).toBe(false);
+  });
+});
+
+// ----------------------------------------- maintenance-dispatch narration
+describe('maintenance-dispatch narration (broken-row label)', () => {
+  const brokenLabel = (world: World): string | undefined =>
+    computeBlockedNeeds(world).find((n) => n.kind === 'broken')?.label;
+
+  it('unstaffed breakdown reads "no maintenance staff available" + keeps the hire row', () => {
+    const { world } = setup();
+    world.breakRoom(buildXray(world)); // no maintenance hired
+    expect(brokenLabel(world)).toContain('no maintenance staff available');
+    // The actionable CTA row is complementary, not replaced.
+    expect(computeBlockedNeeds(world).some((n) => n.key === 'role:maintenance')).toBe(true);
+  });
+
+  it('a queued repair with a tech hired reads "waiting for a maintenance tech"', () => {
+    const { world } = setup();
+    const xray = buildXray(world);
+    world.breakRoom(xray);
+    addTech(world); // hired but the job is still queued
+    const job = world.repairJobFor(xray.id)!;
+    job.phase = 'queued';
+    job.staffId = null;
+    expect(brokenLabel(world)).toContain('waiting for a maintenance tech');
+  });
+
+  it('an assigned repair names the tech "en route"; working reads "repairing it"', () => {
+    const { world } = setup();
+    const xray = buildXray(world);
+    world.breakRoom(xray);
+    const tech = world.addStaffMember('maintenance', 3, 140, {
+      first: 'Marcus', last: 'Vex', full: 'Marcus Vex', short: 'Marcus',
+    });
+    const job = world.repairJobFor(xray.id)!;
+    job.staffId = tech.id;
+    job.phase = 'assigned';
+    expect(brokenLabel(world)).toBe('X-Ray is broken — Marcus en route');
+    job.phase = 'working';
+    expect(brokenLabel(world)).toBe('X-Ray is broken — Marcus is repairing it');
+  });
+
+  it('the broken KEY is stable across label states (the toast once-guard)', () => {
+    const { world } = setup();
+    const xray = buildXray(world);
+    world.breakRoom(xray);
+    const tech = addTech(world);
+    const key = (): string => computeBlockedNeeds(world).find((n) => n.kind === 'broken')!.key;
+    const before = key();
+    const job = world.repairJobFor(xray.id)!;
+    job.staffId = tech.id;
+    job.phase = 'working';
+    expect(key()).toBe(before); // the label changed; the key must not
   });
 });

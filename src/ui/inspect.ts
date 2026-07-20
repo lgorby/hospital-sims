@@ -433,15 +433,8 @@ export class InspectPanel {
     // repair status resolves from world.jobs by roomId (the staff-card
     // jobKind-resolution pattern) — frame-polled like every field, no event.
     const broken = room.brokenSince !== null;
-    let repairUnderway = false;
-    if (broken) {
-      for (const job of this.world.jobs.values()) {
-        if (job.kind === 'repair' && job.roomId === room.id) {
-          repairUnderway = job.phase === 'working';
-          break;
-        }
-      }
-    }
+    // The ONE room-keyed repair lookup (maintenance-narration dedup).
+    const repairUnderway = broken && this.world.repairJobFor(room.id)?.phase === 'working';
     // ED B1 (§5.3): the player's own close reads as a DRAIN, not a fault —
     // gathering reservations were cancelled on close, so anything still live
     // is an active treatment running to completion. Broken wins the line:
