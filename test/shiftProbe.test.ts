@@ -2,6 +2,7 @@ import { describe, it } from 'vitest';
 
 import { TICKS_PER_DAY } from '../src/sim/clock';
 import { BALANCE } from '../src/sim/data/balance';
+import { shiftWageMultiplier } from '../src/sim/formulas';
 import { ROLE_DEFS, type RoleId } from '../src/sim/data/roles';
 import type { ShiftId } from '../src/sim/data/shifts';
 import { EventBus } from '../src/events';
@@ -27,8 +28,15 @@ import { REFERENCE_BUILD, matureStaffRoster, type RoomSpec } from './fixtures/bu
  *
  * The sim's onShift availability gate is LIVE but INERT until a shift is assigned
  * (a staffer's `shift` defaults null = always on). This probe assigns shifts and
- * sweeps `BALANCE.shifts` (the economyProbe.withArm precedent), so it measures the
- * REAL dispatch behaviour, not an injected approximation.
+ * sweeps the SHIPPED wage mechanism (`BALANCE.shifts.wageFactor`, applied ONCE in
+ * `economy.ts` via `shiftWageMultiplier`) — the economyProbe.withArm precedent —
+ * so it measures the REAL dispatch AND payroll behaviour, not an injected one.
+ *
+ * NB the payroll model is the SWEPT `wageFactor`, NOT a salary the probe pre-scales:
+ * the wage mechanism now lives in `economy.ts` (commit 4c973b1), so pre-scaling the
+ * salary AND letting economy multiply again would double-discount every shifted
+ * staffer (the "6a" arm would read out a 0.6× roster). The probe therefore assigns
+ * BASE salaries and sweeps `wageFactor ∈ {1.0 = 6a, 0.6 = per-shift}` around each arm.
  *
  * Deciding metrics, stated up front (the ones that FALSIFY the design):
  *   - day-only starter net/day > 0 (across seeds) — the binding question;
@@ -79,16 +87,15 @@ interface ShiftProbe {
 }
 
 /**
- * Configure the roster for a posture. `payrollFactor` scales the per-shift wage
- * (1.0 = whole-roster 6a; 0.6 = per-shift). BASELINE ignores both (always-on).
+ * Configure the roster for a posture, at BASE salaries. The wage model is the
+ * SWEPT `BALANCE.shifts.wageFactor` (applied once in economy.ts) — the probe must
+ * NOT pre-scale salary or the factor is double-counted. BASELINE is null-shift
+ * (always-on), so it is wage-factor-independent by construction.
  */
-function configureRoster(world: World, posture: Posture, payrollFactor: number): void {
+function configureRoster(world: World, posture: Posture): void {
   const receptionist = [...world.staff.values()].find((s) => s.role === 'receptionist')!;
   const addShifted = (role: RoleId, shift: ShiftId | null): void => {
-    const base = ROLE_DEFS[role].salaryPerDay;
-    const salary = shift === null ? base : Math.round(base * payrollFactor);
-    const m = world.addStaffMember(role, 3, salary);
-    m.shift = shift;
+    world.addStaffMember(role, 3, ROLE_DEFS[role].salaryPerDay).shift = shift;
   };
 
   if (posture === 'baseline') {
@@ -98,9 +105,6 @@ function configureRoster(world: World, posture: Posture, payrollFactor: number):
   }
   // Both shifted postures: the setup receptionist works the DAY shift.
   receptionist.shift = 'day';
-  if (payrollFactor !== 1) {
-    receptionist.salaryPerDay = Math.round(ROLE_DEFS.receptionist.salaryPerDay * payrollFactor);
-  }
   for (const role of EARLY_ROLES) addShifted(role, 'day');
   if (posture === '24-7') {
     addShifted('receptionist', 'night');
@@ -109,13 +113,11 @@ function configureRoster(world: World, posture: Posture, payrollFactor: number):
 }
 
 /** Same, for a mature build (the reference roster, shifted). */
-function configureMature(world: World, posture: Posture, payrollFactor: number): void {
+function configureMature(world: World, posture: Posture): void {
   const receptionist = [...world.staff.values()].find((s) => s.role === 'receptionist')!;
   const roster = matureStaffRoster();
   const add = (role: RoleId, shift: ShiftId | null): void => {
-    const base = ROLE_DEFS[role].salaryPerDay;
-    const salary = shift === null ? base : Math.round(base * payrollFactor);
-    world.addStaffMember(role, 3, salary).shift = shift;
+    world.addStaffMember(role, 3, ROLE_DEFS[role].salaryPerDay).shift = shift;
   };
   if (posture === 'baseline') {
     for (const { role, count } of roster) for (let i = 0; i < count; i++) add(role, null);
@@ -132,9 +134,8 @@ function configureMature(world: World, posture: Posture, payrollFactor: number):
 function runShift(
   seed: number,
   build: RoomSpec[],
-  configure: (w: World, p: Posture, f: number) => void,
+  configure: (w: World, p: Posture) => void,
   posture: Posture,
-  payrollFactor: number,
   days: number,
   bankroll: number,
   reputation?: number,
@@ -147,13 +148,18 @@ function runShift(
   for (const spec of build) world.buildRoom(spec.type, spec.rect, spec.door);
   world.placeAmenity('vending', { col: 26, row: 33 });
   world.placeAmenity('trashcan', { col: 27, row: 33 });
-  configure(world, posture, payrollFactor);
+  configure(world, posture);
 
   const p: ShiftProbe = {
     seed,
     revenue: 0,
     profit: 0,
-    payrollPerDay: [...world.staff.values()].reduce((s, m) => s + m.salaryPerDay, 0),
+    // The CHARGED payroll: base salary × the swept wage multiplier (matches
+    // economy.ts). A raw salary sum would print a payroll the sim never deducts.
+    payrollPerDay: [...world.staff.values()].reduce(
+      (s, m) => s + m.salaryPerDay * shiftWageMultiplier(m.shift),
+      0,
+    ),
     discharged: 0,
     died: 0,
     leftAma: 0,
@@ -224,6 +230,21 @@ function withWindow(name: string, day: { s: number; e: number }, night: { s: num
   }
 }
 
+// Sweep the SHIPPED wage factor in place: 1.0 = 6a whole-roster, 0.6 = per-shift.
+// economy.ts applies it exactly once (shiftWageMultiplier), so the probe assigns
+// base salaries and lets this be the ONLY place the factor is applied.
+function withWage(name: string, factor: number, fn: () => void): void {
+  const sh = BALANCE.shifts as { wageFactor: number };
+  const saved = sh.wageFactor;
+  sh.wageFactor = factor;
+  try {
+    console.log(`\n---------- WAGE: ${name} (factor ${factor}) ----------`);
+    fn();
+  } finally {
+    sh.wageFactor = saved;
+  }
+}
+
 declare const process: { env: Record<string, string | undefined> } | undefined;
 const describeProbe =
   typeof process !== 'undefined' && process.env.SHIFT_PROBE ? describe : describe.skip;
@@ -231,52 +252,57 @@ const describeProbe =
 describeProbe('Shift probe (SHIFTS_STAGE1_CONTRACT §measurement)', () => {
   it('prints day-only viability + night ROI across payroll models and windows', () => {
     const seeds = [1337, 1338, 31337, 4242, 90210];
-    const early = (posture: Posture, factor: number, rep?: number) =>
-      seeds.map((s) => runShift(s, EARLY_GAME_BUILD, configureRoster, posture, factor, 10, 0, rep));
+    const early = (posture: Posture, rep?: number) =>
+      seeds.map((s) => runShift(s, EARLY_GAME_BUILD, configureRoster, posture, 10, 0, rep));
 
-    // BASELINE is shift-independent — run once.
+    // BASELINE is shift-independent (null-shift = wage-factor-independent) — run once.
     console.log('\n>>>>> EARLY-GAME ARM (binding) <<<<<');
-    const base = summarize('EARLY baseline (always-on 1×)', early('baseline', 1));
+    const base = summarize('EARLY baseline (always-on 1×)', early('baseline'));
 
     for (const [wname, day, night] of [
       ['06:00–18:30 (default)', { s: 360, e: 1110 }, { s: 1080, e: 390 }],
       ['09:30–22:00 (evening-capture)', { s: 570, e: 1320 }, { s: 1290, e: 600 }],
     ] as const) {
       withWindow(wname, day, night, () => {
-        for (const factor of [1, 0.6] as const) {
-          const tag = factor === 1 ? '6a whole-roster' : 'per-shift 0.6×';
-          const dayOnly = summarize(`EARLY day-only · ${tag}`, early('day-only', factor));
-          const round = summarize(`EARLY 24/7 · ${tag}`, early('24-7', factor));
-          console.log(
-            `  >> NIGHT ROI (24/7 − day-only) = $${(round - dayOnly).toFixed(0)}/d | ` +
-              `day-only vs baseline: $${(dayOnly - base).toFixed(0)}/d`,
-          );
+        for (const [tag, factor] of [['6a whole-roster', 1], ['per-shift 0.6×', 0.6]] as const) {
+          withWage(tag, factor, () => {
+            const dayOnly = summarize(`EARLY day-only · ${tag}`, early('day-only'));
+            const round = summarize(`EARLY 24/7 · ${tag}`, early('24-7'));
+            console.log(
+              `  >> NIGHT ROI (24/7 − day-only) = $${(round - dayOnly).toFixed(0)}/d | ` +
+                `day-only vs baseline: $${(dayOnly - base).toFixed(0)}/d`,
+            );
+          });
         }
       });
     }
 
     // SHOCK: day-only starter opening at rep 150 (does it recover or spiral?).
     withWindow('06:00–18:30 (default)', { s: 360, e: 1110 }, { s: 1080, e: 390 }, () => {
-      summarize('EARLY day-only · 6a · SHOCK rep150', early('day-only', 1, 150));
+      withWage('6a whole-roster', 1, () => {
+        summarize('EARLY day-only · 6a · SHOCK rep150', early('day-only', 150));
+      });
     });
 
-    // CEILING: the mature reference build, default window, whole-roster payroll.
+    // CEILING: the mature reference build, default window, whole-roster (6a) payroll.
     console.log('\n>>>>> REFERENCE ARM (mature ceiling) <<<<<');
-    const matureBase = summarize(
-      'REF baseline',
-      seeds.map((s) => runShift(s, REFERENCE_BUILD, configureMature, 'baseline', 1, 5, 10_000_000)),
-    );
-    const matureDay = summarize(
-      'REF day-only · 6a',
-      seeds.map((s) => runShift(s, REFERENCE_BUILD, configureMature, 'day-only', 1, 5, 10_000_000)),
-    );
-    const matureRound = summarize(
-      'REF 24/7 · 6a',
-      seeds.map((s) => runShift(s, REFERENCE_BUILD, configureMature, '24-7', 1, 5, 10_000_000)),
-    );
-    console.log(
-      `  >> REF night ROI = $${(matureRound - matureDay).toFixed(0)}/d | ` +
-        `day-only vs baseline: $${(matureDay - matureBase).toFixed(0)}/d`,
-    );
+    withWage('6a whole-roster', 1, () => {
+      const matureBase = summarize(
+        'REF baseline',
+        seeds.map((s) => runShift(s, REFERENCE_BUILD, configureMature, 'baseline', 5, 10_000_000)),
+      );
+      const matureDay = summarize(
+        'REF day-only · 6a',
+        seeds.map((s) => runShift(s, REFERENCE_BUILD, configureMature, 'day-only', 5, 10_000_000)),
+      );
+      const matureRound = summarize(
+        'REF 24/7 · 6a',
+        seeds.map((s) => runShift(s, REFERENCE_BUILD, configureMature, '24-7', 5, 10_000_000)),
+      );
+      console.log(
+        `  >> REF night ROI = $${(matureRound - matureDay).toFixed(0)}/d | ` +
+          `day-only vs baseline: $${(matureDay - matureBase).toFixed(0)}/d`,
+      );
+    });
   }, 600_000);
 });

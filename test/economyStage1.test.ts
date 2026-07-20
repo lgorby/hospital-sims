@@ -4,10 +4,11 @@ import { TICKS_PER_DAY, TICKS_PER_GAME_HOUR } from '../src/sim/clock';
 import { BALANCE } from '../src/sim/data/balance';
 import { CONDITION_DEFS } from '../src/sim/data/conditions';
 import { ROLE_DEFS } from '../src/sim/data/roles';
+import type { ShiftId } from '../src/sim/data/shifts';
 import type { Patient } from '../src/sim/entities/patient';
 import type { Reservation } from '../src/sim/entities/staff';
 import { EventBus } from '../src/events';
-import { scaledFee } from '../src/sim/formulas';
+import { scaledFee, shiftWageMultiplier } from '../src/sim/formulas';
 import { setupNewGame } from '../src/sim/newGame';
 import { updateEconomy } from '../src/sim/systems/economy';
 import { resolveTreatmentOutcome } from '../src/sim/systems/treatment';
@@ -128,6 +129,38 @@ describe('repairs (lever 3) charge on completion', () => {
     expect(cash0 - world.cash).toBe(expected);
     expect(world.lifetime.repairs).toBe(expected);
     expect(mri.brokenSince).toBeNull();
+  });
+});
+
+describe('SHIFTS wage mechanism (shipped inert) — the factor is charged EXACTLY once', () => {
+  // Regression for the shift-probe review finding (2026-07-19): the wage factor
+  // lives in ONE place, economy.ts's payroll loop via shiftWageMultiplier, so a
+  // shifted staffer must be charged `salaryPerDay × wageFactor` exactly once. The
+  // probe originally pre-scaled salary AND let economy multiply again, double-
+  // discounting every shifted staffer (its "6a" arm silently read out a 0.6× roster).
+  // This pins the SSOT the probe must match: applied once, never zero, never twice.
+  const payrollHourWith = (shift: ShiftId | null): number => {
+    const world = new World(new EventBus(), 1);
+    setupNewGame(world);
+    world.cash += 100_000;
+    world.addStaffMember('doctor', 3, ROLE_DEFS.doctor.salaryPerDay).shift = shift;
+    toHourBoundary(world);
+    const cash0 = world.cash;
+    updateEconomy(world);
+    return cash0 - world.cash;
+  };
+
+  it('a day-shifted staffer costs base × wageFactor; a null-shift staffer full base', () => {
+    const base = ROLE_DEFS.doctor.salaryPerDay;
+    // Two identical worlds (same rooms → same utilities, same setup roster) differ
+    // only in the added doctor's shift, so the charge DELTA is pure payroll.
+    const delta = payrollHourWith(null) - payrollHourWith('day');
+    expect(delta).toBeCloseTo((base * (1 - BALANCE.shifts.wageFactor)) / 24, 6);
+    // The factor is < 1 (a discount actually applies) and the mechanism reads SSOT.
+    expect(BALANCE.shifts.wageFactor).toBeLessThan(1);
+    expect(shiftWageMultiplier('day')).toBe(BALANCE.shifts.wageFactor);
+    expect(shiftWageMultiplier('night')).toBe(BALANCE.shifts.wageFactor);
+    expect(shiftWageMultiplier(null)).toBe(1);
   });
 });
 

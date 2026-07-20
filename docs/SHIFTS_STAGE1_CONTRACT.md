@@ -255,6 +255,49 @@ the day-only SAFETY framing is on probation until re-measured post-implementatio
 - Mature day-only "+$73" rests on one seed (median −$30, 3/5 negative) — directional
   only, not "mature day-only pays".
 
+### PROBE REVIEW 2 (adversarial, fresh context, 2026-07-19 — RAN the probe) — folded
+A second independent adversarial review RAN the probe against the current tree and
+diffed it to this block. **Verdict: the LOCKED DECISIONS remain valid** (wage 0.6×,
+clock 06:00, mint-night-roster were all soundly measured at commit `5a907a8`; the
+payroll-model, 0.73-crossover and night-ROI-sign conclusions are cash/rep arithmetic
+that survives independently — the review re-derived every one). **But the INSTRUMENT
+in the tree had SILENTLY DRIFTED and no longer reproduced this block** — a MAJOR the
+gated probe cannot catch on its own. Findings, all folded:
+- **MAJOR (fixed) — the wage factor was double-counted.** The MEASURED numbers were
+  taken at `5a907a8`, where the probe encoded the whole wage model itself
+  (pre-scaling salary) and `economy.ts` charged raw salary. The NEXT commit
+  (`4c973b1`) moved the wage model into `economy.ts` (`salaryPerDay ×
+  shiftWageMultiplier`, reading `BALANCE.shifts.wageFactor = 0.6`) **without touching
+  the probe**, so every shifted staffer was discounted twice: the tree's "6a" arm
+  read out this block's **0.6× column** (day-only −$142 → +$70) and its "0.6×" arm
+  was a phantom 0.36×. **Fix:** the probe no longer pre-scales — it assigns BASE
+  salaries and sweeps `BALANCE.shifts.wageFactor ∈ {1.0 = 6a, 0.6 = per-shift}` (the
+  `withWage` helper, the `withWindow`/economyProbe precedent), so the shipped
+  mechanism applies the factor exactly once. Re-run reproduces THIS block to the
+  dollar (day-only 6a −$142 5/5-neg, 0.6× +$70 2/5-neg, 24/7 0.6× +$583, night ROI
+  +$301/+$513; REF +$4,842 / +$73 / +$1,672, night ROI +$1,598).
+- **MAJOR (fixed by the above) — the mandated post-mechanics re-run was booby-trapped.**
+  The carried-open MAJOR requires re-running the probe once the mechanics exist to
+  check day-only night harm. On the drifted instrument that re-run would have charged
+  0.36× and reported day-only as **+$197, 0/5 negative** — "comfortable" — the exact
+  false reassurance the carried-open MAJOR exists to prevent (it stacked a *second*
+  under-count on the acknowledged gate-only one, both pushing day-only to look safer).
+  Fixing the double-count clears the trap; the re-run is now trustworthy.
+- **The carried-open MAJOR is correct in DIRECTION** (gate-only over-counts off-shift
+  coverage → under-counts night harm; `nightDeaths`/`nightAMA` is a sound-but-optimistic
+  arrivals-forgone proxy) and still stands: **§7a is not met; re-run post-mechanics.**
+- **Regression:** `economyStage1.test.ts` "SHIFTS wage mechanism" pins that a shifted
+  staffer is charged `salaryPerDay × wageFactor` exactly ONCE (SSOT), so the probe
+  and mechanism cannot silently diverge again. The probe metric `payrollPerDay` now
+  prints the CHARGED wage (× multiplier), the read-out that would have surfaced the
+  double-count (MINOR, fixed).
+- **MINOR (open, provenance) — the "Migration MEASURED" table below has NO committed
+  instrument.** Its four arms drove the locked mint-night-roster call but live in no
+  test; the numbers cross-check as credible and the decision is independently
+  defensible (parity halves coverage; day-only-discount crashes rep to 39). Add the
+  four migration arms to the probe when the mechanical implementation lands, so the
+  table is re-runnable — deferred to that task, not this review.
+
 ### Migration MEASURED (the deferred fork) → mint a night roster
 On a HEALTHY mature save (REFERENCE, 5 days), when shifts turn on:
 | migration | profit/d | payroll | end rep |
