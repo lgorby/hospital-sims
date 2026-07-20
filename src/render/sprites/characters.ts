@@ -55,8 +55,8 @@ const MASK = 0xe6eef0;
 
 /** Soft form shading — a lit top band and a shadowed underside, kept inside
  * whatever silhouette they're painted over so they never spill onto transparency. */
-const HI = { color: 0xffffff, alpha: 0.12 } as const;
-const LO = { color: 0x000000, alpha: 0.14 } as const;
+const HI = { color: 0xffffff, alpha: 0.22 } as const;
+const LO = { color: 0x000000, alpha: 0.28 } as const;
 
 interface WalkPhase {
   /** Body bob (px, negative = up). */
@@ -132,8 +132,10 @@ function drawCharacter(
     if (strokeColor !== undefined) rr(cx, top, w, h, r).stroke({ color: strokeColor, width: 1 });
   };
 
-  // ── Contact shadow (fixed at the feet; kept inside the pad's bottom edge). ──
-  g.ellipse(0, -1.6, 7.5, 2.6).fill({ color: 0x000000, alpha: 0.18 });
+  // ── Contact shadow (fixed at the feet; a soft two-layer pool grounds the
+  // figure — both ellipses kept inside the pad's bottom edge (y ≤ 1)). ──
+  g.ellipse(0, -1.4, 8.4, 2.4).fill({ color: 0x000000, alpha: 0.14 });
+  g.ellipse(0, -1.6, 5.6, 2.3).fill({ color: 0x000000, alpha: 0.32 });
 
   // ── Legs + shoes (drawn behind the torso). ──
   const leg = (cx: number, lift: number): void => {
@@ -167,8 +169,9 @@ function drawCharacter(
   };
   drawArm(-armCx, -arm, 0.82);
 
-  // ── Torso + role-specific rig. ──
-  panel(0, torsoTop, TW, TH, TR, topColor, shade(topColor, 0.72));
+  // ── Torso + role-specific rig. A darker edge stroke gives the silhouette
+  // some pop at play scale (~15px), where interior detail is invisible. ──
+  panel(0, torsoTop, TW, TH, TR, topColor, shade(topColor, 0.5));
 
   // Front-of-body ITEMS (V-neck, badges, stethoscope, vest trim, pockets) only
   // exist on the toward-viewer facings. On the away facings we draw a
@@ -235,9 +238,12 @@ function drawCharacter(
   // Base kept high enough that the crown top (hy − 7.8) stays inside the pad's
   // −46 edge even at the −2 bob, so the texture bounds never grow.
   const hy = -36 + bob;
-  const crown = cap ? shade(outfit, 0.95) : hair;
+  const crown = cap ? shade(outfit, 0.95) : shade(hair, 0.85);
   if (showFace) {
     cc(hx, hy - 1.6, 6.2).fill(crown); // hair / cap crown
+    // Hair sheen (NW light) — a bright highlight against the darkened crown base
+    // gives the hair strong two-tone volume that reads at play scale.
+    if (!cap) cc(hx - 1.5, hy - 3, 3).fill({ color: shade(hair, 1.55), alpha: 0.9 });
     cc(hx + 0.4, hy + 0.9, 5.5).fill(skin); // face over the lower crown
     cc(hx - 1.4, hy - 0.4, 3.2).fill(HI);
     ee(hx + 2, hy + 2.6, 3, 2.8).fill(LO);
@@ -252,9 +258,17 @@ function drawCharacter(
       rr(-4.6, hy + 1.2, 1, 3, 0.5).fill(shade(MASK, 0.85));
       rr(6.2, hy + 1.2, 1, 3, 0.5).fill(shade(MASK, 0.85));
     } else {
-      // Eyes (shifted toward the walk direction for a subtle 3/4 turn).
+      // Soft cheeks + a gentle smile + eye catchlights — a little RCT warmth.
+      cc(hx - 2, hy + 2.4, 1.1).fill({ color: shade(skin, 1.12), alpha: 0.7 });
+      cc(hx + 3, hy + 2.4, 1.1).fill({ color: shade(skin, 1.12), alpha: 0.7 });
+      g.moveTo((hx - 1.5) * dir, hy + 3.4)
+        .quadraticCurveTo((hx + 0.5) * dir, hy + 4.4, (hx + 2.5) * dir, hy + 3.4)
+        .stroke({ color: shade(skin, 0.5), width: 1.1, alpha: 0.6 });
+      // Eyes (shifted toward the walk direction for a subtle 3/4 turn) + catchlight.
       ee(hx - 1.4, hy + 0.4, 0.9, 1.2).fill(0x2b2b33);
       ee(hx + 2.4, hy + 0.4, 0.9, 1.2).fill(0x2b2b33);
+      cc(hx - 1.6, hy + 0.05, 0.34).fill(0xffffff);
+      cc(hx + 2.2, hy + 0.05, 0.34).fill(0xffffff);
     }
   } else {
     // Away: full crown, a nape shadow, and a sliver of neck skin.
