@@ -312,9 +312,14 @@ Parity halves coverage; day-only-discount crashes rep. Opt-in (zero disruption) 
 the conservative fallback.
 
 ### Locked decisions (owner-ratified) → the implementation spec
-- **Wage factor 0.6×** (a shifted staffer's salary = `round(base × 0.6)`), applied at
-  the HIRE path (hireStaff / setupNewGame), NOT addStaffMember (or every test's
-  always-on roster breaks). Below the 0.73 crossover.
+- **Wage factor 0.6×**, below the 0.73 crossover. **STALE WORDING (see
+  `SHIFTS_IMPL_PLAN.md` §2.1):** the drafted "salary = `round(base × 0.6)` at the hire
+  path" PRE-DATES the shipped mechanism and is now WRONG — `economy.ts` already applies
+  `× shiftWageMultiplier(shift)` every payroll tick (the wage lives in ONE place). The
+  hire path assigns `shift` ONLY and leaves `salaryPerDay = base`; pre-scaling the salary
+  too is the exact DOUBLE-COUNT the shift-probe review (PROBE REVIEW 2) fixed. Pinned by
+  `economyStage1.test.ts` "SHIFTS wage mechanism". `addStaffMember` keeps `shift=null` so
+  test rosters stay always-on.
 - **Clock opens at 06:00** (day-shift start) — `startMinuteOfDay` offset in
   `clock.ts`; re-base `dayOfTick`/`display`/`?seed` boot; the 24h `closeDay`
   rollover stays on the raw tick boundary (phase-invariant).
