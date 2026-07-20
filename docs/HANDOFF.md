@@ -1,32 +1,30 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-19 (late) — **SHIFTS STAGE-1 PLUMBING LANDED (INERT),
-PROBE RUN + REVIEWED, DECISIONS LOCKED.** ECONOMY Stage-1 shipped first
-(`a949452`, SAVE_VERSION 11→12, ~82%→~32% margin), which unblocked shifts. Now:
-the `onShift` availability gate + `shift`/`onFloor` save fields + per-shift wage
-mechanism are all wired (`5a907a8`, `4c973b1`, **SAVE_VERSION 12→13**) but **INERT
-— `shift` defaults null = always-on**, so no live behaviour change yet. The
-**shift probe ran + was adversarially reviewed** (an independent fresh-context
-review corroborated every derived number): the model is a **PER-SHIFT WAGE (0.6×)**
-— whole-roster payroll bankrupts the day-only starter (−$142/d), 0.6× rescues it
-(+$70) and makes 24/7 profitable with **positive night ROI** (24/7-later is real).
-**Owner-ratified decisions** (in `SHIFTS_STAGE1_CONTRACT.md`): wage factor **0.6×**
-(day-only viability cliff is ~0.73), **clock opens 06:00**, **migration = mint a
-night roster** (only option that keeps a live save whole — measured). **Next
-concrete task: the actual MECHANICAL implementation** — `updateShifts` per-tick
-reconciliation, walk-home + off-floor exclusion (isTileClaimed/renderer/pickAt),
-gather-cancel at the boundary, the 06:00 clock re-base, a night-unstaffed render
-signal, the 9 regressions + harness re-tune, **THEN re-run the probe with the real
-mechanics** to close the one MAJOR review finding (the gate-only probe *undercounts*
-day-only night deaths — stranded-at-boundary harm is unmeasured until walk-home +
-gather-cancel exist). Two review caveats to carry: the `+$70` day-only figure is a
-**reputation-floor** number (the 1-nurse starter crashes rep to 0 by day 2–3 even
-at baseline — a pre-existing fragility), so day-only is "survivable-but-tight," NOT
-a safe default. **GIT STATE (2026-07-20): DEPLOYED — ECONOMY Stage-1 + the FULL
-SHIFTS Stage-1 mechanical implementation are pushed and LIVE (`9ae3b95`, CI green,
-Vercel auto-deploy). SAVE_VERSION 13 is now the deployed/one-way version; every live
-save re-baselined under the tighter economy on load.** See the START HERE block for
-the shipped feature list. Departments Stage 2a still blocked.
+**Last updated:** 2026-07-20 — **SHIFTS STAGE 2 + 3a + MAINTENANCE NARRATION
+SHIPPED & DEPLOYED.** The staff-shifts epic advanced two stages and a warm-up
+feature landed, all LIVE at **SAVE_VERSION 15** (`origin/master` = `6584722`, CI
+green, Vercel auto-deploy; https://hospital-sims.vercel.app HTTP 200):
+- **SHIFTS Stage 2** (v14) — mid-shift lunches + the **`lounge`** room. Staggered
+  per-staffer lunches (id-hash, rng-free) with a per-role coverage cap so the floor
+  never empties ("never all at once"); a solo-of-a-role skips lunch; on-site lounge
+  vs leave-the-building; lounge = derived-occupancy comfort room.
+- **SHIFTS Stage 3a** (v15) — **`Staff.fatigue`**, load-weighted, slows TREATMENT
+  DURATION ONLY (deaths stay raw-skill), rested by lunches (lounge > off-floor) +
+  off-shift, capped (never runaway), inert for null-shift staff. This is what makes
+  the lounge pay off. Measured: a positive-but-PARTIAL lever (lounge recovers ~0.44
+  disch/d of a ~1.2 cost on a tight roster; capped by skip-under-capture — a residual
+  debt). Two lounge follow-up fixes shipped too ("In use" label; step-out-after-lunch
+  so staff don't loiter in the lounge for hours).
+- **Maintenance-dispatch narration** (render-only, NO save bump) — the NEEDS-ATTENTION
+  broken-room row narrates the repair live: "no maintenance staff available" (→ hire)
+  / "waiting for a maintenance tech" / "{tech} en route" / "repairing it" → clears.
+
+Every one went through the full workflow (plan → 2 split-lens pre-impl reviews →
+implement → post-impl review → fold all findings → gates → commit → owner-approved
+push). Balance decisions were MEASURED (probes), not asserted. **SHIFTS Stage 3b
+(night differential / agency / morale-quit) is DEFERRED** by the owner — do not
+start it unless reopened. The next session should pick a fresh feature (START HERE).
+Departments Stage 2a still blocked (see the read-order table).
 
 ## Read order
 
@@ -69,9 +67,9 @@ hygiene.**
 |---|---|
 | Tests | **747 passed, 8 skipped**, 55 files — `npm test`. The gated-probe skips are `shiftProbe`/`economyProbe`/`edProbe`/`utilisationProbe`/`staffBreakProbe` etc. (each `*_PROBE=1`). |
 | Gates | lint, `tsc --noEmit`, `vite build` all green; CI runs the full gate on every push to `master` and every PR |
-| `SAVE_VERSION` | **15** (`src/sim/save.ts:32`) — v1–v15 loadable. **v15 is SHIFTS Stage 3a (staff `fatigue`) — COMMITTED LOCALLY, NOT DEPLOYED**, on top of v14 (Stage 2 lunches + `lounge`). The DEPLOYED/LIVE version is still **v13**. v15 is one-way once pushed; v<15 saves load inert (fatigue 0 until staff work a shift). |
+| `SAVE_VERSION` | **15** (`src/sim/save.ts:32`) — v1–v15 loadable. **v15 (SHIFTS Stage 3a `Staff.fatigue`, on top of v14's Stage 2 lunches + `lounge`) is DEPLOYED/LIVE** (2026-07-20). v15 is one-way; v<15 saves load inert (fatigue 0 until staff work a shift; lounge/lunch behaviour activates on their shifts). |
 | Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 16 room types (15 buildable inc. `lounge`, `resp` retired) · 11 staff roles |
-| Working tree | Stage 2 + 3a committed LOCALLY on `master`; **`origin/master` is still at `9ae3b95` (LIVE = v13)** — NOT pushed (deploy is a pending owner call; v14/v15 are one-way). |
+| Working tree | clean. **`origin/master` = `6584722` = LIVE** — SHIFTS Stage 2 + 3a + the lounge fixes + maintenance narration all pushed & deployed 2026-07-20 (CI green). Nothing local-only pending. |
 
 **SAVE_VERSION 11 is deployed, which makes it one-way.** Saves written by the
 live build cannot be opened by the previous one — that is the bump doing its
@@ -161,7 +159,8 @@ verified**). SAVE_VERSION **13 → 14 → 15**, one-way and now the DEPLOYED bas
 tests, 8 skip.** Provenance in `CHANGELOG.md` *(shifts 2)* / *(shifts 3a)*; do-not-regress
 rules in `INVARIANTS.md` ("SHIFTS Stage 2" / "SHIFTS Stage 3a"); contracts
 `docs/SHIFTS_STAGE2_CONTRACT.md`, `docs/SHIFTS_STAGE3A_CONTRACT.md` (both v2, all pre-impl +
-post-impl findings folded). **Working tree clean; `origin/master` = `112755d` = LIVE.**
+post-impl findings folded). **Working tree clean; `origin/master` = `6584722` = LIVE
+(Stage 2 + 3a + maintenance narration all pushed & deployed).**
 
 **What shipped (Stage 2):** staggered per-staffer lunches (id-hash, rng-free) with a
 per-role coverage cap ("never all at once"); solo-of-a-role skips lunch; on-site lounge
@@ -182,9 +181,9 @@ ALL findings + a regression each → gates green (tsc + lint + build) → commit
 to) push/deploy.** Live-drive anything player-facing (`/run-hospital-simms`). Strong
 non-shifts candidates, all owner asks:
 
-*(DONE 2026-07-20: **Maintenance-dispatch narration** SHIPPED LOCAL — `0c606fa`,
+*(DONE + DEPLOYED 2026-07-20: **Maintenance-dispatch narration** — `0c606fa`,
 render-only, no save bump; the NEEDS-ATTENTION broken row now narrates the repair
-(no-tech / waiting / {tech} en route / repairing). Not deployed — see CHANGELOG
+(no-tech / waiting / {tech} en route / repairing). LIVE — see CHANGELOG
 *(maint narration)*. Don't rebuild it.)*
 
 1. **NURSE TECHS — a capacity lever the owner asked for** (meatier; distinct from EVS: a
