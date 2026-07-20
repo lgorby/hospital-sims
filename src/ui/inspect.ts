@@ -522,8 +522,9 @@ export class InspectPanel {
       (runBy ? this.line('Run by', runBy) : '') +
       loadLine +
       (hasPost ? this.line('Posted', posted.map((s) => s.name.short).join(', ') || '—') : '') +
-      // "Treating" would be dishonest for a self-service room (§3.3).
-      this.line(stallClaims ? 'In use' : 'Treating', occupant) +
+      // "Treating" would be dishonest for a self-service room (§3.3): the
+      // restroom AND the lounge (SHIFTS Stage 2) both read "In use".
+      this.line(derivedClaims ? 'In use' : 'Treating', occupant) +
       // DEPARTMENTS_PLAN §3.6 defect 3: a retired room must SAY it is retired.
       // Otherwise it is a room the player paid for that quietly stops
       // receiving patients, which reads as a bug rather than a decision.
