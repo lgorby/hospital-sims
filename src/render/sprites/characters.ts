@@ -1,5 +1,5 @@
 import { Graphics, type Renderer, type Texture } from 'pixi.js';
-import { ROLE_DEFS, ROLE_IDS, type RoleId } from '../../sim/data/roles';
+import { ROLE_DEFS, ROLE_IDS, SCRUB_CAP_ROLES, type RoleId } from '../../sim/data/roles';
 import { FACINGS, shade, type Facing } from './shared';
 
 /**
@@ -35,12 +35,12 @@ export const FEET_ANCHOR = { x: 0.5, y: 46 / 47 };
 const SKIN_TONES = [0xf2c9a8, 0xd9a377, 0xb07b4f, 0x8a5a3a] as const;
 const HAIR_COLORS = [0x3b2f2f, 0x6e4f2f, 0xc7873a, 0x8f8f8f] as const;
 /**
- * Roles drawn with a scrub cap instead of hair. Typed against RoleId so a
- * typo'd id is a compile error; any role absent here gets the generic hair
- * treatment — new roles need no code change (the generator iterates ROLE_IDS
- * and reads ROLE_DEFS[role].color, both SSOT).
+ * Roles drawn with a scrub cap instead of hair — sourced from the SSOT set in
+ * data/roles.ts (co-located with the colour-spread guard so the silhouette set
+ * and the hue-separation invariant never drift). Any role absent gets the
+ * generic hair treatment — new roles need no code change here.
  */
-const SCRUB_CAP_ROLES: ReadonlySet<RoleId> = new Set(['nurse', 'respTherapist', 'surgeon']);
+const SCRUB_CAP_SET: ReadonlySet<RoleId> = new Set(SCRUB_CAP_ROLES);
 
 const GOWN_COLOR = 0xdfe8f5;
 const GOWN_TRIM = 0x9fb0c5;
@@ -110,7 +110,7 @@ function drawCharacter(
   const { bob, arm, liftL, liftR } = PHASES[frame]!;
   const isPatient = kind === 'patient';
   const outfit = isPatient ? GOWN_COLOR : ROLE_DEFS[kind as RoleId].color;
-  const cap = !isPatient && SCRUB_CAP_ROLES.has(kind as RoleId);
+  const cap = !isPatient && SCRUB_CAP_SET.has(kind as RoleId);
   const isDoctor = kind === 'doctor';
   const topColor = isPatient ? GOWN_COLOR : isDoctor ? COAT_WHITE : outfit;
   const sleeve = isDoctor ? COAT_WHITE : topColor;

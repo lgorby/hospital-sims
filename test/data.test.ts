@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE } from '../src/sim/data/balance';
 import { CONDITION_DEFS, CONDITION_IDS } from '../src/sim/data/conditions';
-import { ROLE_DEFS, ROLE_IDS } from '../src/sim/data/roles';
+import { ROLE_DEFS, ROLE_IDS, SCRUB_CAP_ROLES } from '../src/sim/data/roles';
 import {
   PROP_STYLE,
   RETIRED_ROOMS,
@@ -104,6 +104,48 @@ describe('SSOT data integrity', () => {
         usedRoles.has(role) || standingPostSomewhere || jobQueueRoles.has(role),
         `${role}: earns no condition step, no standing post, and no job-queue duty`,
       ).toBe(true);
+    }
+  });
+
+  it('scrub-cap clinical roles are hue-separated (art-review colour-spread)', () => {
+    // nurse, respTherapist and surgeon share the scrub-cap silhouette
+    // (SCRUB_CAP_ROLES in render/sprites/characters.ts), so at iso scale they
+    // can only be told apart by hue. They once clustered in one green band
+    // (RT + surgeon were 1° apart, distinguishable only by the surgeon's mask);
+    // this guards the spread. A future edit that slides one back into the
+    // cluster fails here. 25° is comfortably below the shipped min gap (~39°)
+    // and comfortably above the old collision (1°).
+    const MIN_HUE_GAP_DEGREES = 25;
+    // Derived from the SSOT set, NOT hardcoded — so a role promoted to a scrub
+    // cap in data/roles.ts is automatically covered by this guard (the drift
+    // the review flagged: the renderer and the test must not disagree on which
+    // roles share the silhouette).
+    const scrubCapRoles = SCRUB_CAP_ROLES;
+    const hueOf = (hex: number): number => {
+      const r = ((hex >> 16) & 0xff) / 255;
+      const g = ((hex >> 8) & 0xff) / 255;
+      const b = (hex & 0xff) / 255;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const d = max - min;
+      if (d === 0) return 0; // achromatic — no meaningful hue
+      let h: number;
+      if (max === r) h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
+      return h < 0 ? h + 360 : h;
+    };
+    for (let i = 0; i < scrubCapRoles.length; i++) {
+      for (let j = i + 1; j < scrubCapRoles.length; j++) {
+        const a = scrubCapRoles[i]!;
+        const b = scrubCapRoles[j]!;
+        const dh = Math.abs(hueOf(ROLE_DEFS[a].color) - hueOf(ROLE_DEFS[b].color));
+        const gap = Math.min(dh, 360 - dh);
+        expect(gap, `${a} vs ${b} hue gap ${gap.toFixed(1)}° too close`).toBeGreaterThanOrEqual(
+          MIN_HUE_GAP_DEGREES,
+        );
+      }
     }
   });
 

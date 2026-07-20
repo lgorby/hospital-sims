@@ -186,6 +186,15 @@ render-only, no save bump; the NEEDS-ATTENTION broken row now narrates the repai
 (no-tech / waiting / {tech} en route / repairing). LIVE — see CHANGELOG
 *(maint narration)*. Don't rebuild it.)*
 
+*(DONE LOCAL 2026-07-20, AWAITING OWNER PUSH: **staff role-colour spread** —
+render-only, no save bump. The three scrub-cap roles (nurse/respTherapist/surgeon)
+used to cluster in one green hue band (RT vs surgeon were 1° apart, telling apart
+only by the surgeon's mask). Now spread across the green→teal arc: RT lime 86°,
+surgeon mid-green 125°, nurse teal 173° (≥39° apart). `SCRUB_CAP_ROLES` is now an
+SSOT export in `data/roles.ts` (renderer + guard both import it); regression test
+`data.test.ts` "scrub-cap clinical roles are hue-separated". Reviewed (SHIP-able,
+drift finding folded). Committed local, NOT pushed.)*
+
 1. **NURSE TECHS — a capacity lever the owner asked for** (meatier; distinct from EVS: a
    tech attends a PATIENT, EVS a TILE). Patient load 6–9. Design prize: "do I need a nurse
    or a tech?" Pairs with the OBSERVATION v4 rewrite. Scope in the backlog ("Nurse techs").

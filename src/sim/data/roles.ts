@@ -9,15 +9,23 @@ export const ROLE_DEFS = {
     color: 0x1d3557,
     standingPost: false,
   },
+  // COLOUR-SPREAD (art-review note): the SCRUB_CAP_ROLES trio (nurse,
+  // respTherapist, surgeon — defined below) all wear the scrub-cap silhouette,
+  // so at iso scale they read only by hue. They USED to cluster in one green
+  // band (nurse teal 173°, RT + surgeon BOTH ~152–153°, telling apart only by
+  // the surgeon's mask). Now spread across the green→teal arc — RT lime 86°,
+  // surgeon mid-green 125°, nurse teal 173° (pairwise ≥ ~39° apart). Guarded by
+  // data.test.ts "scrub-cap clinical roles are hue-separated". Nurse is the
+  // anchor (most-seen role, teal = nurse is established); these two moved.
   respTherapist: {
     label: 'Respiratory Therapist',
     salaryPerDay: 200,
-    color: 0x52b788,
+    color: 0x7fb539,
     standingPost: false,
   },
   // Expansion 1 (GDD §12): the cheap imaging on-ramp and the OR's dual-staff lead.
   sonographer: { label: 'Sonographer', salaryPerDay: 180, color: 0x76c7e0, standingPost: false },
-  surgeon: { label: 'Surgeon', salaryPerDay: 500, color: 0x2d6a4f, standingPost: false },
+  surgeon: { label: 'Surgeon', salaryPerDay: 500, color: 0x2d7633, standingPost: false },
   greeter: { label: 'Volunteer Greeter', salaryPerDay: 50, color: 0xe9c46a, standingPost: true },
   // Amenities Stage 2 (AMENITIES_PLAN §4.4): the cleaning crew. Brown/tan —
   // deliberately far from the teal/green cluster (art-review color-spread
@@ -51,3 +59,18 @@ export const ROLE_DEFS = {
 
 export type RoleId = keyof typeof ROLE_DEFS;
 export const ROLE_IDS = Object.keys(ROLE_DEFS) as RoleId[];
+
+/**
+ * Roles whose sprite wears a scrub cap instead of hair (render silhouette,
+ * render/sprites/characters.ts). SSOT because two facts depend on it: the
+ * renderer draws the cap, AND — since a shared silhouette leaves colour as the
+ * only iso-scale differentiator — these must stay hue-separated (guarded by
+ * data.test.ts "scrub-cap clinical roles are hue-separated"). Co-located with
+ * the colours above so the two never drift: add a role here and both the cap
+ * and the colour-spread guard pick it up automatically.
+ */
+export const SCRUB_CAP_ROLES = [
+  'nurse',
+  'respTherapist',
+  'surgeon',
+] as const satisfies readonly RoleId[];
