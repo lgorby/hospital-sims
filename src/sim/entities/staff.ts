@@ -52,10 +52,17 @@ export interface Staff {
   /**
    * SHIFTS Stage-1: which shift this staffer works. `null` = no shift, always on
    * duty (today's behaviour and the default) — the availability gate is inert
-   * until this is set. NOT serialized yet (the probe assigns it; the shipped
-   * feature adds it to SavedStaff at SAVE_VERSION 13).
+   * until this is set. Serialized at SAVE_VERSION 13.
    */
   shift: ShiftId | null;
+  /**
+   * SHIFTS Stage-1: is this staffer on the map right now? Off-shift staff walk
+   * home and go `onFloor = false` — excluded from tile-claims/render/picking but
+   * KEPT in world.staff for payroll. SAVED (not derivable: a staffer mid-walk-
+   * home is on-floor at save but would derive off-floor — the M1 determinism
+   * hazard). Defaults true.
+   */
+  onFloor: boolean;
 
   // Walker fields (movement system)
   at: GridPoint;

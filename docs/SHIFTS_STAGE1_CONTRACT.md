@@ -231,13 +231,59 @@ AMA walkouts (−8 rep each) tank it, after which it survives at a grim low-rep 
 This is a PRE-EXISTING early-game fragility (the understaffed starter), independent
 of shifts — an onboarding/tuning question for a later pass, not this contract.
 
-### Remaining before implementation
-- **Owner: pick the wage factor** (recommend 0.6).
-- **Measure the v12→v13 migration** on a healthy live save (parity vs mint-night vs
-  opt-in — the deferred fork) before choosing.
-- **Adversarially review the probe** (the gate-only caveat + the numbers), then write
-  the mechanical implementation (save `onFloor`, per-tick reconciliation,
-  walk-home, night signal) with these numbers.
+### PROBE REVIEW (adversarial) — folded, and the migration measured
+The probe was adversarially reviewed. **Verdict: the MODEL is sound to implement;
+the day-only SAFETY framing is on probation until re-measured post-implementation.**
+- **Per-shift wage (0.6×) vs 6a: CONFIRMED mechanically exact** (the −$142→+$70 gap
+  is precisely the $212 payroll delta; revenue/discharges byte-identical; rep-
+  independent). ADOPT. Night-ROI **sign** robust; magnitude is an unpaired 5-seed
+  estimate (24/7 adds staff → different rng stream) — cite as approximate.
+- **The 0.73 crossover:** day-only net ≈ `388 − 530·f`, so day-only is positive for
+  any wage factor **< ~0.73**. 0.6 is a comfortable point below the cliff (day-only
+  ≈ +$70; 0.52 → +$112; 0.65 → +$44). Owner picked **0.6**.
+- **Day-only is measured at the REPUTATION FLOOR** (0.5× arrivals; the 1-nurse
+  starter crashes rep by day 2–3) — `+$70` is "survives at the grim floor," NOT a
+  healthy start. Do not present day-only as a safe default.
+- **MAJOR — the stranded-at-boundary harm is UNDER-counted.** `nightDeaths`/`nightAMA`
+  are deaths during night clock-hours (an arrivals-forgone proxy), and the gate-only
+  probe omits gather-cancel + walk-home, so real day-only night deaths are HIGHER.
+  **The §7a falsification metric is not yet met — RE-RUN the probe AFTER the
+  mechanics exist, tagging patients by arrival-shift, and confirm day-only night
+  harm is within a tolerable bound before freezing "day-only is acceptable
+  pressure."** (The payroll-model + night-ROI conclusions survive the re-measure —
+  they are cash/rep-independent.)
+- Mature day-only "+$73" rests on one seed (median −$30, 3/5 negative) — directional
+  only, not "mature day-only pays".
+
+### Migration MEASURED (the deferred fork) → mint a night roster
+On a HEALTHY mature save (REFERENCE, 5 days), when shifts turn on:
+| migration | profit/d | payroll | end rep |
+|---|---|---|---|
+| none (unchanged) | +$4,532 | $3,060 | 523 |
+| parity (split, full wage) | +$1,559 | $3,060 | 280 (coverage halved) |
+| day-only + 0.6× | +$1,194 | $1,836 | **39 (rep crash)** |
+| **mint night roster (0.6×)** | **+$4,166** | $3,672 | **493 (kept healthy)** |
+**MINT A NIGHT ROSTER at the per-shift wage** — the only option that keeps a live
+player whole (coverage + rep preserved, still strongly profitable, 1.2× payroll).
+Parity halves coverage; day-only-discount crashes rep. Opt-in (zero disruption) is
+the conservative fallback.
+
+### Locked decisions (owner-ratified) → the implementation spec
+- **Wage factor 0.6×** (a shifted staffer's salary = `round(base × 0.6)`), applied at
+  the HIRE path (hireStaff / setupNewGame), NOT addStaffMember (or every test's
+  always-on roster breaks). Below the 0.73 crossover.
+- **Clock opens at 06:00** (day-shift start) — `startMinuteOfDay` offset in
+  `clock.ts`; re-base `dayOfTick`/`display`/`?seed` boot; the 24h `closeDay`
+  rollover stays on the raw tick boundary (phase-invariant).
+- **Migration: mint a night roster** at the per-shift wage on v<13 load.
+- **SAVE_VERSION 12 → 13**: `shift` AND `onFloor` become SavedStaff fields (the
+  mechanical review's M1 — `onFloor` cannot be derived without breaking the
+  save→load determinism invariant). Thread `saveVersion` into `readStaff`.
+- **Mechanics:** per-tick reconciliation (M2), walk-home, off-floor exclusion from
+  isTileClaimed/renderer/pickAt, gather-cancel at reconciliation, rolePool excludes
+  off-shift. Night-unstaffed legible signal (render-side).
+- **Then RE-RUN the shift probe** with the real mechanics to validate day-only harm,
+  and re-tune the harness/economy for the shift wage model.
 
 ### The shift model (unchanged from the draft, restated)
 Two fixed shifts, **day 06:00–18:30** and **night 18:00–06:30** (12.5 game-h each,

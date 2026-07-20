@@ -1050,7 +1050,8 @@ export class World implements PathGrid {
       salaryPerDay,
       duty: { kind: 'idle' },
       firing: false,
-      shift: null, // SHIFTS Stage-1: no shift = always on (probe assigns it)
+      shift: null, // SHIFTS Stage-1: no shift = always on; assigned at the hire path
+      onFloor: true,
       at: { ...BALANCE.map.entrance },
       next: null,
       path: [],

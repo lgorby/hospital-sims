@@ -1,14 +1,18 @@
 import { HOURS_PER_DAY, TICKS_PER_GAME_HOUR } from '../clock';
-import { roomHvacPerHour, roomUsagePerHour } from '../formulas';
+import { roomHvacPerHour, roomUsagePerHour, shiftWageMultiplier } from '../formulas';
 import type { World } from '../world';
 
 /** Hourly operating costs: payroll (GDD §6) + utilities (ECONOMY Stage-1). */
 export function updateEconomy(world: World): void {
   if (world.clock.tick % TICKS_PER_GAME_HOUR !== 0) return;
 
-  // Payroll: hourly pro-rata of the WHOLE roster (charged on-shift or not).
+  // Payroll: hourly pro-rata of the WHOLE roster (charged on-shift or not — you
+  // pay for coverage you hire). SHIFTS Stage-1: a SHIFTED staffer is paid a
+  // per-shift wage (wageFactor), so 24/7 = 2× day-only; null-shift = full wage.
   let payrollPerDay = 0;
-  for (const member of world.staff.values()) payrollPerDay += member.salaryPerDay;
+  for (const member of world.staff.values()) {
+    payrollPerDay += member.salaryPerDay * shiftWageMultiplier(member.shift);
+  }
   const payrollHour = payrollPerDay / HOURS_PER_DAY;
   if (payrollHour > 0) {
     world.cash -= payrollHour;

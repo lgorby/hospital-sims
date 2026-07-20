@@ -959,6 +959,12 @@ describe('v11 → v12 migration (ECONOMY Stage-1: utilities/repairs tally keys)'
       expect(day.utilities).toBe(0);
       expect(day.repairs).toBe(0);
     }
+    // SHIFTS Stage-1 (v13): pre-v13 staff default to no shift (always on) + on-floor.
+    expect(result.world.staff.size).toBeGreaterThan(0); // premise
+    for (const s of result.world.staff.values()) {
+      expect(s.shift).toBeNull();
+      expect(s.onFloor).toBe(true);
+    }
   });
 });
 

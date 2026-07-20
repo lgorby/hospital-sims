@@ -7,6 +7,7 @@ import { CONDITION_IDS, type ConditionId } from './data/conditions';
 import { emptyCashTotals, type CashTallyKey, type CashTotals } from './data/finance';
 import type { PersonName } from './data/names';
 import { ROLE_IDS, type RoleId } from './data/roles';
+import { SHIFT_IDS, type ShiftId } from './data/shifts';
 import {
   PROP_STYLE,
   ROOM_DEFS,
@@ -28,7 +29,7 @@ import { World, type Mess, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 12;
+export const SAVE_VERSION = 13;
 
 /**
  * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
@@ -144,6 +145,16 @@ export const SAVE_VERSION = 12;
  * re-baseline EXISTING saves on load (owner-ratified all-saves) — a healthy v11
  * hospital may load tighter under the collapsed margin.
  *
+ * v12 → v13 (SHIFTS Stage-1, SHIFTS_STAGE1_CONTRACT): `Staff` gains `shift`
+ * ('day'|'night'|null) and `onFloor` (bool). A v<13 save defaults `shift = null`
+ * (always on — today's behaviour) and `onFloor = true` via the threaded
+ * `saveVersion` in `readStaff` — WITHOUT the version gate `asOneOf(o.shift, …)`
+ * would throw on the absent field. `onFloor` is SAVED (not derived): a staffer
+ * mid-walk-home is on-floor at save but would derive off-floor, breaking the
+ * save→load determinism invariant (INVARIANTS.md:49). The mint-night migration
+ * (loadWorld) that converts a v<13 roster to shifts is a deliberate SEPARATE
+ * transformation; this field default just keeps the old roster valid.
+ *
  * Anything below 1 or above SAVE_VERSION is refused.
  */
 export function isLoadableVersion(version: number): boolean {
@@ -252,6 +263,10 @@ export interface SavedStaff {
   salaryPerDay: number;
   duty: SavedStaffDuty;
   firing: boolean;
+  /** SHIFTS Stage-1 (v13): null = always on. */
+  shift: ShiftId | null;
+  /** SHIFTS Stage-1 (v13): off-floor staff are home (not on the map). */
+  onFloor: boolean;
   at: SavedPoint;
   next: SavedPoint | null;
   path: SavedPoint[];
@@ -849,6 +864,8 @@ function writeStaff(s: Staff): SavedStaff {
     salaryPerDay: s.salaryPerDay,
     duty: writeStaffDuty(s.duty),
     firing: s.firing,
+    shift: s.shift,
+    onFloor: s.onFloor,
     at: writePoint(s.at),
     next: writePointOrNull(s.next),
     path: s.path.map(writePoint),
@@ -857,7 +874,11 @@ function writeStaff(s: Staff): SavedStaff {
   };
 }
 
-function readStaff(value: unknown, label: string): Staff {
+function readShiftOrNull(value: unknown, label: string): ShiftId | null {
+  return value === null || value === undefined ? null : asOneOf(value, SHIFT_IDS, label);
+}
+
+function readStaff(value: unknown, label: string, saveVersion: number): Staff {
   const o = asRecord(value, label);
   return {
     id: asInt(o.id, `${label}.id`),
@@ -868,9 +889,11 @@ function readStaff(value: unknown, label: string): Staff {
     salaryPerDay: asNumber(o.salaryPerDay, `${label}.salaryPerDay`),
     duty: readStaffDuty(o.duty, `${label}.duty`),
     firing: asBool(o.firing, `${label}.firing`),
-    // SHIFTS Stage-1: `shift` is not serialized yet (the availability gate is
-    // inert at null). The shipped feature adds it to SavedStaff at SAVE_VERSION 13.
-    shift: null,
+    // SHIFTS Stage-1 (v13): pre-v13 staff have no shift (always on) and are on
+    // the floor. The mint-night migration (loadWorld) converts a v<13 roster to
+    // shifts deliberately; the read-time default just keeps old staff valid.
+    shift: saveVersion < 13 ? null : readShiftOrNull(o.shift, `${label}.shift`),
+    onFloor: saveVersion < 13 ? true : asBool(o.onFloor, `${label}.onFloor`),
     at: readPoint(o.at, `${label}.at`),
     next: readPointOrNull(o.next, `${label}.next`),
     path: readPath(o.path, `${label}.path`),
@@ -1330,7 +1353,7 @@ function readRestorePayload(root: Record<string, unknown>, saveVersion: number):
     patients: asArray(root.patients, 'patients').map((p, i) =>
       readPatient(p, `patients[${i}]`, saveVersion),
     ),
-    staff: asArray(root.staff, 'staff').map((s, i) => readStaff(s, `staff[${i}]`)),
+    staff: asArray(root.staff, 'staff').map((s, i) => readStaff(s, `staff[${i}]`, saveVersion)),
     candidates: asArray(root.candidates, 'candidates').map((c, i) =>
       readCandidate(c, `candidates[${i}]`),
     ),

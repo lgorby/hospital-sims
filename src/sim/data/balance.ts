@@ -70,6 +70,14 @@ export const BALANCE = {
   shifts: {
     day: { startMinute: 360, endMinute: 1110 }, // 06:00 → 18:30
     night: { startMinute: 1080, endMinute: 390 }, // 18:00 → 06:30 (wraps)
+    /**
+     * A shifted staffer's wage as a fraction of a full 24/7 salary (measured:
+     * shiftProbe). 0.6 keeps day-only survivable (below the ~0.73 viability
+     * crossover) AND makes 24/7 = 2× day-only (the owner's tension). Applied at
+     * the HIRE path only, so test-created (always-on, null-shift) staff are
+     * unaffected.
+     */
+    wageFactor: 0.6,
   },
   arrivals: {
     /** M4 balance pass: 3.0 overwhelmed a full 6-room build (~50 arrivals vs

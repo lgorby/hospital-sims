@@ -221,6 +221,12 @@ export function onShift(shift: ShiftId | null, minuteOfDay: number): boolean {
     : minuteOfDay >= w.startMinute || minuteOfDay < w.endMinute;
 }
 
+/** SHIFTS Stage-1: a shifted staffer is paid the per-shift wage (wageFactor); a
+ *  null-shift (always-on) staffer is paid the full wage. */
+export function shiftWageMultiplier(shift: ShiftId | null): number {
+  return shift === null ? 1 : BALANCE.shifts.wageFactor;
+}
+
 /**
  * THE room price (CAPACITY_PLAN §4.1): base cost + per-tile rate on every
  * tile beyond the minimum footprint. One formula prices a NEW build and (in
