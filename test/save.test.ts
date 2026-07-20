@@ -6,7 +6,7 @@ import { BALANCE } from '../src/sim/data/balance';
 import { ROLE_IDS } from '../src/sim/data/roles';
 import { emptyCashTotals } from '../src/sim/data/finance';
 import { emptyDayTally } from '../src/sim/dailyStats';
-import { averageBillPerPatient, treatmentDurationTicks } from '../src/sim/formulas';
+import { averageBillPerPatient, shiftWageMultiplier, treatmentDurationTicks } from '../src/sim/formulas';
 import { setupNewGame } from '../src/sim/newGame';
 import {
   SAVE_VERSION,
@@ -959,12 +959,92 @@ describe('v11 → v12 migration (ECONOMY Stage-1: utilities/repairs tally keys)'
       expect(day.utilities).toBe(0);
       expect(day.repairs).toBe(0);
     }
-    // SHIFTS Stage-1 (v13): pre-v13 staff default to no shift (always on) + on-floor.
-    expect(result.world.staff.size).toBeGreaterThan(0); // premise
-    for (const s of result.world.staff.values()) {
-      expect(s.shift).toBeNull();
-      expect(s.onFloor).toBe(true);
+    // SHIFTS Stage-1 (v13): a pre-v13 save MINTS A NIGHT ROSTER on load (see the
+    // dedicated migration test below) — the read-time null default is transformed
+    // to day originals + night twins, so a loaded save keeps 24/7 coverage.
+    const loadedShifts = [...result.world.staff.values()].map((s) => s.shift);
+    expect(loadedShifts).toContain('day');
+    expect(loadedShifts).toContain('night');
+    for (const s of result.world.staff.values()) expect(s.onFloor).toBe(true);
+  });
+});
+
+describe('v12 → v13 migration (SHIFTS Stage-1: mint a night roster)', () => {
+  /** Build a world, save it, and re-stamp it to look like a pre-shift v12 save. */
+  function v12Save(seed = 5): Record<string, unknown> {
+    const world = new World(new EventBus(), seed);
+    setupNewGame(world);
+    world.addStaffMember('nurse', 3, 200);
+    world.addStaffMember('doctor', 4, 300);
+    // A v12 world is all always-on (null shift) — readStaff ignores the shift
+    // field for saveVersion < 13, so re-stamping the version is enough.
+    for (const s of world.staff.values()) s.shift = null;
+    const save = JSON.parse(saveToString(world)) as Record<string, unknown>;
+    save.saveVersion = 12;
+    return save;
+  }
+
+  it('mints a night twin per staffer: day originals + night twins, all on-floor', () => {
+    const save = v12Save();
+    const baseCount = (save.staff as unknown[]).length;
+    const basePayroll = (save.staff as { salaryPerDay: number }[]).reduce(
+      (a, s) => a + s.salaryPerDay,
+      0,
+    );
+
+    const result = loadOf(save);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const staff = [...result.world.staff.values()];
+    expect(staff.length).toBe(baseCount * 2); // roster doubled
+    const day = staff.filter((s) => s.shift === 'day');
+    const night = staff.filter((s) => s.shift === 'night');
+    expect(day.length).toBe(baseCount);
+    expect(night.length).toBe(baseCount);
+    for (const s of staff) expect(s.onFloor).toBe(true);
+    // Each night twin mirrors a day staffer's role (coverage preserved per role).
+    for (const role of new Set(day.map((s) => s.role))) {
+      expect(night.filter((s) => s.role === role).length).toBe(
+        day.filter((s) => s.role === role).length,
+      );
     }
+    // Charged payroll rises to ~1.2× baseline: two shifts × the 0.6 wage.
+    const charged = staff.reduce((a, s) => a + s.salaryPerDay * shiftWageMultiplier(s.shift), 0);
+    expect(charged).toBeCloseTo(1.2 * basePayroll, 6);
+  });
+
+  it('surfaces a one-time load notice about the night crew', () => {
+    const result = loadOf(v12Save());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.notice).toBeDefined();
+    expect(result.notice).toMatch(/night crew|day-only/i);
+  });
+
+  it('is deterministic across two loads (ids, roles, shifts identical)', () => {
+    const save = v12Save();
+    const a = loadOf(save);
+    const b = loadOf(save);
+    expect(a.ok && b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+    const key = (w: World) =>
+      [...w.staff.values()]
+        .map((s) => `${s.id}:${s.role}:${s.shift}:${s.name.full}`)
+        .sort()
+        .join('|');
+    expect(key(a.world)).toBe(key(b.world));
+  });
+
+  it('a current v13 save does NOT mint twins (round-trips its roster unchanged)', () => {
+    const world = new World(new EventBus(), 5);
+    setupNewGame(world);
+    world.addStaffMember('nurse', 3, 200).shift = 'night';
+    const before = world.staff.size;
+    const result = loadOf(JSON.parse(saveToString(world)));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.world.staff.size).toBe(before); // no migration at v13
+    expect(result.notice).toBeUndefined();
   });
 });
 

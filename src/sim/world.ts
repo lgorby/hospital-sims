@@ -1107,6 +1107,41 @@ export class World implements PathGrid {
     this.events.emit('staffUpdated', { staffId: member.id });
   }
 
+  /**
+   * SHIFTS Stage-1 v<13 migration (SHIFTS_IMPL_PLAN §E): a pre-shift save loaded
+   * as all always-on staff would run 24/7 for free. Convert to the owner-locked
+   * "mint a night roster" — every existing staffer works DAY and a NIGHT twin is
+   * minted (same role/skill/salary), so coverage AND reputation are preserved and
+   * payroll rises to ~1.2× (two shifts × the 0.6 wage). Deterministic: id-order
+   * iteration, no rng draw, no staffHired emit (it runs inside loadWorld, before
+   * any listener is wired). Public for save.ts; a strict no-op if the roster is
+   * empty.
+   */
+  migrateMintNightRoster(): void {
+    const originals = [...this.staff.values()].sort((a, b) => a.id - b.id);
+    for (const original of originals) {
+      original.shift = 'day';
+      const twin: Staff = {
+        id: this.takeId(),
+        name: { ...original.name },
+        age: original.age,
+        role: original.role,
+        skill: original.skill,
+        salaryPerDay: original.salaryPerDay,
+        duty: { kind: 'idle' },
+        firing: false,
+        shift: 'night',
+        onFloor: true,
+        at: { ...BALANCE.map.entrance },
+        next: null,
+        path: [],
+        target: null,
+        progress: 0,
+      };
+      this.staff.set(twin.id, twin);
+    }
+  }
+
   private fireStaff(staffId: number): void {
     const member = this.staff.get(staffId);
     if (!member) return;

@@ -77,6 +77,11 @@ async function bootstrap(boot: Boot): Promise<void> {
 
   // World construction is decided here; everything below is shared wiring.
   let world: World;
+  // A one-time load-migration notice (SHIFTS Stage-1), surfaced via `hint` once
+  // the Toasts panel is mounted — like the retired-room notice below, and for the
+  // same reason (UI-side, per-session; NOT world.hintOnce, which would mutate the
+  // save payload and break byte-identity).
+  let loadNotice: string | undefined;
   if (boot.kind === 'load') {
     const result = loadWorld(events, boot.raw);
     if (!result.ok) {
@@ -87,6 +92,7 @@ async function bootstrap(boot: Boot): Promise<void> {
       return;
     }
     world = result.world;
+    loadNotice = result.notice;
   } else if (boot.kind === 'challenge') {
     // Challenge mode: a fresh deterministic run whose World rejects every
     // debug* command (plan §7). Seed lives inside the scenario.
@@ -127,6 +133,10 @@ async function bootstrap(boot: Boot): Promise<void> {
     renderer.pulseTile(col, row);
   };
   new Toasts(events, world, jump).mount(uiRoot);
+  // SHIFTS Stage-1: the v<13 mint-night migration is a big silent change (roster
+  // doubles, payroll ~1.2×) — announce it once so a loaded save's new night crew
+  // reads as a DECISION with an escape hatch, not a mystery.
+  if (loadNotice) events.emit('hint', { message: loadNotice });
   // DEPARTMENTS_PLAN §3.6 defect 3(a): a retired room must ANNOUNCE itself.
   // A player who loads a save whose Respiratory Therapy room silently stops
   // receiving patients concludes the game is broken — and only discovers the

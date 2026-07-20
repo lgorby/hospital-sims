@@ -418,7 +418,9 @@ export interface SaveData {
   nextEntityId: number;
 }
 
-export type LoadResult = { ok: true; world: World } | { ok: false; reason: string };
+export type LoadResult =
+  | { ok: true; world: World; notice?: string }
+  | { ok: false; reason: string };
 
 // ------------------------------------------------------- validation primitives
 
@@ -1924,6 +1926,20 @@ export function loadWorld(events: EventBus, raw: string): LoadResult {
     }
     const world = new World(events, payload.seed);
     restoreInto(world, payload);
+    // SHIFTS Stage-1 (SAVE_VERSION 13): a pre-shift save has all-null (always-on)
+    // staff — mint a night roster so it keeps 24/7 coverage under the new shift
+    // model (owner-locked; the only migration measured to keep a live save whole).
+    // Runs HERE, not in restoreInto: `version` is in scope, and restorePrivateState
+    // has already restored nextEntityId so the twins' ids can't collide.
+    if (version < 13) {
+      world.migrateMintNightRoster();
+      return {
+        ok: true,
+        world,
+        notice:
+          'Shifts added — a night crew was hired so the hospital runs 24/7; payroll rose ~20%. Reassign or dismiss staff to run day-only.',
+      };
+    }
     return { ok: true, world };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
