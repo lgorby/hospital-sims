@@ -19,6 +19,7 @@ import { PATIENT_TILES_PER_TICK, STAFF_TILES_PER_TICK } from '../sim/systems/mov
 import { samePoint, type GridPoint, type Rect } from '../sim/types';
 import type { Walker, World } from '../sim/world';
 import { expandPrice, priceOf } from '../sim/formulas';
+import { ghostValidityKey } from './ghostKey';
 import { HintLine } from './hintLine';
 import { ThoughtBubbles } from './thoughtBubbles';
 import { depthKey, TILE_H, TILE_W, toScreen, toTile, type TilePoint } from './iso';
@@ -1133,17 +1134,20 @@ export class WorldRenderer {
     const expand = this.expand;
     const amenity = this.amenityMode;
     const rect = build?.rect ?? expand?.rect ?? null;
-    // Amenity ghost inputs: the armed kind, the hovered tile, and the sim tick
-    // (validity reads live actors/cash — ≤10 revalidations/s, same as rooms).
-    const key = amenity
-      ? `amenity:${amenity}:${this.world.clock.tick}:` +
-        `${this.hoveredTile ? `${this.hoveredTile.col},${this.hoveredTile.row}` : 'off'}`
-      : !build && !expand
-        ? ''
-        : `${build ? `${build.type}:${build.phase}` : `expand:${expand!.roomId}`}:` +
-          `${this.world.clock.tick}:` +
-          `${rect ? `${rect.col},${rect.row},${rect.cols},${rect.rows}` : 'none'}:` +
-          `${build?.phase === 'door' && this.hoveredTile ? `${this.hoveredTile.col},${this.hoveredTile.row}` : '-'}`;
+    // The revalidation key must capture cash, not just the tick: the validators
+    // fail on affordability, and commands (build/sell/place) spend WHILE PAUSED
+    // with the tick frozen — so tick alone left a stale-green ghost after a
+    // paused spend. Pure builder in ghostKey.ts (test/ghostKey.test.ts).
+    const key = ghostValidityKey({
+      tick: this.world.clock.tick,
+      cash: this.world.cash,
+      amenity,
+      buildType: build?.type ?? null,
+      buildPhase: build?.phase ?? null,
+      expandRoomId: expand?.roomId ?? null,
+      rect,
+      hoveredTile: this.hoveredTile,
+    });
     if (key === this.lastGhostKey) return;
     this.lastGhostKey = key;
 

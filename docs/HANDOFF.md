@@ -207,6 +207,21 @@ test would break the renderer-free suite — a conscious call, same as `messDeca
 identical unguarded invariant. `hazardSteam` (piping) deliberately left as-is: it
 already has a filled water-film area, so it never had the all-thin-strokes problem.)*
 
+*(DONE LOCAL 2026-07-20, AWAITING OWNER PUSH: **build/expand/amenity ghost keys
+fold in cash** — render-only, no save bump. `drawGhost`'s revalidation key used
+`clock.tick` as its cash-freshness proxy, but commands spend WHILE PAUSED (tick
+frozen), so the ghost color could go stale. Key extracted to a pure Pixi-free
+`render/ghostKey.ts` (`ghostValidityKey`) that now includes `cash`; guarded by
+`test/ghostKey.test.ts` (8 tests, incl. an exact-format lock). Reviewed CLEAN, 2
+NITs folded (null-explicit guards; format assertion). **HONEST severity note:** the
+stale state is near-UNREACHABLE in real play — any UI click fires `pointerleave`
+which resets the ghost, and cash only changes via commands that either exit build
+mode or leave the canvas. This is DEFENSIVE correctness (the tick-as-cash-proxy was
+simply wrong), not a visible bug; the live before/after couldn't isolate it for that
+reason. The same latent staleness applies to actors/geometry too — only cash was
+folded in (matching the NIT's framing); full coverage would want a world-revision
+counter, deferred as scope creep for an unreachable case.)*
+
 1. **NURSE TECHS — a capacity lever the owner asked for** (meatier; distinct from EVS: a
    tech attends a PATIENT, EVS a TILE). Patient load 6–9. Design prize: "do I need a nurse
    or a tech?" Pairs with the OBSERVATION v4 rewrite. Scope in the backlog ("Nurse techs").
@@ -784,8 +799,7 @@ remain valid for a Stage 2a v2 — the code map was not what stopped the stage.
 - **Then, quick passes:** (1) capacity/contention hints
   ("expand your ER or build another" — the panel's `roomChanged`
   invalidation is pre-wired). Banked NITs (fix opportunistically): the
-  trap-BFS doesn't re-check existing ATRIUM footprints; room/expand ghost
-  validity keys omit cash while paused; patients stand in messes (V1
+  trap-BFS doesn't re-check existing ATRIUM footprints; patients stand in messes (V1
   collision, accepted); wage-accrual float dust (HUD rounds it); Stage-3
   live-drive: restroom "In use" line lists "(on the way)" walkers under
   an "In use" header, and REJECTED build/expand/sell modes stay armed
