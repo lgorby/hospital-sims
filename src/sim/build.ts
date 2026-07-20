@@ -200,6 +200,7 @@ function reachabilityWithWalls(
   // GDD §5): everyone's standing tile must stay entrance-reachable —
   // patients AND staff (M2 review #2).
   for (const person of [...world.patients.values(), ...world.staff.values()]) {
+    if ('onFloor' in person && !person.onFloor) continue; // SHIFTS: off-floor = off map
     const standing = person.next ?? person.at;
     if (!visited.has(keyOf(standing))) {
       return fail(`Would trap ${person.name.full}`);
@@ -273,6 +274,7 @@ export function validateRoomExpand(
     if (!t.walkable) return fail('Blocked by an object');
     if (samePoint(tile, entrance)) return fail('Cannot build over the entrance');
     for (const person of [...world.patients.values(), ...world.staff.values()]) {
+      if ('onFloor' in person && !person.onFloor) continue; // SHIFTS: off-floor = off map
       if (samePoint(person.at, tile) || (person.next && samePoint(person.next, tile))) {
         return fail('Someone is standing there');
       }
@@ -348,6 +350,7 @@ export function validateAmenityPlace(world: World, kind: AmenityId, tile: GridPo
   }
   if (samePoint(tile, BALANCE.map.entrance)) return fail('Cannot block the entrance');
   for (const person of [...world.patients.values(), ...world.staff.values()]) {
+    if ('onFloor' in person && !person.onFloor) continue; // SHIFTS: off-floor = off map
     if (
       samePoint(person.at, tile) ||
       (person.next && samePoint(person.next, tile)) ||
@@ -383,6 +386,7 @@ export function validateAmenityPlace(world: World, kind: AmenityId, tile: GridPo
     }
   }
   for (const person of [...world.patients.values(), ...world.staff.values()]) {
+    if ('onFloor' in person && !person.onFloor) continue; // SHIFTS: off-floor = off map
     const standing = person.next ?? person.at;
     if (!visited.has(keyOf(standing))) {
       return fail(`Would trap ${person.name.full}`);
@@ -413,6 +417,7 @@ export function validateRoomSell(world: World, roomId: number): Validation {
   // block the sale (they stay exactly where they are, on plain corridor).
   if (ROOM_DEFS[room.type].kind !== 'open') {
     for (const person of [...world.patients.values(), ...world.staff.values()]) {
+      if ('onFloor' in person && !person.onFloor) continue; // SHIFTS: off-floor = off map
       if (
         rectContains(room.rect, person.at) ||
         (person.next && rectContains(room.rect, person.next))

@@ -72,16 +72,27 @@ export function updateShifts(world: World): void {
     if (!(member.target && samePoint(member.target, entrance))) {
       world.setWalkerTarget(member, entrance);
       // No path to the entrance (e.g. walled in): blink home rather than loiter
-      // on-floor claiming a tile forever.
+      // on-floor claiming a tile forever. Clear the committed step too, so an
+      // off-floor staffer never drifts a tile in updateMovement.
       if (member.target === null) {
         member.onFloor = false;
+        member.next = null;
+        member.path = [];
         world.events.emit('staffUpdated', { staffId: member.id });
       }
     }
   }
 }
 
-/** Coming back on shift: reappear at the entrance, idle and available. */
+/**
+ * Coming back on shift: reappear at the entrance (staff enter through the door),
+ * then REPORT to the area being taken over. During the 30-min changeover overlap
+ * the OUTGOING same-role worker is still on the floor, so the newcomer walks to
+ * her spot to relieve her (owner ask). Standing-post roles (receptionist/greeter)
+ * are re-posted by the dispatcher this SAME tick — that overrides the idle relief
+ * target — so a night receptionist still reports to the reception desk, not the
+ * door. No outgoing counterpart (fallback) → idle at the entrance, dispatcher routes.
+ */
 function respawn(world: World, member: Staff, entrance: { col: number; row: number }): void {
   // nearestFreeStandingTile sees already-respawned staff as occupying tiles (they
   // are on-floor + arrived), so a whole night crew coming on at once places
@@ -94,5 +105,14 @@ function respawn(world: World, member: Staff, entrance: { col: number; row: numb
   member.progress = 0;
   member.onFloor = true;
   member.duty = { kind: 'idle' };
+  // The OUTGOING same-role worker is on the OTHER shift and still on-floor during
+  // the 30-min overlap (she doesn't leave until her window closes) — head to her
+  // spot. Keyed on `shift !==`, not `!onShift`: during the handover she is still
+  // ON her shift, so an off-shift test would find no one and drop the newcomer at
+  // the door.
+  const relief = [...world.staff.values()].find(
+    (s) => s !== member && s.role === member.role && s.onFloor && s.shift !== member.shift,
+  );
+  if (relief) world.setWalkerTarget(member, relief.next ?? relief.at);
   world.events.emit('staffUpdated', { staffId: member.id });
 }

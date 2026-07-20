@@ -11,6 +11,8 @@ import type { Room } from '../src/sim/entities/room';
 import type { ShiftId } from '../src/sim/data/shifts';
 import { onShift } from '../src/sim/formulas';
 import { computeBlockedNeeds } from '../src/sim/needs';
+import { updateShifts } from '../src/sim/systems/shifts';
+import { updateWayfinding } from '../src/sim/systems/wayfinding';
 import { setupNewGame } from '../src/sim/newGame';
 import { World } from '../src/sim/world';
 
@@ -103,6 +105,53 @@ describe('walk-home / off-floor lifecycle', () => {
     world.tick();
     expect(doc.onFloor).toBe(true);
     expect(doc.duty.kind).toBe('idle');
+  });
+
+  it('a gone-home (off-floor) staffer does NOT rescue a lost patient nearby', () => {
+    // Post-impl review MAJOR: off-floor staff cluster on the entrance tile, exactly
+    // where arrivals get lost — without the wayfinding guard a day-only night still
+    // rescues at the door, defeating the coverage pressure.
+    const { world } = setup();
+    const doc = world.addStaffMember('doctor', 3, 100); // null-shift, onFloor true
+    doc.at = { col: 20, row: 20 };
+    doc.next = null;
+    doc.target = null;
+    const p = world.spawnPatient('flu');
+    p.stage = { kind: 'waiting' };
+    p.acuity = 2;
+    p.at = { col: 20, row: 21 }; // adjacent — inside the rescue radius
+    p.next = null;
+
+    // Control: an ON-floor staffer beside her rescues instantly.
+    p.lost = { since: world.clock.tick - 1 };
+    updateWayfinding(world);
+    expect(p.lost).toBeNull();
+
+    // Now the staffer is home (off-floor) — no staff rescue (self-recovery can't
+    // fire this tick), so she stays lost.
+    p.lost = { since: world.clock.tick - 1 };
+    doc.onFloor = false;
+    updateWayfinding(world);
+    expect(p.lost).not.toBeNull();
+  });
+
+  it('a new-shift worker reports toward the OUTGOING worker\'s area, not the door', () => {
+    const { world } = setup();
+    const dayNurse = world.addStaffMember('nurse', 3, 100);
+    dayNurse.shift = 'day';
+    dayNurse.at = { col: 16, row: 16 }; // her interior work area
+    dayNurse.next = null;
+    dayNurse.target = null;
+    const nightNurse = world.addStaffMember('nurse', 3, 100);
+    nightNurse.shift = 'night';
+    nightNurse.onFloor = false; // she's home before her shift
+
+    // The 18:00–18:30 overlap: night is on, day still on. The night nurse comes on
+    // and reports to the day nurse's area (the handover), not the entrance.
+    world.clock.tick = tickForMinute(1085); // ~18:05
+    updateShifts(world);
+    expect(nightNurse.onFloor).toBe(true);
+    expect(nightNurse.target).toEqual({ col: 16, row: 16 });
   });
 
   it('isTileClaimed excludes an off-floor staffer', () => {

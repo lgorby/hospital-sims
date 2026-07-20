@@ -50,6 +50,10 @@ function staffNearby(world: World, patient: Patient): boolean {
   const r = BALANCE.wayfinding.staffRescueRadius;
   const rSq = r * r;
   for (const member of world.staff.values()) {
+    // SHIFTS Stage-1: a gone-home (off-floor) staffer is off the map — she can't
+    // rescue anyone. Off-floor staff cluster on the entrance tile, exactly where
+    // arrivals get lost, so without this a day-only night still rescues at the door.
+    if (!member.onFloor) continue;
     const dc = member.at.col - patient.at.col;
     const dr = member.at.row - patient.at.row;
     if (dc * dc + dr * dr <= rSq) return true;
