@@ -335,12 +335,42 @@ see). **Pre-registered protocol satisfied: spread measured first, then a bound.*
   day-only is mis-managed by construction (under-serving its large day volume too), not
   a viability claim. 24/7 is the mature posture (+$1,311, night ROI +$1,955).
 
-**Still-open MINOR (unchanged): the four migration arms have no probe instrument.** The
-mint-night migration's CORRECTNESS is now pinned by `save.test.ts` "v12 → v13 migration"
-(day originals + night twins, payroll 1.2×, determinism). The *marginal-save* balance
-question (does mint-night sink an already-tight live save?) is a measurement still worth
-adding, but it is a MINOR and the migration is owner-locked + correctness-tested — carried
-forward, not blocking.
+### MARGINAL-SAVE MIGRATION ARM (2026-07-20) — the last MINOR, now MEASURED
+The open question — *does mint-night sink an already-tight live save?* — is answered.
+`shiftProbe.test.ts` gained a migration arm exercising the REAL `migrateMintNightRoster`
+on a v12-style (all-always-on) REFERENCE save, comparing **none** (unchanged, 1× always-on)
+vs **mint** (day+night twins, 1.2× payroll), 5 seeds × 5 days, tracking profit/d and MIN
+cash vs the −$10,000 bankruptcy threshold.
+
+**Key insight — the migration is a pure +20% payroll cost with NO new revenue:** a v12 save
+is ALREADY always-on (24/7 at 1× wage); mint-night keeps the SAME coverage at 1.2× payroll.
+
+| arm | none profit/d | mint profit/d | mint − none | mint MIN cash (5d) |
+|---|---|---|---|---|
+| **HEALTHY** (cash $50k, rep 300) | +$4,760 | **+$3,548** | −$1,212 | +$6,218 (survives) |
+| **MARGINAL over-hired ×2** (cash $8k) | +$415 | **−$657** | −$1,072 | −$6,284 (survives 5d, but LOSING) |
+| **MARGINAL low-rep 60** (cash $8k) | +$2,129 | +$1,254 | −$875 | −$3,007 (survives) |
+
+**Findings:**
+- **A HEALTHY save absorbs it easily** — still +$3,548/d, cash climbing. The locked
+  mint-night decision holds.
+- **A genuinely MARGINAL (over-hired, near-break-even) save is TIPPED into sustained
+  loss** (+$415 → −$657/d) and trends toward bankruptcy — it survives the 5-day window
+  (MIN −$6,284 > −$10k) but would breach over time. This is a REAL risk, mitigated by the
+  two SHIPPED levers: the **one-time load notice** ("payroll rose ~20%… reassign or dismiss
+  staff to run day-only") and the **escape hatch** (fire the night twins → back to 1×). It
+  is also a *pre-existing* marginal condition (over-hiring), not created by the migration.
+- **mint costs MORE than the raw +$612 payroll delta** (−$875…−$1,212/d): the real
+  mechanics' walk-home + respawn are measurably LESS efficient than always-on continuous
+  coverage (small handover/travel loss). So **the old "Migration MEASURED" table below is
+  STALE** — it predicted mint +$4,166 from the pre-mechanics gate-only probe; the real
+  figure is +$3,548. The DECISION is unchanged (healthy stays strongly profitable), but the
+  cost is ~$1,200/d, not ~$366.
+
+**Verdict: the migration is SAFE for healthy saves and acceptable-with-mitigation for
+marginal ones.** MINOR CLOSED. (A stronger mitigation — e.g. migrate day-only instead of
+mint-night for saves already below a margin floor — is possible but was NOT adopted: it
+crashes rep, per the table below, and the owner locked mint-night. Left as a note.)
 
 ### Migration MEASURED (the deferred fork) → mint a night roster
 On a HEALTHY mature save (REFERENCE, 5 days), when shifts turn on:

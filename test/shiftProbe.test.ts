@@ -329,4 +329,90 @@ describeProbe('Shift probe (SHIFTS_STAGE1_CONTRACT §measurement)', () => {
       );
     });
   }, 600_000);
+
+  // The v12→v13 MIGRATION arms (SHIFTS_IMPL_PLAN §E, contract "Migration MEASURED"):
+  // a loaded pre-shift save mints a night roster. A v12 save is ALREADY always-on
+  // (24/7 coverage at 1× wage), so mint-night keeps the SAME coverage at day+night
+  // twins = 1.2× payroll — i.e. a pure +20% payroll cost, no new revenue. This arm
+  // measures whether that bump sinks a MARGINAL save (the open provenance MINOR;
+  // the healthy arm drove the locked decision). Exercises the REAL
+  // migrateMintNightRoster.
+  it('migration: does mint-night sink a MARGINAL save? (the open MINOR)', () => {
+    const seeds = [1337, 1338, 31337, 4242, 90210];
+    interface MigRow {
+      seed: number;
+      profit: number;
+      payroll: number;
+      minCash: number;
+      endCash: number;
+      endRep: number;
+    }
+    // A v12 world: REFERENCE build, all-always-on roster (null shift), then either
+    // leave it (none) or apply the real migration (mint a night roster).
+    const runMig = (
+      seed: number,
+      migrate: 'none' | 'mint',
+      opts: { rosterScale?: number; bankroll: number; reputation: number; days: number },
+    ): MigRow => {
+      const world = new World(new EventBus(), seed);
+      setupNewGame(world);
+      world.reputation = opts.reputation;
+      world.cash += opts.bankroll;
+      for (const spec of REFERENCE_BUILD) world.buildRoom(spec.type, spec.rect, spec.door);
+      // v12 save = always-on: the setup receptionist was null-shift, not 'day'.
+      [...world.staff.values()].forEach((s) => (s.shift = null));
+      const scale = opts.rosterScale ?? 1;
+      for (const { role, count } of matureStaffRoster()) {
+        for (let i = 0; i < count * scale; i++) world.addStaffMember(role, 3, ROLE_DEFS[role].salaryPerDay);
+      }
+      if (migrate === 'mint') world.migrateMintNightRoster(); // the SHIPPED migration
+      const payroll = [...world.staff.values()].reduce(
+        (s, m) => s + m.salaryPerDay * shiftWageMultiplier(m.shift),
+        0,
+      );
+      const cash0 = world.cash;
+      let minCash = world.cash;
+      for (let i = 0; i < TICKS_PER_DAY * opts.days; i++) {
+        world.tick();
+        minCash = Math.min(minCash, world.cash);
+      }
+      return {
+        seed,
+        profit: (world.cash - cash0) / opts.days,
+        payroll,
+        minCash,
+        endCash: world.cash,
+        endRep: Math.round(world.reputation),
+      };
+    };
+    const summ = (label: string, rows: MigRow[]): number => {
+      const n = rows.length;
+      const avg = (f: (r: MigRow) => number) => rows.reduce((s, r) => s + f(r), 0) / n;
+      const profit = avg((r) => r.profit);
+      console.log(
+        `\n=== ${label} ===\n  payroll/d $${avg((r) => r.payroll).toFixed(0)} | PROFIT/d $${profit.toFixed(0)} | ` +
+          `end cash $${avg((r) => r.endCash).toFixed(0)} | MIN cash $${Math.min(...rows.map((r) => r.minCash)).toFixed(0)} | ` +
+          `end rep ${avg((r) => r.endRep).toFixed(0)}`,
+      );
+      console.log('  per-seed profit/d: ' + rows.map((r) => `${r.seed} $${r.profit.toFixed(0)}`).join('  '));
+      return profit;
+    };
+    const bankrupt = BALANCE.economy.bankruptcyThreshold;
+    console.log(`\n>>>>> v12→v13 MIGRATION ARMS (bankruptcy threshold $${bankrupt}) <<<<<`);
+
+    for (const arm of [
+      { name: 'HEALTHY (REF, cash $50k, rep 300)', rosterScale: 1, bankroll: 50_000, reputation: 300, days: 5 },
+      { name: 'MARGINAL over-hired ×2 (REF, cash $8k, rep 250)', rosterScale: 2, bankroll: 8_000, reputation: 250, days: 5 },
+      { name: 'MARGINAL low-rep 60 (REF, cash $8k)', rosterScale: 1, bankroll: 8_000, reputation: 60, days: 5 },
+    ] as const) {
+      console.log(`\n########## ${arm.name} ##########`);
+      const none = summ('none (unchanged, 1× always-on)', seeds.map((s) => runMig(s, 'none', arm)));
+      const mint = summ('mint night roster (1.2× payroll)', seeds.map((s) => runMig(s, 'mint', arm)));
+      const minMint = Math.min(...seeds.map((s) => runMig(s, 'mint', arm).minCash));
+      console.log(
+        `  >> mint − none = $${(mint - none).toFixed(0)}/d | worst-case MIN cash under mint = $${minMint.toFixed(0)} ` +
+          `(${minMint < bankrupt ? 'BREACHES' : 'survives'} the $${bankrupt} threshold in ${arm.days}d)`,
+      );
+    }
+  }, 600_000);
 });
