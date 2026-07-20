@@ -230,6 +230,37 @@ its own review — not a refactor.
   newest `historyCapDays`; a hard structural bound (1000) guards malformed
   input only. Consequence: an over-cap save is not byte-identical on re-save,
   so **the byte-identity fixture must never be over-cap**.
+- **Treatment fees are scaled by `feeScale` at the SINGLE billing site** (ECONOMY
+  Stage-1, `treatment.ts` via `formulas.scaledFee`): `patient.billed` and the
+  ledger both use the scaled fee, so the inspect card and finances agree; VENDING
+  is not treatment revenue and is never scaled. Uniform, so the elective==emergency
+  anchor holds. Regression: `test/economyStage1.test.ts`.
+- **Utilities accrue hourly in `updateEconomy`** (ECONOMY Stage-1): an always-on
+  HVAC base on EVERY room (footprint tiles × rate) + a USAGE draw on each EQUIPMENT
+  room that is ACTIVE that hour (holds ≥1 reservation). A broken/closed room holds
+  no reservation, so it draws only the base — no double-penalty. Tallied
+  `utilities`. Regression: `test/economyStage1.test.ts`.
+- **Every EQUIPMENT room stays net-positive under the shipped usage rates** (ECONOMY
+  Stage-1, the load-bearing per-type invariant): `usagePerActiveHour` is PER-TYPE
+  (`≈0.52 × measured rev-per-active-hour`), NOT a flat per-tile/per-hour rate — a
+  flat rate sinks low-volume rooms (xray/CT) and reverses the outpatient milestone.
+  Regression: `test/economyStage1.test.ts` runs REFERENCE and asserts each equipment
+  room's revenue − utilities − repairs ≥ 0.
+- **Repairs charge per-type on COMPLETION** (ECONOMY Stage-1): `world.completeRepair`
+  is the sole charge site (the dispatcher's repair-done branch), debits
+  `BALANCE.economy.repairCost[type]`, tallies `repairs`; a never-broken room is
+  never charged. Regression: `test/economyStage1.test.ts`.
+- **The mature operating margin sits ~32%, not ~82%** (ECONOMY Stage-1): the
+  collapse is the point of the milestone — cost decisions must matter (2× payroll →
+  ~6%). `TALLY_KEY_VERSIONS {utilities:12, repairs:12}` gates v11 loads (else
+  `asNumber(undefined)` throws). Regression: `test/economyStage1.test.ts` margin
+  band (0.25–0.40) + `save.test.ts` v11→v12→v13 back-compat.
+- **The `onShift` availability gate is INERT until a shift is assigned** (SHIFTS
+  Stage-1 plumbing): `Staff.shift` defaults null = always on, so `onShift` returns
+  true and dispatch/payroll are unchanged; `onFloor` is SAVED (not derived — a
+  staffer mid-walk-home would derive wrong, breaking save/load determinism);
+  `rolePool` MUST exclude off-shift or the anti-capture guard misfires. The shift
+  MECHANICS (walk-home, reconciliation) are not yet active — activation pending.
 - **`allowResumeToPaused` distinguishes player-opened overlays from midnight
   ones** (finances epic): `PausingOverlay`'s speed-1 fallback is right for the
   daily report and challenge card (which only open at a day boundary), but

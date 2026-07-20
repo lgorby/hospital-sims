@@ -48,6 +48,37 @@ scoping notes kept for provenance).
 
 ## Completed epics and asks
 
+- **ECONOMY STAGE-1: SHIPPED (2026-07-19, SAVE_VERSION 12; committed LOCAL, not
+  pushed)** — `docs/ECONOMY_STAGE1_CONTRACT.md`. The game ran a measured ~82%
+  operating margin (payroll was the ONLY recurring cost), so no cost decision
+  could matter. Collapsed to **~32%** via three levers, all measured on a new
+  binding EARLY-GAME arm before any number was written (`test/economyProbe.test.ts`,
+  4 review rounds): a **fee trim** (`feeScale 0.72` via `scaledFee` at the single
+  treatment billing site), **size+usage-scaled utilities** (HVAC base on every room
+  + a per-ACTIVE-room-hour draw on equipment, per-type = `0.52 × measured
+  rev/active-hour` so no low-volume room goes net-negative — a flat rate sinks
+  xray/CT), and **per-repair costs** (`world.completeRepair`). New `utilities`/
+  `repairs` `FINANCE_CATEGORIES` rows + `DayTally` keys (`TALLY_KEY_VERSIONS
+  {utilities:12, repairs:12}` — mandatory or v11 saves throw). The KEY finding:
+  utilities MUST be usage-scaled per-type, not flat per-tile (design MAJOR 3
+  measured); 2× payroll → ~6% margin (the shifts unblock). Regressions:
+  `test/economyStage1.test.ts` (fee scale, utilities accrual, repair charge, the
+  ~32% margin band, the per-room net-positive invariant) + v11→v12→v13 back-compat.
+- **SHIFTS STAGE-1: DE-RISKED + PLUMBING LANDED INERT (2026-07-19, SAVE_VERSION 13,
+  LOCAL)** — `docs/SHIFTS_STAGE1_CONTRACT.md`. Two-shift coverage. Contract v2 + two
+  split-lens pre-impl reviews + a shift probe + its adversarial review + a migration
+  measurement derived every number: **per-shift wage 0.6×** (whole-roster payroll
+  bankrupts the day-only starter −$142/d; 0.6× rescues it +$70 and makes 24/7
+  profitable with POSITIVE night ROI — "24/7 later" is real, not a trap), **open the
+  game at 06:00**, **migration = mint a night roster** (the only option that keeps a
+  healthy live save whole — measured). The `onShift` availability gate, `shift`/
+  `onFloor` SavedStaff fields (SAVE_VERSION 12→13), and the per-shift payroll wage
+  are all wired but INERT (`shift` defaults null = always-on) — zero behaviour
+  change. Remaining: the mechanical activation (06:00 clock-start, auto-assign,
+  per-tick reconciliation + walk-home, off-floor exclusions, gather-cancel,
+  mint-night migration, night signal, harness re-tune, re-run the probe with real
+  mechanics to close the one open review finding — the gate-only probe undercounts
+  day-only night harm).
 - **THE OUTPATIENT STREAM: SHIPPED (2026-07-19, SAVE_VERSION 11)** —
   `docs/OUTPATIENT_IMPL_PLAN.md` v2 (both pre-impl reviews folded) and
   `docs/IMAGING_PLAN.md` (the research that motivated it). The game had ONE
@@ -251,3 +282,12 @@ ED epic Stage B1 `5ad3e2b` · single-capacity hint fix `41ee800` · the
 Departments plan `cb580a1` · the pre-change harness guard `8d2ad3d` ·
 Departments Stage 1 `520cf21` · the ED nurse-capture fix `b56a369` ·
 DEPARTMENTS_PLAN §4.0 `8e199ef`.
+
+### Commit hashes — ECONOMY + SHIFTS session (2026-07-19, LOCAL, not pushed)
+
+ECONOMY probe `15ba628` · derivation `ed03a49` · **ECONOMY Stage-1 impl `a949452`**
+(SAVE_VERSION 12) · SHIFTS contract v2 + 2 reviews `55059b9` · shift gate + probe
+`5a907a8` · shift probe derived numbers (in `5a907a8`) · **SHIFTS plumbing
+`4c973b1`** (SAVE_VERSION 13, inert) · handoff `a62d736`. All seven are LOCAL-only —
+a push deploys the tighter economy (re-baselines every live save) and makes v13
+one-way, so it is the owner's release decision.
