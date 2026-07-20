@@ -8,7 +8,7 @@ import {
 } from './data/conditions';
 import { ROLE_DEFS, type RoleId } from './data/roles';
 import { ROOM_DEFS, roomRetired, type RoomType } from './data/rooms';
-import { staffRatioFor } from './formulas';
+import { onShift, staffRatioFor } from './formulas';
 import type { Patient } from './entities/patient';
 import type { World } from './world';
 
@@ -33,7 +33,7 @@ export interface BlockedNeed {
    *  announce only the FIRST breakdown ever) | ED B1's
    *  'capacity:<RoomType>' and 'capacity:<RoomType>:<RoleId>'. */
   key: string;
-  kind: 'room' | 'role' | 'broken' | 'capacity';
+  kind: 'room' | 'role' | 'broken' | 'capacity' | 'coverage';
   room?: RoomType;
   role?: RoleId;
   /** Live pre-terminal patients affected (deduped per need). */
@@ -301,6 +301,44 @@ export function computeBlockedNeeds(world: World): BlockedNeed[] {
   }
 
   needs.push(...capacityNeeds(world));
+
+  // SHIFTS Stage-1 night-coverage signal (SHIFTS_IMPL_PLAN §F): a dead night
+  // hospital is a DECISION, not a bug — surface it so a day-only roster reads as
+  // "you aren't covering nights", not "my staff are quitting". Fires only during
+  // the night period (day shift off) when this hospital can't serve it. Two
+  // failure modes (broadened per design review): no one working at all, or a
+  // night crew with no receptionist (check-in stalls). PANEL-ONLY — a standing
+  // condition that recurs every night, so the dispatcher excludes it from toasts
+  // (the capacity precedent). Empty roster is covered by the Hire needs above.
+  if (world.staff.size > 0 && !onShift('day', world.clock.minuteOfDay)) {
+    const minute = world.clock.minuteOfDay;
+    const workingNow = [...world.staff.values()].filter(
+      (s) => s.onFloor && onShift(s.shift, minute),
+    );
+    let atRisk = 0;
+    for (const patient of world.patients.values()) {
+      if (patient.stage.kind !== 'leaving' && patient.stage.kind !== 'dead') atRisk += 1;
+    }
+    if (workingNow.length === 0) {
+      needs.push({
+        key: 'coverage:night',
+        kind: 'coverage',
+        patients: atRisk,
+        conditions: [],
+        urgent: atRisk > 0,
+        label: "Night shift unstaffed — night patients aren't being seen. Put staff on the night shift.",
+      });
+    } else if (!workingNow.some((s) => s.role === 'receptionist')) {
+      needs.push({
+        key: 'coverage:night-reception',
+        kind: 'coverage',
+        patients: atRisk,
+        conditions: [],
+        urgent: atRisk > 0,
+        label: "No night receptionist — night patients can't check in. Put a receptionist on the night shift.",
+      });
+    }
+  }
 
   // Total, deterministic order: urgent first, most-affected first, key tiebreak.
   needs.sort((a, b) => {

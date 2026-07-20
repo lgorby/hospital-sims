@@ -10,6 +10,7 @@ import type { Patient } from '../src/sim/entities/patient';
 import type { Room } from '../src/sim/entities/room';
 import type { ShiftId } from '../src/sim/data/shifts';
 import { onShift } from '../src/sim/formulas';
+import { computeBlockedNeeds } from '../src/sim/needs';
 import { setupNewGame } from '../src/sim/newGame';
 import { World } from '../src/sim/world';
 
@@ -176,6 +177,50 @@ describe('hire + setStaffShift commands (through the queue)', () => {
     queue.push({ type: 'setStaffShift', staffId: 999999, shift: 'day' }); // no such staffer
     expect(() => world.applyCommands(queue)).not.toThrow();
     expect(recept.shift).toBe('night');
+  });
+});
+
+describe('night-unstaffed coverage signal (computeBlockedNeeds)', () => {
+  const nightKeys = (world: World) =>
+    computeBlockedNeeds(world)
+      .filter((n) => n.kind === 'coverage')
+      .map((n) => n.key);
+
+  it('fires for a day-only hospital at NIGHT, not during the day', () => {
+    const { world } = setup();
+    build(world, 'exam', { col: 14, row: 14, cols: 3, rows: 3 });
+    hireShift(world, 'doctor', 'day'); // day-only clinical roster
+
+    // Daytime: covered — no coverage need.
+    world.clock.tick = tickForMinute(720) - 1; // noon
+    world.tick();
+    expect(nightKeys(world)).toHaveLength(0);
+
+    // Night: the day crew is off-floor — the signal fires.
+    world.clock.tick = tickForMinute(NIGHT_MINUTE) - 1;
+    for (let i = 0; i < 400; i++) world.tick();
+    expect(nightKeys(world)).toContain('coverage:night');
+  });
+
+  it('does NOT fire when the night IS staffed', () => {
+    const { world } = setup();
+    build(world, 'exam', { col: 14, row: 14, cols: 3, rows: 3 });
+    const recept = [...world.staff.values()].find((s) => s.role === 'receptionist')!;
+    recept.shift = 'night';
+    hireShift(world, 'doctor', 'night'); // a night crew
+    world.clock.tick = tickForMinute(NIGHT_MINUTE) - 1;
+    for (let i = 0; i < 200; i++) world.tick();
+    expect(nightKeys(world)).toHaveLength(0);
+  });
+
+  it('flags the reception-only stall when a night crew has no receptionist', () => {
+    const { world } = setup();
+    const recept = [...world.staff.values()].find((s) => s.role === 'receptionist')!;
+    recept.shift = 'day'; // receptionist works days only
+    hireShift(world, 'doctor', 'night'); // clinical night cover, but no night reception
+    world.clock.tick = tickForMinute(NIGHT_MINUTE) - 1;
+    for (let i = 0; i < 200; i++) world.tick();
+    expect(nightKeys(world)).toContain('coverage:night-reception');
   });
 });
 

@@ -61,7 +61,12 @@ function emitUrgentNeedHints(world: World): void {
     // same defect the `broken:<id>:<since>` instance key exists to avoid.
     // The persistent BlockedPanel row is the right surface for a standing
     // condition; a one-shot toast is for a new fact.
-    if (need.urgent && need.kind !== 'capacity') world.hintOnce(`need:${need.key}`, need.label);
+    // 'coverage' (night-unstaffed) is PANEL-ONLY too — a standing condition that
+    // recurs every night, so a one-shot persisted toast is the wrong surface
+    // (same reasoning as capacity above).
+    if (need.urgent && need.kind !== 'capacity' && need.kind !== 'coverage') {
+      world.hintOnce(`need:${need.key}`, need.label);
+    }
   }
 }
 
