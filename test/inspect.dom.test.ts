@@ -97,6 +97,81 @@ describe('InspectPanel (amenities Stage 1)', () => {
     expect(text).not.toContain('Treating');
   });
 
+  it('restroom: a walking claimant reads "On the way", not "In use" (live-drive MINOR 3)', () => {
+    const { world, renderer, root, panel } = fixture();
+    world.buildRoom('restroom', { col: 5, row: 20, cols: 2, rows: 3 }, { col: 7, row: 20 }, true);
+    const room = [...world.rooms.values()].find((r) => r.type === 'restroom')!;
+    const user = world.spawnPatient('flu');
+    const walker = world.spawnPatient('flu');
+    // Deterministic short names so the split is unambiguous (the name pool
+    // could otherwise hand two spawns the same short name).
+    user.name = { ...user.name, short: 'USER' };
+    walker.name = { ...walker.name, short: 'WALK' };
+    // The walker holds a stall claim but is still crossing the map.
+    walker.needBreak = {
+      kind: 'restroom',
+      roomId: room.id,
+      slot: 1,
+      phase: 'walking',
+      ticksRemaining: 0,
+      startedAt: 0,
+    };
+    vi.spyOn(world, 'stallClaims').mockImplementation((roomId: number) =>
+      roomId === room.id
+        ? new Map([
+            [0, user.id],
+            [1, walker.id],
+          ])
+        : new Map(),
+    );
+
+    renderer.selected = { kind: 'room', id: room.id };
+    panel.update();
+
+    const rows = [...root.querySelectorAll('#inspect .inspect-row')].map((el) => el.textContent ?? '');
+    const inUseRow = rows.find((r) => r.startsWith('In use'))!;
+    const onWayRow = rows.find((r) => r.startsWith('On the way'));
+    // "In use" counts only the actual occupant — NOT the walker (the old flat
+    // list listed both here, overstating occupancy).
+    expect(inUseRow).toContain('USER');
+    expect(inUseRow).not.toContain('WALK');
+    // The walker gets its own "On the way" line.
+    expect(onWayRow).toBeDefined();
+    expect(onWayRow!).toContain('WALK');
+  });
+
+  it('lounge: a walking staffer reads "On the way", not "In use" (staff-branch parity)', () => {
+    const { world, renderer, root, panel } = fixture();
+    world.buildRoom('lounge', { col: 5, row: 20, cols: 3, rows: 3 }, { col: 8, row: 20 }, true);
+    const room = [...world.rooms.values()].find((r) => r.type === 'lounge')!;
+    const staffer = [...world.staff.values()][0]!;
+    staffer.name = { ...staffer.name, short: 'STAFFWALK' };
+    // Claimed a lounge seat but still walking there — occupancy is derived from
+    // loungeSeatClaims (staff ids), the symmetric path to the restroom's stalls.
+    staffer.onBreak = {
+      mode: 'lounge',
+      roomId: room.id,
+      slot: 0,
+      phase: 'walking',
+      ticksRemaining: 0,
+      startedAt: 0,
+    };
+    vi.spyOn(world, 'loungeSeatClaims').mockImplementation((roomId: number) =>
+      roomId === room.id ? new Map([[0, staffer.id]]) : new Map(),
+    );
+
+    renderer.selected = { kind: 'room', id: room.id };
+    panel.update();
+
+    const rows = [...root.querySelectorAll('#inspect .inspect-row')].map((el) => el.textContent ?? '');
+    const inUseRow = rows.find((r) => r.startsWith('In use'))!;
+    const onWayRow = rows.find((r) => r.startsWith('On the way'));
+    expect(inUseRow).toContain('—');
+    expect(inUseRow).not.toContain('STAFFWALK');
+    expect(onWayRow).toBeDefined();
+    expect(onWayRow!).toContain('STAFFWALK');
+  });
+
   it('staff duty line resolves a job duty to its kind via world.jobs (Stage 2 §S2.5)', () => {
     const { world, renderer, root, panel } = fixture();
     // Any role works — the duty line is role-agnostic (the hire panel is

@@ -222,6 +222,18 @@ reason. The same latent staleness applies to actors/geometry too — only cash w
 folded in (matching the NIT's framing); full coverage would want a world-revision
 counter, deferred as scope creep for an unreachable case.)*
 
+*(DONE LOCAL 2026-07-20, AWAITING OWNER PUSH: **restroom/lounge "On the way" split**
+— UI-only, no save bump. The self-service occupancy line (`inspect.ts`) listed
+walkers still crossing to a claimed stall/seat under the "In use" header (suffixed
+"(on the way)"), overstating occupancy. Now split: "In use" lists only actual
+users; a separate "On the way" line lists walkers (rendered only when there ARE
+walkers, derived rooms only). Verified live (restroom read "Stalls 2/2 · In use — ·
+On the way Virgil J., Cyrus K." with both patients mid-walk) AND by 2 DOM regressions
+in `inspect.dom.test.ts` (restroom patient split + lounge staff parity). Reviewed
+CLEAN. NIT acked, no change: capacity "Stalls 2/2" still counts a claimed-but-walking
+slot as reserved — correct (the dispatcher sees no availability), and the three
+lines together read as a coherent "both reserved, none in use yet, two on the way".)*
+
 1. **NURSE TECHS — a capacity lever the owner asked for** (meatier; distinct from EVS: a
    tech attends a PATIENT, EVS a TILE). Patient load 6–9. Design prize: "do I need a nurse
    or a tech?" Pairs with the OBSERVATION v4 rewrite. Scope in the backlog ("Nurse techs").
@@ -800,10 +812,11 @@ remain valid for a Stage 2a v2 — the code map was not what stopped the stage.
   ("expand your ER or build another" — the panel's `roomChanged`
   invalidation is pre-wired). Banked NITs (fix opportunistically): the
   trap-BFS doesn't re-check existing ATRIUM footprints; patients stand in messes (V1
-  collision, accepted); wage-accrual float dust (HUD rounds it); Stage-3
-  live-drive: restroom "In use" line lists "(on the way)" walkers under
-  an "In use" header, and REJECTED build/expand/sell modes stay armed
-  after the reason toast (pre-existing; Esc is the exit). *(The sparks-decal
+  collision, accepted); wage-accrual float dust (HUD rounds it); and REJECTED
+  build/expand/sell modes stay armed
+  after the reason toast (pre-existing; Esc is the exit). *(The restroom/lounge
+  "In use" line now splits walkers into a separate "On the way" line — DONE, see
+  the DONE-LOCAL note in START HERE. The sparks-decal
   "reads subtle at default zoom" NIT is DONE — warm amber glow added, see the
   DONE-LOCAL note in START HERE.)*
 - **Owner asks 2026-07-18 (answered + scoped, pending owner priorities):**

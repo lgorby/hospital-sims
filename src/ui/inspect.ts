@@ -401,26 +401,31 @@ export class InspectPanel {
     // "Seats 0/3" (the same review MINOR 7 the restroom special-case avoids).
     const loungeClaims = room.type === 'lounge' ? this.world.loungeSeatClaims(room.id) : null;
     const derivedClaims = stallClaims ?? loungeClaims; // slot → patientId (stall) | staffId (lounge)
-    // "In use" lists only USING claimants; walkers still crossing the map
-    // read "on the way" (live-drive review MINOR 3 — the flat list overstated
-    // occupancy while a claimant was three corridors away).
+    // "In use" lists only claimants actually USING a stall/seat; those still
+    // crossing the map are split into a SEPARATE "On the way" line below, so
+    // the occupancy count is not overstated (live-drive review MINOR 3 — the
+    // old flat list rendered "Alice, Bob (on the way)" under one "In use"
+    // header, counting a claimant three corridors away as present).
     const claimName = (id: number): string | undefined => this.world.patients.get(id)?.name.short;
+    const inUse: string[] = [];
+    const onWay: string[] = [];
+    if (derivedClaims) {
+      for (const id of derivedClaims.values()) {
+        // Lounge claims are STAFF ids; stall claims are PATIENT ids.
+        if (loungeClaims) {
+          const s = this.world.staff.get(id);
+          if (!s) continue;
+          (s.onBreak?.phase === 'walking' ? onWay : inUse).push(s.name.short);
+        } else {
+          const name = claimName(id);
+          if (name === undefined) continue;
+          const walking = this.world.patients.get(id)?.needBreak?.phase === 'walking';
+          (walking ? onWay : inUse).push(name);
+        }
+      }
+    }
     const occupant = derivedClaims
-      ? [...derivedClaims.values()]
-          .map((id) => {
-            // Lounge claims are STAFF ids; stall claims are PATIENT ids.
-            if (loungeClaims) {
-              const s = this.world.staff.get(id);
-              if (!s) return undefined;
-              return s.onBreak?.phase === 'walking' ? `${s.name.short} (on the way)` : s.name.short;
-            }
-            const name = claimName(id);
-            if (name === undefined) return undefined;
-            const walking = this.world.patients.get(id)?.needBreak?.phase === 'walking';
-            return walking ? `${name} (on the way)` : name;
-          })
-          .filter((name): name is string => name !== undefined)
-          .join(', ') || '—'
+      ? inUse.join(', ') || '—'
       : reservations
           .map((r) => claimName(r.patientId))
           .filter((name): name is string => name !== undefined)
@@ -528,8 +533,11 @@ export class InspectPanel {
       loadLine +
       (hasPost ? this.line('Posted', posted.map((s) => s.name.short).join(', ') || '—') : '') +
       // "Treating" would be dishonest for a self-service room (§3.3): the
-      // restroom AND the lounge (SHIFTS Stage 2) both read "In use".
+      // restroom AND the lounge (SHIFTS Stage 2) both read "In use". Walkers
+      // still crossing to a claimed stall/seat get their OWN "On the way" line
+      // so "In use" reflects real occupancy, not intent (live-drive MINOR 3).
       this.line(derivedClaims ? 'In use' : 'Treating', occupant) +
+      (derivedClaims && onWay.length > 0 ? this.line('On the way', onWay.join(', ')) : '') +
       // DEPARTMENTS_PLAN §3.6 defect 3: a retired room must SAY it is retired.
       // Otherwise it is a room the player paid for that quietly stops
       // receiving patients, which reads as a bug rather than a decision.
