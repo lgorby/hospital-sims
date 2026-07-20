@@ -1,7 +1,7 @@
 import { BALANCE } from '../data/balance';
 import { CONDITION_DEFS, conditionElective } from '../data/conditions';
 import type { Reservation } from '../entities/staff';
-import { successChance } from '../formulas';
+import { scaledFee, successChance } from '../formulas';
 import type { World } from '../world';
 
 /** Ticks active reservation timers and resolves completions. */
@@ -61,14 +61,18 @@ export function resolveTreatmentOutcome(
   const step = def.steps[reservation.stepIndex]!;
 
   if (success) {
-    patient.billed += step.fee;
+    // ECONOMY Stage-1: the treatment fee is scaled by BALANCE.economy.feeScale
+    // (scaledFee) at this ONE site so patient.billed and the ledger agree. The
+    // condition table keeps the unscaled "list price"; feeScale is the economy knob.
+    const fee = scaledFee(step.fee);
+    patient.billed += fee;
     // The ONE per-room attribution site (FINANCE_PLAN §4.1): the reservation
     // names the room that just earned the fee, in the same call that moves the
     // cash. `dischargePatient` does NOT re-bill — it forwards `patient.billed`.
     // Channel-tagged so the checklist and the daily report can tell a
     // scheduled referral from an emergency (OUTPATIENT_IMPL_PLAN §3.7).
     // Derived from the CONDITION — no patient field, no save change.
-    world.billFee(step.fee, `${def.label} — ${step.label}`, {
+    world.billFee(fee, `${def.label} — ${step.label}`, {
       roomId: reservation.roomId,
       source: conditionElective(patient.condition) ? 'outpatient' : 'treatment',
     });

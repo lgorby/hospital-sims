@@ -12,7 +12,9 @@ export type CashTallyKey =
   | 'sellIncome'
   | 'payroll'
   | 'hireFees'
-  | 'construction';
+  | 'construction'
+  | 'utilities'
+  | 'repairs';
 
 /**
  * Frozen shape: `kind` drives display negation, the net fold, AND the row tone
@@ -50,16 +52,18 @@ export const FINANCE_CATEGORIES = [
     label: 'Sell-back income',
     kind: 'income',
     showWhenZero: false,
-    reportOrder: 5,
+    reportOrder: 7,
   },
   { field: 'payroll', label: 'Payroll', kind: 'expense', showWhenZero: true, reportOrder: 2 },
-  { field: 'hireFees', label: 'Hiring', kind: 'expense', showWhenZero: false, reportOrder: 3 },
+  { field: 'utilities', label: 'Utilities', kind: 'expense', showWhenZero: true, reportOrder: 3 },
+  { field: 'repairs', label: 'Repairs', kind: 'expense', showWhenZero: false, reportOrder: 4 },
+  { field: 'hireFees', label: 'Hiring', kind: 'expense', showWhenZero: false, reportOrder: 5 },
   {
     field: 'construction',
     label: 'Construction',
     kind: 'expense',
     showWhenZero: false,
-    reportOrder: 4,
+    reportOrder: 6,
   },
 ] as const satisfies readonly FinanceCategory[];
 
@@ -93,5 +97,7 @@ export function emptyCashTotals(): CashTotals {
     payroll: 0,
     hireFees: 0,
     construction: 0,
+    utilities: 0,
+    repairs: 0,
   };
 }

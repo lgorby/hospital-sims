@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CommandQueue } from '../src/commands';
 import { EventBus, type EventName } from '../src/events';
-import { TICKS_PER_DAY } from '../src/sim/clock';
+import { TICKS_PER_DAY, TICKS_PER_GAME_HOUR } from '../src/sim/clock';
 import { BALANCE } from '../src/sim/data/balance';
 import { ROLE_IDS } from '../src/sim/data/roles';
 import { emptyCashTotals } from '../src/sim/data/finance';
@@ -919,6 +919,46 @@ describe('v3 → v4 migration (amenities Stage 1, review MAJOR 3)', () => {
     if (!loaded.ok) return;
     expect(loaded.world.amenities.size).toBe(1); // premise: the machine landed
     expect(saveToString(loaded.world)).toBe(amenitySave());
+  });
+});
+
+describe('v11 → v12 migration (ECONOMY Stage-1: utilities/repairs tally keys)', () => {
+  it('a v11 payload (no utilities/repairs keys) loads with them defaulted to 0 — today, lifetime, AND history', () => {
+    const world = new World(new EventBus(), 7);
+    setupNewGame(world);
+    // Run past midnight so a closed-day HISTORY entry exists (its tally travels
+    // the readHistory→readDayReport→readTally path too — review finding 4).
+    for (let i = 0; i < TICKS_PER_DAY + TICKS_PER_GAME_HOUR; i++) world.tick();
+    const save = JSON.parse(saveToString(world)) as Record<string, unknown>;
+    const history = save.history as Record<string, number>[];
+    expect(history.length).toBeGreaterThan(0); // premise: a closed day
+    expect((save.today as Record<string, number>).utilities).toBeGreaterThan(0);
+
+    // Downgrade to a v11 shape: strip the v12-only keys from every tally bucket.
+    save.saveVersion = 11;
+    for (const bucket of ['today', 'lifetime'] as const) {
+      delete (save[bucket] as Record<string, unknown>).utilities;
+      delete (save[bucket] as Record<string, unknown>).repairs;
+    }
+    for (const day of history) {
+      delete (day as Record<string, unknown>).utilities;
+      delete (day as Record<string, unknown>).repairs;
+    }
+
+    // Without TALLY_KEY_VERSIONS {utilities:12, repairs:12} this THROWS
+    // (asNumber(undefined)); with it, they default to 0 (the MAJOR regression).
+    const result = loadOf(save);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.world.today.utilities).toBe(0);
+    expect(result.world.today.repairs).toBe(0);
+    expect(result.world.lifetime.utilities).toBe(0);
+    expect(result.world.lifetime.repairs).toBe(0);
+    expect(result.world.history.length).toBeGreaterThan(0);
+    for (const day of result.world.history) {
+      expect(day.utilities).toBe(0);
+      expect(day.repairs).toBe(0);
+    }
   });
 });
 

@@ -35,6 +35,9 @@ export interface DayTally {
   hireFees: number;
   /** Room build spend (capital, not operating expense). */
   construction: number;
+  /** ECONOMY Stage-1 operating costs: HVAC+usage utilities, and repair parts. */
+  utilities: number;
+  repairs: number;
   /** Room sell-back income. */
   sellIncome: number;
   /** Vending fees (amenities Stage 1) — a BREAKDOWN of `revenue`, billed
@@ -64,6 +67,8 @@ export function emptyDayTally(): DayTally {
     payroll: 0,
     hireFees: 0,
     construction: 0,
+    utilities: 0,
+    repairs: 0,
     sellIncome: 0,
     vendingRevenue: 0,
     messTicks: 0,

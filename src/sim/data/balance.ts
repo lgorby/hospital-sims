@@ -3,6 +3,8 @@
  * Values are the GDD's initial balance; this file is authoritative.
  * Durations are authored in GAME-MINUTES; clock.ts owns all conversions to ticks.
  */
+import type { RoomType } from './rooms';
+
 export const BALANCE = {
   time: {
     ticksPerSecond: 10,
@@ -32,6 +34,31 @@ export const BALANCE = {
     bankruptcyThreshold: -10_000,
     /** Cash must stay below the threshold this long to lose (GDD §2). */
     bankruptcyGraceGameMinutes: 24 * 60,
+    /**
+     * ECONOMY Stage-1 (ECONOMY_STAGE1_CONTRACT v2): collapse the measured ~82%
+     * operating margin to ~32% so cost decisions matter. Derived from the
+     * early-game probe (test/economyProbe.test.ts), reviewed twice.
+     */
+    /** Uniform multiplier on every TREATMENT fee (vending exempt); applied via
+     *  formulas.scaledFee at the single billing site. 0.72 (not the probe's 0.68)
+     *  because the sim's hourly-sampled utilities run ~14% above the probe's
+     *  per-tick estimate — tuned to the REAL sim (regression-of-record): lands
+     *  the mature build ~32% and keeps the minimal starter net-positive. */
+    feeScale: 0.72,
+    /** Always-on HVAC/lighting, $/footprint-tile/game-hour, ALL rooms. */
+    utilitiesPerTileHour: 0.05,
+    /** Usage draw, $ per ACTIVE room-hour, EQUIPMENT rooms only (a room drawing
+     *  a reservation this hour). Rates = round(0.52 × measured rev-per-active-hour)
+     *  so each equipment room keeps ~24% margin; a missing type draws no usage. */
+    usagePerActiveHour: {
+      mri: 163, ct: 165, nucMed: 134, xray: 81, ultrasound: 110, dialysis: 112, surgery: 374,
+    } as Partial<Record<RoomType, number>>,
+    /** Parts/materials charged when a repair COMPLETES (per room type). Makes
+     *  neglect a cash decision, not just downtime. */
+    repairCost: {
+      mri: 1_800, ct: 1_200, nucMed: 1_200, surgery: 1_500, xray: 400, dialysis: 600,
+      restroom: 200, resp: 200,
+    } as Partial<Record<RoomType, number>>,
   },
   arrivals: {
     /** M4 balance pass: 3.0 overwhelmed a full 6-room build (~50 arrivals vs

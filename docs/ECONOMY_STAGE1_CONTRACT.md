@@ -1,9 +1,20 @@
 # Economy Rebalance — Stage 1 CONTRACT (collapse the margin)
 
-**Status:** **NOT READY (2026-07-19, both reviews).** Design NOT READY (6
-MAJORs); code READY WITH FIXES. The contract repeated the exact
-measure-the-flattering-arm error the observation/shifts sagas were supposed to
-teach. Needs a v2 — and the early-game measurement must come FIRST. **No code.**
+**Status:** **v2 IMPLEMENTED (2026-07-19) — committed LOCAL, NOT pushed.** The
+early-game probe was built, the numbers DERIVED and hardened across two review
+rounds, the owner ratified the **~32% mature target** (3 levers; consumables →
+Stage-2), and the change was implemented and passed a post-impl adversarial
+review (SAFE TO COMMIT; 5 coverage-gap findings folded, incl. a per-room
+net-positive regression). SAVE_VERSION 12. **Shipped `feeScale 0.72`** (not the
+derived 0.68 — tuned to the real sim; see below). The spec is in
+"## v2 — READY TO IMPLEMENT" below; the code is in `balance.ts`/`economy.ts`/
+`formulas.ts`/`treatment.ts`/`dispatcher.ts`/`finance.ts`/`save.ts` +
+`test/economyStage1.test.ts`. The original draft
+(NOT READY, retained for provenance) and the two review outcomes follow.
+
+_History: v1 draft was NOT READY (2026-07-19, both reviews — design 6 MAJORs, code
+READY WITH FIXES) for repeating the measure-the-flattering-arm error. The probe +
+derivation (below) is the v2 that fixed it._
 
 > ## REVIEW OUTCOME
 >
@@ -197,10 +208,82 @@ proxy, but state it; a metered-power model would gate on an occupied stage. And
 in `economy.ts`; the new `utilities`/`repairs` `FINANCE_CATEGORIES` rows are the
 only SAVE_VERSION-12 cost (the `TALLY_KEY_VERSIONS` one-liner remains MANDATORY).
 
-**Remaining before implementation:** pick the mature-margin target (32% as
-measured, or push `k` with a layout-safe margin), decide Stage-1-vs-Stage-2 for
-the per-patient consumable, then write the v2 contract body + regressions and run
-the standard pre-impl review on it.
+---
+
+## v2 — READY TO IMPLEMENT (owner-ratified 2026-07-19)
+
+**Decisions:** target **~32% mature** (the measured, layout-safe 3-lever floor);
+per-patient **consumables deferred to Stage-2**; implement fully then commit
+local (push = the owner's deploy decision).
+
+### The three levers — where each lives in code
+1. **Fee trim.** `BALANCE.economy.feeScale = 0.72` (SHIPPED). The probe DERIVED
+   0.68, but the sim's hourly-sampled utilities run ~14% above the probe's
+   per-tick estimate, so 0.68 landed the real mature build at 28.5% and the
+   minimal starter marginally negative; **0.72 is tuned to the REAL sim**
+   (regression-of-record) — mature **32.8%**, COMPACT 50%, starter positive on
+   every seed (+$192/+$424/+$216). Applied at the SINGLE treatment
+   billing site (`treatment.ts:63-71`) via a `scaledFee(fee)` formula
+   (`formulas.ts`), used for BOTH `patient.billed +=` and `billFee(...)` so the
+   inspect card and the ledger agree. Vending (`patientNeeds.ts:127`, source
+   `vending`) is UNTOUCHED — it is not treatment revenue. Uniform ⇒ the
+   elective==emergency anchor holds by construction. No save impact (a data knob).
+2. **Utilities** — accrued hourly in `updateEconomy` (`economy.ts`, already runs at
+   the game-hour boundary), two components, tallied `tallyCash('utilities', …)`:
+   - **HVAC base:** `Σ rooms (footprint tiles × BALANCE.economy.utilitiesPerTileHour)`,
+     flat `0.05`, ALL rooms.
+   - **Usage:** for each room whose type is equipment, if it is ACTIVE this hour
+     (`reservationsOn(room).length > 0`), charge `usagePerActiveHour[type]`.
+     Rates are `round(0.52 × measured rev-per-active-hour)` per type, in
+     `BALANCE.economy` (or `ROOM_DEFS`): mri 163, ct 165, nucMed 134, xray 81,
+     ultrasound 110, dialysis 112, surgery 374; all others 0. **Hourly instantaneous
+     sampling is an UNBIASED estimator of active-hours** (a room active X% of the
+     day is caught in ~X% of 24 samples) — noisier per-seed than the probe's
+     per-tick, same mean; the harness re-tune pins the ACTUAL margin and the rate
+     is nudged to land ~32% (regression-of-record).
+   - A broken/closed room draws only the HVAC base, not usage (it holds no
+     reservation) — the double-penalty the v1 review flagged is avoided by
+     construction.
+3. **Repairs** — charge `BALANCE.economy.repairCost[type]` when a repair COMPLETES
+   (`dispatcher.ts:798`, `room.brokenSince = null`), `tallyCash('repairs', …)`.
+   Per-type (mri 1800, ct/nucMed 1200, surgery 1500, xray 400, dialysis 600,
+   restroom/resp 200). Not a margin lever; makes neglect a cash decision.
+
+### Save — SAVE_VERSION 11 → 12
+New `FINANCE_CATEGORIES` expense rows `utilities` + `repairs`, their `CashTallyKey`
++ `DayTally` keys, `emptyCashTotals`/`emptyDayTally`, and **`TALLY_KEY_VERSIONS:
+{ utilities: 12, repairs: 12 }` (`save.ts:515`) — MANDATORY, or every v11 save
+throws `asNumber(undefined)` on load (the `electiveTreated: 11` precedent).
+`reportOrder`/`showWhenZero` for the two rows. **All-saves** (the owner ratified the
+re-baseline; existing saves get tighter on load — the departments/outpatient
+precedent). No field-shape/`readRoom` change.
+
+### Regressions required (one per lever + the guards)
+1. `scaledFee` bills 0.68× at the treatment site; vending unscaled; `patient.billed`
+   == ledger revenue.
+2. Utilities accrue hourly: a bigger/denser build costs more base; an ACTIVE
+   equipment room adds usage, an idle/closed/broken one does not.
+3. Repairs debit `repairCost[type]` on completion; a room that never breaks is
+   never charged.
+4. Finance partition holds — every dollar classified; `utilities`+`repairs` sum
+   into the ledger (`finance.test.ts` partition guard; de-vacuum the `dayNet`
+   parity test by setting the new keys nonzero).
+5. v11 → v12 back-compat via the REAL downgrade helper (`save.test.ts:840-860`),
+   new keys default to 0.
+6. **Harness re-tuned green WITH the change** (regression-of-record): the $3,060
+   payroll figure, per-condition floors, and the black-envelope assertion all move
+   to the ~32% economy and pass. Confirm the mature margin lands ~32% and the
+   early-game arm stays solvent (re-run the economy probe's DERIVED-PERTYPE).
+
+### Blast radius
+`balance.ts` (feeScale, utilitiesPerTileHour, usagePerActiveHour[type],
+repairCost[type]); `formulas.ts` (`scaledFee`, a utilities helper); `economy.ts`
+(utilities accrual); `dispatcher.ts:798` (repair charge); `treatment.ts` (scaledFee
+at the two lines); `finance.ts` (2 rows) + `dailyStats.ts` (2 DayTally keys) +
+`save.ts` (SAVE_VERSION 12, TALLY_KEY_VERSIONS, downgrade); `world.ts` (tallyCash
+calls). Tests: `harness`, `finance`/`finance.dom`, `save`, `pricing`, `audit`,
+`challenge*`, `m3Roster`, `anesthesia`, `edProbe` — derive the affected set from
+what goes RED, not a pre-planned sweep (the `INVARIANTS.md:274-279` lesson).
 
 ---
 

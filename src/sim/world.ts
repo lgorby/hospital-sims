@@ -1881,6 +1881,22 @@ export class World implements PathGrid {
     this.events.emit('feeBilled', { amount, label, source });
   }
 
+  /**
+   * Finish a repair (dispatcher §S3.4): restore service AND charge the parts
+   * cost (ECONOMY Stage-1). Extracted from the dispatcher so the charge is unit-
+   * testable and there is one place the repair-completion economics live.
+   */
+  completeRepair(room: Room): void {
+    room.brokenSince = null;
+    const cost = BALANCE.economy.repairCost[room.type] ?? 0;
+    if (cost > 0) {
+      this.cash -= cost;
+      this.tallyCash('repairs', cost);
+      this.events.emit('cashChanged', { cash: this.cash });
+    }
+    this.events.emit('roomChanged', { roomId: room.id });
+  }
+
   /** Emit an advisory toast at most once per key (Flow rule 5). */
   hintOnce(key: string, message: string): void {
     if (this.hintedOnce.has(key)) return;

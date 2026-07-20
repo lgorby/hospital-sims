@@ -8,6 +8,7 @@ import type { Reservation } from '../src/sim/entities/staff';
 import { gameMinutesToTicks } from '../src/sim/clock';
 import {
   reputationArrivalMultiplier,
+  scaledFee,
   treatmentDurationTicks,
 } from '../src/sim/formulas';
 import { setupNewGame } from '../src/sim/newGame';
@@ -123,7 +124,8 @@ describe('treatment outcomes', () => {
 
     resolveTreatmentOutcome(t.world, reservation, true);
 
-    const fluFee = CONDITION_DEFS.flu.steps[0]!.fee; // §3.1 rule 6: assert the real data
+    // §3.1 rule 6: assert the real data — the LIST fee scaled by the economy knob.
+    const fluFee = scaledFee(CONDITION_DEFS.flu.steps[0]!.fee);
     expect(t.world.cash).toBe(startCash + fluFee);
     expect(patient.billed).toBe(fluFee);
     expect(patient.stage).toEqual({ kind: 'leaving', reason: 'discharged' });

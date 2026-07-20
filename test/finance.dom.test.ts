@@ -43,6 +43,8 @@ function makeReport(day: number, over: Partial<DayReport> = {}): DayReport {
     payroll: 0,
     hireFees: 0,
     construction: 0,
+    utilities: 0,
+    repairs: 0,
     sellIncome: 0,
     vendingRevenue: 0,
     messTicks: 0,

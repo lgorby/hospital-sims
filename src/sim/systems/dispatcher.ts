@@ -794,10 +794,9 @@ function progressJobs(world: World): void {
       world.jobs.delete(job.id);
       world.releaseJobWorker(job);
       world.events.emit('jobChanged', { jobId: job.id });
-      if (room) {
-        room.brokenSince = null;
-        world.events.emit('roomChanged', { roomId: room.id });
-      }
+      // ECONOMY Stage-1: restore service AND charge the parts cost (per room
+      // type) — neglect is now a cash decision, not just downtime.
+      if (room) world.completeRepair(room);
     } else {
       // clean (any mess kind): worker already detached, so removeMess's
       // orphan clause deletes the job without a double-release.

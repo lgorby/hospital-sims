@@ -29,6 +29,7 @@ import {
   netFromCategories,
   priceOf,
   roomEarns,
+  scaledFee,
   sellbackAmount,
 } from '../src/sim/formulas';
 import { setupNewGame } from '../src/sim/newGame';
@@ -86,8 +87,16 @@ describe('dayNet folds the table (§9.6)', () => {
     tally.payroll = 1880;
     tally.hireFees = 100;
     tally.construction = 8000;
+    tally.utilities = 1200; // ECONOMY Stage-1 expenses — set nonzero so the fold
+    tally.repairs = 400; // is actually exercised, not blind (dayNet review note).
     const legacy =
-      tally.revenue + tally.sellIncome - tally.payroll - tally.hireFees - tally.construction;
+      tally.revenue +
+      tally.sellIncome -
+      tally.payroll -
+      tally.hireFees -
+      tally.construction -
+      tally.utilities -
+      tally.repairs;
     expect(dayNet(tally)).toBe(legacy);
     expect(netFromCategories(tally)).toBe(legacy);
   });
@@ -147,7 +156,7 @@ describe('per-room attribution (§4.1)', () => {
     const xray = world.roomsOfType('xray')[0]!;
     const patient = world.spawnPatient('flu');
     patient.acuity = 5;
-    const fee = CONDITION_DEFS.flu.steps[0]!.fee;
+    const fee = scaledFee(CONDITION_DEFS.flu.steps[0]!.fee);
 
     resolveTreatmentOutcome(world, reserve(world, patient, exam.id, 0), true);
 
@@ -189,13 +198,13 @@ describe('per-room attribution (§4.1)', () => {
     resolveTreatmentOutcome(world, reserve(world, patient, xray.id, 0), true);
     resolveTreatmentOutcome(world, reserve(world, patient, exam.id, 1), true);
 
-    expect(xray.revenueTotal).toBe(step1.fee);
-    expect(exam.revenueTotal).toBe(step2.fee);
+    expect(xray.revenueTotal).toBe(scaledFee(step1.fee));
+    expect(exam.revenueTotal).toBe(scaledFee(step2.fee));
     expect(xray.visitsTotal).toBe(1);
     expect(exam.visitsTotal).toBe(1);
     // TWO visits, ONE discharge — exactly the vocabulary split §4.1 insists on.
     expect(world.lifetimeTreated).toBe(1);
-    expect(world.lifetime.revenue).toBe(step1.fee + step2.fee);
+    expect(world.lifetime.revenue).toBe(scaledFee(step1.fee) + scaledFee(step2.fee));
   });
 
   it('tallyCash moves today AND lifetime together at every migrated site', () => {
@@ -300,7 +309,7 @@ describe('closeDay FROZEN order (§9.5)', () => {
     const patient = world.spawnPatient('flu');
     patient.acuity = 5;
     resolveTreatmentOutcome(world, reserve(world, patient, exam.id, 0), true);
-    const fee = CONDITION_DEFS.flu.steps[0]!.fee;
+    const fee = scaledFee(CONDITION_DEFS.flu.steps[0]!.fee);
     expect(exam.revenueToday).toBe(fee); // premise
 
     const report = closeOneDay(world);

@@ -506,8 +506,42 @@ declare const process: { env: Record<string, string | undefined> } | undefined;
 const describeProbe =
   typeof process !== 'undefined' && process.env.ECONOMY_PROBE ? describe : describe.skip;
 
+/**
+ * The three levers are now LIVE in the sim (ECONOMY_STAGE1_CONTRACT v2 shipped).
+ * This probe INJECTS its own levers from outside, so it must NEUTRALISE the live
+ * ones or it would double-count (sim scales fees + charges utilities, then the
+ * probe scales/charges again). Zeroing them here keeps the probe a faithful
+ * DERIVATION artifact — BASELINE reproduces the pre-Stage-1 ~82% margin.
+ */
+function withLiveEconomyOff(fn: () => void): void {
+  const econ = BALANCE.economy as unknown as {
+    feeScale: number;
+    utilitiesPerTileHour: number;
+    usagePerActiveHour: Partial<Record<RoomType, number>>;
+    repairCost: Partial<Record<RoomType, number>>;
+  };
+  const saved = {
+    feeScale: econ.feeScale,
+    util: econ.utilitiesPerTileHour,
+    usage: econ.usagePerActiveHour,
+    repair: econ.repairCost,
+  };
+  econ.feeScale = 1;
+  econ.utilitiesPerTileHour = 0;
+  econ.usagePerActiveHour = {};
+  econ.repairCost = {};
+  try {
+    fn();
+  } finally {
+    econ.feeScale = saved.feeScale;
+    econ.utilitiesPerTileHour = saved.util;
+    econ.usagePerActiveHour = saved.usage;
+    econ.repairCost = saved.repair;
+  }
+}
+
 describeProbe('Economy Stage-1 probe (ECONOMY_STAGE1_CONTRACT §4)', () => {
-  it('prints per-arm economy tables under candidate levers', () => {
+  it('prints per-arm economy tables under candidate levers', () => withLiveEconomyOff(() => {
     const seeds = [1337, 1338, 31337, 4242, 90210];
 
     const arms: Arm[] = [
@@ -557,5 +591,5 @@ describeProbe('Economy Stage-1 probe (ECONOMY_STAGE1_CONTRACT §4)', () => {
     const dblStaff = matureStaffRoster().map((s) => ({ ...s, count: s.count * 2 }));
     const dblArm: Arm = { name: 'REFERENCE 2× payroll', build: REFERENCE_BUILD, staff: dblStaff, days: 5 };
     report(dblArm, DERIVED_PERTYPE, seeds.map((s) => runEconomy(s, dblArm, DERIVED_PERTYPE)));
-  }, 600_000);
+  }), 600_000);
 });

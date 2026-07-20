@@ -185,6 +185,27 @@ export function perTileRate(roomType: RoomType): number {
 }
 
 /**
+ * ECONOMY Stage-1 (ECONOMY_STAGE1_CONTRACT v2): the uniform TREATMENT-fee
+ * multiplier that collapses the ~82% margin. Applied at the single billing site
+ * for both `patient.billed` and `billFee` so the card and the ledger agree.
+ * Vending is NOT treatment revenue and never passes through here. Rounded to
+ * whole dollars (fees are integers).
+ */
+export function scaledFee(fee: number): number {
+  return Math.round(fee * BALANCE.economy.feeScale);
+}
+
+/** Always-on HVAC/lighting for a room, $/game-hour (footprint tiles × rate). */
+export function roomHvacPerHour(rect: Rect): number {
+  return rect.cols * rect.rows * BALANCE.economy.utilitiesPerTileHour;
+}
+
+/** Usage draw for an ACTIVE equipment room, $/game-hour (0 for non-equipment). */
+export function roomUsagePerHour(roomType: RoomType): number {
+  return BALANCE.economy.usagePerActiveHour[roomType] ?? 0;
+}
+
+/**
  * THE room price (CAPACITY_PLAN §4.1): base cost + per-tile rate on every
  * tile beyond the minimum footprint. One formula prices a NEW build and (in
  * Stage B) an EXPANSION — no arbitrage between "build big" and "grow later".

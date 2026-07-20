@@ -8,7 +8,7 @@ import { CONDITION_DEFS, CONDITION_IDS, type ConditionId,
 } from '../src/sim/data/conditions';
 import type { Patient } from '../src/sim/entities/patient';
 import type { Reservation } from '../src/sim/entities/staff';
-import { conditionSpawnWeights } from '../src/sim/formulas';
+import { conditionSpawnWeights, scaledFee } from '../src/sim/formulas';
 import { setupNewGame } from '../src/sim/newGame';
 import { findPath } from '../src/sim/path/astar';
 import { rollCondition } from '../src/sim/systems/spawn';
@@ -156,7 +156,7 @@ describe('multi-step paths run end-to-end (fracture: X-ray → casting)', () => 
 
     for (let i = 0; i < 3 * TICKS_PER_DAY && billedOnDischarge < 0; i++) t.world.tick();
 
-    const stepFees = CONDITION_DEFS.fracture.steps.map((s) => s.fee);
+    const stepFees = CONDITION_DEFS.fracture.steps.map((s) => scaledFee(s.fee));
     expect(billedOnDischarge).toBe(stepFees.reduce((a, b) => a + b, 0));
     expect(fees).toEqual(stepFees); // one bill per step, in path order
   });
@@ -267,7 +267,7 @@ describe('per-step billing is final (GDD §6)', () => {
     const reservation = fakeReservation(t.world, patient);
 
     resolveTreatmentOutcome(t.world, reservation, true); // X-ray billed
-    const xrayFee = CONDITION_DEFS.fracture.steps[0]!.fee;
+    const xrayFee = scaledFee(CONDITION_DEFS.fracture.steps[0]!.fee);
     expect(t.world.cash).toBe(startCash + xrayFee);
 
     t.world.patientLeavesAma(patient);
@@ -284,7 +284,7 @@ describe('per-step billing is final (GDD §6)', () => {
     const reservation = fakeReservation(t.world, patient);
 
     resolveTreatmentOutcome(t.world, reservation, true);
-    const xrayFee = CONDITION_DEFS.fracture.steps[0]!.fee;
+    const xrayFee = scaledFee(CONDITION_DEFS.fracture.steps[0]!.fee);
     t.world.killPatient(patient);
     expect(t.world.cash).toBe(startCash + xrayFee);
   });

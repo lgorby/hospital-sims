@@ -28,7 +28,7 @@ import { World, type Mess, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 11;
+export const SAVE_VERSION = 12;
 
 /**
  * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
@@ -133,6 +133,16 @@ export const SAVE_VERSION = 11;
  * understands" refusal. Adding condition ids has bumped the version every
  * time it has happened — see the v1 → v2 note above, which names conditions
  * explicitly, and v8 → v9, which states the same rule for roles.
+ *
+ * v11 → v12 (ECONOMY Stage-1, ECONOMY_STAGE1_CONTRACT v2): two new `DayTally`
+ * cash keys, `utilities` and `repairs` (new `FINANCE_CATEGORIES` expense rows).
+ * A v11 save omits them; `readTally` defaults them to 0 via `TALLY_KEY_VERSIONS`
+ * (the `electiveTreated: 11` precedent — WITHOUT the entry it throws
+ * `asNumber(undefined)`). No field-shape change, no `readRoom`/`readPatient`
+ * migration. The v12 write direction earns the refusal the other way (a v12 save
+ * opened by a v11 build fails the version check cleanly). NB: the new fees/costs
+ * re-baseline EXISTING saves on load (owner-ratified all-saves) — a healthy v11
+ * hospital may load tighter under the collapsed margin.
  *
  * Anything below 1 or above SAVE_VERSION is refused.
  */
@@ -517,6 +527,10 @@ const TALLY_KEY_VERSIONS: Partial<Record<keyof DayTally, number>> = {
   messTicks: 5,
   electiveTreated: 11,
   electiveNoShow: 11,
+  // ECONOMY Stage-1: without these, a v11 save (no `utilities`/`repairs` keys)
+  // throws `asNumber(undefined)` in readTally instead of defaulting to 0.
+  utilities: 12,
+  repairs: 12,
 };
 
 function writeTally(tally: DayTally): DayTally {

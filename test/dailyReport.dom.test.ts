@@ -28,6 +28,8 @@ function makeReport(over: Partial<DayReport> = {}): DayReport {
     payroll: 0,
     hireFees: 0,
     construction: 0,
+    utilities: 0,
+    repairs: 0,
     sellIncome: 0,
     vendingRevenue: 0,
     messTicks: 0,
@@ -80,18 +82,22 @@ describe('daily report Money section (the §9.1 fold renders what shipped)', () 
       revenue: 2400,
       vendingRevenue: 45,
       payroll: 1880,
+      utilities: 1200,
+      repairs: 400,
       hireFees: 100,
       construction: 8000,
       sellIncome: 2000,
       cash: 12345,
     });
     // reportOrder, NOT the table's array order (that one is the finances
-    // GRID's): sell-back income closes the section, above the hand-rendered
-    // Net / Cash on hand.
+    // GRID's): utilities/repairs sit with payroll as operating expenses, and
+    // sell-back income closes the section, above the hand-rendered Net / Cash.
     expect(moneyRows(render(report))).toEqual([
       ['Patient fees', '$2,400', 'good'],
       ['Vending', '$45', 'good'], // a BREAKDOWN of revenue, toned like income
       ['Payroll', '−$1,880', 'bad'], // kind: 'expense' drives BOTH sign + tone
+      ['Utilities', '−$1,200', 'bad'],
+      ['Repairs', '−$400', 'bad'],
       ['Hiring', '−$100', 'bad'],
       ['Construction', '−$8,000', 'bad'],
       ['Sell-back income', '$2,000', 'good'],
@@ -101,11 +107,12 @@ describe('daily report Money section (the §9.1 fold renders what shipped)', () 
   });
 
   it('an empty day zero-suppresses exactly the showWhenZero:false rows', () => {
-    // Patient fees and Payroll always render (showWhenZero); the other four
-    // appear only when they happened — the shipped conditionals, in table form.
+    // Patient fees, Payroll and Utilities always render (showWhenZero); the
+    // other five appear only when they happened — the shipped conditionals.
     expect(moneyRows(render(makeReport()))).toEqual([
       ['Patient fees', '$0', 'good'],
       ['Payroll', '$0', 'bad'],
+      ['Utilities', '$0', 'bad'],
       ['Net', '$0', 'good'],
       ['Cash on hand', '$0', ''],
     ]);

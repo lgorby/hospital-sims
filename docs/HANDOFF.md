@@ -1,16 +1,16 @@
 # Handoff — Hospital Simms
 
-**Last updated:** 2026-07-19 (late) — **EARLY-GAME ECONOMY PROBE built + reviewed**
-(`test/economyProbe.test.ts`, gated; 8 adversarial-review findings folded; its
-measured numbers recorded in `ECONOMY_STAGE1_CONTRACT.md` MEASURED block). **The
-next concrete task is DERIVING the ECONOMY Stage-1 v2 numbers from those streams —
-see START HERE.** Three epics diagnosed (observation banked at v4, shifts +
-economy-rebalance both NOT READY). **GIT STATE CORRECTED (prior handoff was
-stale): the working tree is clean and all commits through `74a516e` are on
-`origin/master` (reflog: "update by push") — so the thought-bubble + measurement
-layer are already PUSHED and LIVE, NOT held.** The uncommitted probe work is
-local-only; a push is a deploy decision for the owner. Prior: outpatient stream
-LIVE (SAVE_VERSION 11, one-way); Departments Stage 2a still blocked.
+**Last updated:** 2026-07-19 (late) — **ECONOMY STAGE-1 IMPLEMENTED** (probe →
+derivation → implementation, 4 adversarial-review rounds; verdict SAFE TO COMMIT).
+The ~82% operating margin is collapsed to **~32%** via three levers (fee trim
+`feeScale 0.72`, size+usage-scaled utilities, per-repair costs). **SAVE_VERSION
+11→12; committed LOCAL, NOT pushed — pushing re-baselines every live save (owner's
+deploy call).** This UNBLOCKS the shifts epic (2× payroll now drops mature to
+~6%). **The next concrete task: the SHIFTS epic** (economic objection cleared;
+the mechanical rewrite still stands — see START HERE). **GIT STATE (corrected
+earlier): commits through `74a516e` were already pushed/LIVE (reflog); the
+economy commits `15ba628`/`ed03a49`/this one are LOCAL-only.** Prior: outpatient
+stream LIVE (SAVE_VERSION 11); Departments Stage 2a still blocked.
 
 ## Read order
 
@@ -51,11 +51,11 @@ hygiene.**
 
 | | |
 |---|---|
-| Tests | **691** (686 passed, 5 skipped), 50 files — `npm test` (the new gated economy probe adds one skipped file) |
+| Tests | **698** (693 passed, 5 skipped), 51 files — `npm test` |
 | Gates | lint, `tsc --noEmit`, `vite build` all green; CI runs the full gate on every push to `master` and every PR |
-| `SAVE_VERSION` | **11** (`src/sim/save.ts:31`), v1–v11 loadable — **DEPLOYED, so one-way** |
+| `SAVE_VERSION` | **12** (`src/sim/save.ts:31`) LOCAL — v1–v12 loadable. **v11 is what's DEPLOYED/LIVE**; v12 (ECONOMY Stage-1 utilities/repairs tally keys) is committed local-only. Pushing makes v12 one-way AND re-baselines every live save under the tighter economy. |
 | Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 15 room types (14 buildable, `resp` retired) · 11 staff roles |
-| Working tree | before the probe: clean, and **all commits through `74a516e` are on `origin/master` (verified via reflog — the prior "NOT PUSHED / ~18 ahead" claim was STALE; a push landed at 18:52).** So `f9ecbbb` (thought bubbles) + `8ec700d` (measurement layer) are LIVE. The economy-probe commit is local-only until the owner pushes. |
+| Working tree | clean. Commits through `74a516e` are on `origin/master` (LIVE). The three ECONOMY commits (`15ba628` probe, `ed03a49` derivation, + the implementation) are **LOCAL-only** — a push is the owner's deploy + save-re-baseline decision. |
 
 **SAVE_VERSION 11 is deployed, which makes it one-way.** Saves written by the
 live build cannot be opened by the previous one — that is the bump doing its
@@ -88,6 +88,12 @@ of Departments Stage 1 worth checking against real play):
 - The Stage-1 **capex risk** (`DEPARTMENTS_PLAN` §3.8 point 3) is unmeasured,
   not proven safe: serving 17% of arrival weight went from a $5,000 room to a
   $200/day hire, and a 5-day probe cannot see a one-time capital deletion.
+- **ECONOMY Stage-1 re-baselines EXISTING saves (owner-ratified all-saves).**
+  When v12 ships, a loaded v11 hospital immediately pays the new fee cut +
+  utilities + repair costs, so a previously-comfortable save loads TIGHTER (a
+  healthy hospital drops from ~82% to ~32% margin). Not a defect — the point of
+  the milestone — but the biggest player-facing consequence of the push. v1–v11
+  saves still LOAD (tally keys default to 0); they just earn less going forward.
 
 ## Owner decisions — RATIFIED 2026-07-19
 
@@ -287,16 +293,35 @@ committed draft. The path both reviewers converged on:
   on a ward-present build, RNG re-pins derived mechanically not predicted.
 
 **NEW OWNER ASKS 2026-07-19, none started, all scoped:**
+- **Maintenance-dispatch narration in NEEDS ATTENTION (owner ask, RENDER-ONLY,
+  cheap).** Today a breakdown surfaces "CT is broken" but not the follow-up. The
+  dispatcher already queues a repair job and assigns a NAMED idle maintenance
+  worker (job goes `queued → working` with a `staffId` + `roomId`) — that
+  transition IS the trigger. A render-side listener turns it into "{staff} is en
+  route to {room}", updating the SAME NEEDS-ATTENTION alert IN PLACE ("CT broken"
+  → "CT broken, Marcus en route" → clears when fixed), NOT a third stacked toast.
+  No sim/save/determinism change — a consumer of state the sim already produces.
+  **The valuable half is the UNSTAFFED case:** if every maintenance worker is busy
+  or none is hired, the job sits `queued` with no `staffId` — "CT broken — no
+  maintenance staff available" is the message that actually drives a HIRE
+  decision. Both come from the same job-state watcher. Pairs with the ECONOMY
+  Stage-1 repair cost just shipped ("Marcus is repairing CT" and "that repair cost
+  $1,200" are the two ends of one visible event).
 - **Nurse techs** — a role DISTINCT from EVS (owner ruling: "two entirely
   different duties"). EVS attends a TILE, a nurse tech attends a PATIENT — new
   claim shape, not a mess-system reskin. Patient load **6–9**. The design prize:
   in reality the CNA is WHY observation runs at 1 RN : 5–8 beds, so techs are a
   CAPACITY LEVER ("do I need a nurse or a tech?"), not a chore tax.
 - **12.5-hour shifts, 30-min lunches, rotation every 12h with overlap.**
-  **THE BIGGEST ITEM ON THE BOARD.** Staff currently work 24/7; shifts mean
-  ~2× headcount for the same coverage, so payroll roughly DOUBLES against an
-  economy tuned at M4 for continuous staff. A whole-economy rebalance, not a
-  feature — its own plan, research and measurement pass.
+  **THE BIGGEST ITEM ON THE BOARD — and now the NEXT concrete task.** Staff
+  currently work 24/7; shifts mean ~2× headcount for the same coverage, so payroll
+  roughly DOUBLES. **The ECONOMIC objection is now CLEARED** — ECONOMY Stage-1
+  shipped, and the probe measured 2× payroll dropping the mature margin to ~6%
+  (was inert at ~11% before), so shifts finally bite. **The MECHANICAL rewrite
+  still stands** (`SHIFTS_STAGE1_CONTRACT.md` §B: gathering-promotion isn't
+  gated, no walk-home trigger, off-floor is new save state, the midnight-start
+  collision) — that half is unchanged and is what the shifts v2 contract must
+  solve. Start there.
 - **Staff lounge (Comfort dropdown)** — couples to shifts: a lunch break IS a
   shift concept, so designing the lounge alone makes it decoration. Note the
   three-way interaction already recorded below: a ratio nurse who never returns
