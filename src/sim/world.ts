@@ -1063,6 +1063,7 @@ export class World implements PathGrid {
       onFloor: true,
       onBreak: null, // SHIFTS Stage 2: no lunch in flight
       lunchedThisShift: false,
+      fatigue: 0, // SHIFTS Stage 3a: rested; inert for null-shift staff
       at: { ...BALANCE.map.entrance },
       next: null,
       path: [],
@@ -1137,6 +1138,7 @@ export class World implements PathGrid {
         onFloor: true,
         onBreak: null,
         lunchedThisShift: false,
+        fatigue: 0,
         at: { ...BALANCE.map.entrance },
         next: null,
         path: [],

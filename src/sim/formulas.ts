@@ -68,11 +68,16 @@ export function attentionSkill(skill: number, load: number): number {
   return Math.min(BALANCE.stats.max, Math.max(BALANCE.stats.min, skill - penalty));
 }
 
-/** GDD §2: duration = base × skill modifier × quality modifier, in ticks. */
+/** GDD §2: duration = base × skill modifier × quality modifier, in ticks.
+ *  SHIFTS Stage 3a: an optional `fatigueMult` (default 1 → every existing caller
+ *  and every null-shift staffer bit-identical) applies the fatigue slowdown as a
+ *  SEPARATE multiplier — outside attentionSkill's clamp, so it isn't swallowed on
+ *  high-load bays (design review). */
 export function treatmentDurationTicks(
   baseGameMinutes: number,
   averageSkill: number,
   roomQuality: number,
+  fatigueMult = 1,
 ): number {
   const t = BALANCE.treatment;
   const skillMod = t.durationSkillBase - t.durationSkillFactor * averageSkill;
@@ -82,7 +87,21 @@ export function treatmentDurationTicks(
     t.durationQualityFloor,
     1 - t.durationQualityFactor * roomQuality,
   );
-  return Math.max(1, Math.round(gameMinutesToTicks(baseGameMinutes) * skillMod * qualityMod));
+  return Math.max(
+    1,
+    Math.round(gameMinutesToTicks(baseGameMinutes) * skillMod * qualityMod * fatigueMult),
+  );
+}
+
+/**
+ * SHIFTS Stage 3a: the treatment-duration multiplier for a given fatigue level —
+ * 1.0 rested, `1 + durationFactor` at the cap. Deliberately a MULTIPLIER on
+ * duration (not a skill penalty inside attentionSkill's clamp), so it survives the
+ * load path on busy bays. Deaths are untouched (the success roll keeps raw skill).
+ */
+export function fatigueDurationMultiplier(fatigue: number): number {
+  const f = BALANCE.shifts.fatigue;
+  return 1 + f.durationFactor * (Math.min(f.max, Math.max(0, fatigue)) / f.max);
 }
 
 /** GDD §7: +8 for an acuity-1 save down to +2 for an acuity-5 discharge. */

@@ -99,6 +99,14 @@ export interface Staff {
    * one-lunch-per-shift rule.
    */
   lunchedThisShift: boolean;
+  /**
+   * SHIFTS Stage 3a: 0..BALANCE.shifts.fatigue.max. Rises (load-weighted) while
+   * on-duty, falls while off-shift/at a lunch; slows TREATMENT duration only (the
+   * success/death roll stays raw-skill). SAVED (determinism, the `onFloor`
+   * precedent). Defaults 0; INERT for null-shift (test) staff — they never accrue,
+   * so fixtures stay bit-identical. Serialized at SAVE_VERSION 15.
+   */
+  fatigue: number;
 
   // Walker fields (movement system)
   at: GridPoint;

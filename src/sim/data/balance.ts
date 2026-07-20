@@ -122,6 +122,34 @@ export const BALANCE = {
        *  is always reachable. */
       breakWatchdogGameMinutes: 120,
     },
+    /**
+     * SHIFTS Stage 3a (SHIFTS_STAGE3A_CONTRACT). Staff tire while working and rest
+     * at lunch / off-shift; fatigue slows TREATMENT duration only (deaths stay
+     * raw-skill). INITIAL values — the probe (`staffBreakProbe`) tunes them; INERT
+     * for null-shift staff. Load-weighted accrual routes the lounge payoff to the
+     * busy bottleneck (both pre-impl reviews). Recovery is SHIFT-gated (guaranteed
+     * nightly, even 1-deep); only the lunch/cap is headcount-gated.
+     */
+    fatigue: {
+      /** The cap — a never-rested staffer is bad-but-BOUNDED (hire-slack pressure). */
+      max: 100,
+      /** Accrual while on-duty (present, any duty), per game-hour. */
+      basePerGameHour: 4,
+      /** …PLUS this per ACTIVE treatment reservation (load-weighted: busy tires faster). */
+      workPerGameHour: 6,
+      /** Recovery per game-hour while off-shift (home) — faster than accrual. */
+      recoveryPerGameHour: 20,
+      /** Fatigue removed by an on-site LOUNGE lunch (the payoff — bigger). */
+      loungeRest: 45,
+      /** …by leaving the building to eat (smaller — the lounge-vs-offfloor gap). */
+      offFloorRest: 20,
+      /** Treatment-duration MULTIPLIER at full fatigue = 1 + this (a SEPARATE
+       *  multiplier, NOT inside attentionSkill's clamp — design review). */
+      durationFactor: 0.4,
+      /** ≥ this ABSOLUTE meter value (0..max) → the inspect "(tired)" marker
+       *  (render-only legibility; kept absolute so it needs no %-of-max math). */
+      tiredThreshold: 60,
+    },
   },
   arrivals: {
     /** M4 balance pass: 3.0 overwhelmed a full 6-room build (~50 arrivals vs

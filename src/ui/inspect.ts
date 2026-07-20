@@ -314,6 +314,10 @@ export class InspectPanel {
             ? 'off shift (leaving)'
             : 'on duty';
       }
+      // SHIFTS Stage 3a: fatigue legibility. Max-normalized so a tuned `max`
+      // can't misread the % or the threshold (post-impl review).
+      const fat = BALANCE.shifts.fatigue;
+      const isTired = s.shift !== null && s.fatigue >= fat.tiredThreshold;
       const nextShift: ShiftId = (s.shift ?? 'day') === 'night' ? 'day' : 'night';
       this.shiftButton.textContent = `Switch to ${nextShift.charAt(0).toUpperCase() + nextShift.slice(1)} shift`;
       this.body.innerHTML =
@@ -339,8 +343,16 @@ export class InspectPanel {
                 panel.map((r) => r.phase),
                 s.duty.kind === 'job' ? this.world.jobs.get(s.duty.jobId)?.kind : undefined,
                 s.duty.kind === 'job' ? this.world.jobs.get(s.duty.jobId)?.phase : undefined,
-              ) + (s.firing ? ' (leaving after this patient)' : ''),
+              ) +
+                (s.firing ? ' (leaving after this patient)' : '') +
+                // The "(tired)" state on the DUTY line (contract §4.1, the
+                // Stage-2 "On lunch" precedent) — a player sees who's worn down.
+                (isTired ? ' (tired)' : ''),
         ) +
+        // Only for real shifted staff (null-shift test rosters never tire).
+        (s.shift !== null
+          ? this.line('Fatigue', `${Math.round(s.fatigue)}/${fat.max}`)
+          : '') +
         panelLine;
       return;
     }

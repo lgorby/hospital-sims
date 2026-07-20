@@ -67,11 +67,11 @@ hygiene.**
 
 | | |
 |---|---|
-| Tests | **735 passed, 8 skipped**, 55 files — `npm test`. The gated-probe skips are `shiftProbe`/`economyProbe`/`edProbe`/`utilisationProbe`/`staffBreakProbe` etc. (each `*_PROBE=1`). |
+| Tests | **742+ passed, 8 skipped**, 55 files — `npm test`. The gated-probe skips are `shiftProbe`/`economyProbe`/`edProbe`/`utilisationProbe`/`staffBreakProbe` etc. (each `*_PROBE=1`). |
 | Gates | lint, `tsc --noEmit`, `vite build` all green; CI runs the full gate on every push to `master` and every PR |
-| `SAVE_VERSION` | **14** (`src/sim/save.ts:32`) — v1–v14 loadable. **v14 is SHIFTS Stage 2 (mid-shift lunches + `lounge` room; `Staff.onBreak`/`lunchedThisShift`) — COMMITTED LOCALLY, NOT DEPLOYED.** The DEPLOYED/LIVE version is still **v13** (SHIFTS Stage-1 + ECONOMY). v14 is one-way once pushed; v<14 saves load inert (no lunch until the next window). |
-| Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 16 room types (15 buildable inc. the new `lounge`, `resp` retired) · 11 staff roles |
-| Working tree | Stage-2 committed LOCALLY on `master`; **`origin/master` is still at `9ae3b95` (LIVE = v13)** — the Stage-2 commit is NOT pushed (deploy is a pending owner call; v14 one-way). |
+| `SAVE_VERSION` | **15** (`src/sim/save.ts:32`) — v1–v15 loadable. **v15 is SHIFTS Stage 3a (staff `fatigue`) — COMMITTED LOCALLY, NOT DEPLOYED**, on top of v14 (Stage 2 lunches + `lounge`). The DEPLOYED/LIVE version is still **v13**. v15 is one-way once pushed; v<15 saves load inert (fatigue 0 until staff work a shift). |
+| Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 16 room types (15 buildable inc. `lounge`, `resp` retired) · 11 staff roles |
+| Working tree | Stage 2 + 3a committed LOCALLY on `master`; **`origin/master` is still at `9ae3b95` (LIVE = v13)** — NOT pushed (deploy is a pending owner call; v14/v15 are one-way). |
 
 **SAVE_VERSION 11 is deployed, which makes it one-way.** Saves written by the
 live build cannot be opened by the previous one — that is the bump doing its
@@ -153,29 +153,28 @@ revisited.
 
 ## Next
 
-### START HERE (session handoff, 2026-07-20 — SHIFTS STAGE-2 SHIPPED LOCAL (NOT DEPLOYED); PICK THE NEXT FEATURE)
+### START HERE (session handoff, 2026-07-20 — SHIFTS STAGE 2 + 3a SHIPPED LOCAL (NOT DEPLOYED); PICK THE NEXT FEATURE)
 
-**SHIFTS Stage 2 (mid-shift lunches + the staff lounge) is IMPLEMENTED, REVIEWED,
-and COMMITTED LOCALLY — NOT pushed/deployed.** SAVE_VERSION **13 → 14** (one-way).
-All gates green (tsc + lint + build); **735 tests pass, 8 skip** (the new
-`staffBreakProbe` is the 8th gated skip). Full provenance in `CHANGELOG.md` *(shifts 2)*
-and the do-not-regress rules in `INVARIANTS.md` ("SHIFTS Stage 2"). Contract:
-`docs/SHIFTS_STAGE2_CONTRACT.md` (v2, both pre-impl reviews + the post-impl review folded).
+**SHIFTS Stage 2 (lunches + lounge, v14) AND Stage 3a (staff fatigue, v15) are
+IMPLEMENTED, REVIEWED, and COMMITTED LOCALLY — NOT pushed/deployed.** SAVE_VERSION
+**13 → 14 → 15** (one-way). All gates green; **742 tests pass, 8 skip**. Provenance in
+`CHANGELOG.md` *(shifts 2)* / *(shifts 3a)*; do-not-regress rules in `INVARIANTS.md`
+("SHIFTS Stage 2" / "SHIFTS Stage 3a"). Contracts: `docs/SHIFTS_STAGE2_CONTRACT.md`,
+`docs/SHIFTS_STAGE3A_CONTRACT.md` (both v2, all pre-impl + post-impl findings folded).
 
 **⚠ DEPLOY IS PENDING — a separate owner release call.** `origin/master` is still at
-`9ae3b95` (SHIFTS Stage-1). The Stage-2 commit is LOCAL only. Pushing auto-deploys and
-v14 is one-way, so the owner deploys deliberately, not as routine hygiene.
+`9ae3b95` (SHIFTS Stage-1 = LIVE v13). The Stage 2 + 3a commits are LOCAL only. Pushing
+auto-deploys and v15 is one-way, so the owner deploys deliberately, not as routine hygiene.
 
-**What shipped:** staggered per-staffer lunches (id-hash, rng-free) with a per-role
-coverage cap so the floor never empties (owner: "never all at once, it must be random");
-a solo-of-a-role skips lunch (hire slack to unlock breaks — the lounge is inert below
-2-per-role, a mid-game buy); on-site lounge (30 min) vs leave-the-building (60 min,
-off-floor); `updateStaffBreaks` before `updateShifts`; lounge = derived-occupancy comfort
-room. **BALANCE, owner-ratified ship-as-is:** the probe measured the lounge as NOT a
-Stage-2 throughput lever (a brief lunch barely dents a slack hospital; lounge-vs-leave is
-within noise). Its real payoff is **Stage-3 morale (rested staff work better)** — which is
-where fatigue/morale/differential/agency were already scoped. Stage 2 ships the *mechanic*
-honestly; Stage 3 makes the lounge matter.
+**What shipped (Stage 2):** staggered per-staffer lunches (id-hash, rng-free) with a
+per-role coverage cap ("never all at once"); solo-of-a-role skips lunch; on-site lounge
+vs leave-the-building; `lounge` = derived-occupancy comfort room. **(Stage 3a):** a
+load-weighted `Staff.fatigue` meter that slows TREATMENT DURATION ONLY (deaths stay
+raw-skill), rests at lunches (lounge > off-floor) + off-shift, capped (never runaway),
+inert for null-shift staff. **This is what makes the lounge pay off.** Measured honestly
+(probe): on a TIGHT roster the lounge recovers ~0.44 disch/d of a ~1.2 coverage cost (a
+positive but PARTIAL lever — capped by skip-under-capture, the residual Stage-2 debt);
+small on an over-staffed build; cap holds, deaths flat (no spiral). Not massaged.
 
 **►►► NEXT: START A NEW FEATURE.** Follow the per-milestone workflow every time (it keeps
 paying): **plan → 2 independent split-lens pre-impl review agents → implement → post-impl
@@ -183,14 +182,17 @@ review agent → fix ALL findings + a regression each → gates green (tsc + lin
 commit.** Live-drive anything player-facing (`/run-hospital-simms`). Recommended options,
 strongest first:
 
-1. **SHIFTS STAGE 3 — fatigue, morale, night differential, agency.** The natural
-   continuation, and it's what makes the just-shipped lounge PAY OFF (rested staff work
-   better; a skipped/off-site lunch carries a fatigue/morale cost). The inert hook exists:
-   `Staff.lunchedThisShift` staying false past a staffer's window is the signal Stage 3
-   reads (`SHIFTS_STAGE2_CONTRACT.md` §7). Known debt to decide: skip-under-capture means
-   the busiest staff never lunch, so a naive fatigue meter is unbounded for them — Stage 3
-   must add pre-emption or a captured-staff carve-out. Also: an aborted lunch counts as
-   "lunched" for the Stage-2 once-guard; Stage 3 may want to distinguish "attempted" vs "ate".
+1. **SHIFTS STAGE 3b — night differential, agency/overtime, morale/quit** (Stage 3a
+   FATIGUE just shipped, v15). The economy levers deferred from 3a: night-shift pay
+   premium (+10–15%), agency/overtime as a ~2× emergency gap-filler, and (a bigger surface)
+   a morale/quit system. `SHIFTS_STAGE3A_CONTRACT.md` §7 lists them; `Staff.fatigue` is
+   reusable as a morale input (don't mint a second meter). **Two open debts 3a surfaced,
+   worth deciding here:** (a) **skip-under-capture caps the lounge payoff** — the busiest
+   captured nurses never lunch, so the lounge only recovers ~37% of the coverage cost; if
+   you want the lounge to matter MORE, that's a break-pre-emption / captured-staff-carve-out
+   decision (owner has declined pre-emption twice — revisit with the 3a probe data); (b) an
+   aborted lunch counts as "lunched"/rested for the once-guard — 3b may distinguish
+   "attempted" vs "ate" for the morale signal.
 2. **NURSE TECHS — a capacity lever the owner asked for** (distinct from EVS: a tech
    attends a PATIENT, EVS attends a TILE). Patient load 6–9. The design prize: "do I
    need a nurse or a tech?" Pairs with the OBSERVATION v4 rewrite (which wants nurse-tech

@@ -2,7 +2,7 @@ import { gameMinutesToTicks } from '../clock';
 import { BALANCE } from '../data/balance';
 import type { Room } from '../entities/room';
 import type { Staff, StaffBreak } from '../entities/staff';
-import { inLunchWindow, onShift } from '../formulas';
+import { inLunchWindow, meterDecayPerTick, onShift } from '../formulas';
 import { findPath } from '../path/astar';
 import { samePoint } from '../types';
 import type { World } from '../world';
@@ -33,12 +33,45 @@ export function updateStaffBreaks(world: World): void {
   // deterministically, never on Map insertion order.
   const members = [...world.staff.values()].sort((a, b) => a.id - b.id);
   for (const member of members) {
+    // SHIFTS Stage 3a: fatigue accrual/recovery runs FIRST — structurally before
+    // the onBreak/tryStartLunch early exits, so home staff recover (they'd
+    // otherwise never reach it). Lunch-rest is applied in advanceBreak.
+    updateFatigue(world, member, minute);
     if (member.onBreak !== null) {
       advanceBreak(world, member, member.onBreak, watchdogTicks);
       continue;
     }
     tryStartLunch(world, member, minute);
   }
+}
+
+/**
+ * SHIFTS Stage 3a (§3): load-weighted accrual while on-duty, recovery while
+ * off-shift at home, FROZEN in the between windows. INERT for null-shift staff, so
+ * every existing fixture stays bit-identical. Pure arithmetic, no rng.
+ */
+function updateFatigue(world: World, member: Staff, minute: number): void {
+  if (member.shift === null) return; // null-shift (test) staff never tire
+  const f = BALANCE.shifts.fatigue;
+  const onDuty = onShift(member.shift, minute);
+  if (onDuty && member.onFloor && member.onBreak === null) {
+    // Accrue, LOAD-WEIGHTED: a base rate + more per active treatment bay, so the
+    // busy bottleneck staff tire fastest — where the lounge payoff must land.
+    // Alloc-free count (the staffLoadIn idiom) — no per-tick sort (post-impl review).
+    let activeLoad = 0;
+    for (const r of world.reservations.values()) {
+      if (r.phase === 'active' && r.kind === 'treatment' && r.staffIds.includes(member.id)) {
+        activeLoad += 1;
+      }
+    }
+    const rate = f.basePerGameHour + f.workPerGameHour * activeLoad;
+    member.fatigue = Math.min(f.max, member.fatigue + meterDecayPerTick(rate));
+  } else if (!onDuty && !member.onFloor) {
+    // Recover at home — SHIFT-gated, so guaranteed nightly even 1-deep.
+    member.fatigue = Math.max(0, member.fatigue - meterDecayPerTick(f.recoveryPerGameHour));
+  }
+  // else: off-shift-on-floor (draining/walking home) OR on-shift-off-floor (an
+  // off-floor lunch) → FROZEN. Lunch rest is applied at completion (advanceBreak).
 }
 
 /** Eligible + coverage-cap OK → commit to a lunch (§3.2–3.4). */
@@ -174,6 +207,12 @@ function advanceBreak(
   // using
   b.ticksRemaining -= 1;
   if (b.ticksRemaining > 0) return;
+  // SHIFTS Stage 3a: a completed lunch RESTS — a lounge lunch rests more than
+  // leaving the building (the payoff gap). Aborted lunches never reach here.
+  const rest = b.mode === 'lounge'
+    ? BALANCE.shifts.fatigue.loungeRest
+    : BALANCE.shifts.fatigue.offFloorRest;
+  member.fatigue = Math.max(0, member.fatigue - rest);
   const wasOffFloor = b.mode === 'offFloor';
   member.onBreak = null;
   if (wasOffFloor) {

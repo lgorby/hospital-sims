@@ -49,19 +49,25 @@ interface Row {
   leftAma: number;
   lunchStarts: number;
   maxConcurrentBreak: number;
+  maxFatigue: number;
   days: number;
 }
 
-/** Configure a 24/7 mature roster (both shifts), ≥2-per-role where the fixture
- *  has them (nurse/doctor/radTech) so lunches can actually fire per shift. */
-function configure247(world: World): void {
+/** Configure a 24/7 roster (both shifts). 'mature' = the full reference roster;
+ *  'tight' = only the binding clinical staff at exactly 2-per-role (min for a
+ *  lunch), where fatigue actually binds and the lounge should pay off most. */
+function configureRoster(world: World, kind: 'mature' | 'tight'): void {
   const receptionist = [...world.staff.values()].find((s) => s.role === 'receptionist')!;
   receptionist.shift = 'day';
   const add = (role: RoleId, shift: 'day' | 'night'): void => {
     world.addStaffMember(role, 3, ROLE_DEFS[role].salaryPerDay).shift = shift;
   };
   add('receptionist', 'night');
-  for (const { role, count } of matureStaffRoster()) {
+  const roster =
+    kind === 'mature'
+      ? matureStaffRoster()
+      : [{ role: 'nurse' as RoleId, count: 2 }, { role: 'doctor' as RoleId, count: 2 }];
+  for (const { role, count } of roster) {
     for (let i = 0; i < count; i++) {
       add(role, 'day');
       add(role, 'night');
@@ -69,7 +75,7 @@ function configure247(world: World): void {
   }
 }
 
-function runArm(seed: number, arm: Arm, rep: number, days: number): Row {
+function runArm(seed: number, arm: Arm, rep: number, days: number, roster: 'mature' | 'tight' = 'mature'): Row {
   const events = new EventBus();
   const world = new World(events, seed);
   setupNewGame(world);
@@ -84,7 +90,7 @@ function runArm(seed: number, arm: Arm, rep: number, days: number): Row {
       throw new Error('LOUNGE arm: the lounge failed to build — probe is invalid');
     }
   }
-  configure247(world);
+  configureRoster(world, roster);
 
   const row: Row = {
     seed,
@@ -93,6 +99,7 @@ function runArm(seed: number, arm: Arm, rep: number, days: number): Row {
     leftAma: 0,
     lunchStarts: 0,
     maxConcurrentBreak: 0,
+    maxFatigue: 0,
     days,
   };
   events.on('patientDischarged', () => (row.discharged += 1));
@@ -108,6 +115,7 @@ function runArm(seed: number, arm: Arm, rep: number, days: number): Row {
       if (on) concurrent += 1;
       if (on && wasOnBreak.get(s.id) !== true) row.lunchStarts += 1; // null→break transition
       wasOnBreak.set(s.id, on);
+      row.maxFatigue = Math.max(row.maxFatigue, s.fatigue);
     }
     row.maxConcurrentBreak = Math.max(row.maxConcurrentBreak, concurrent);
   }
@@ -134,7 +142,7 @@ function summarize(label: string, rows: Row[]): { disch: number; ama: number } {
   console.log(
     `  ${label.padEnd(12)} | disch/d ${disch.toFixed(1)} | AMA/d ${ama.toFixed(1)} | ` +
       `died/d ${avg((r) => r.died / r.days).toFixed(2)} | lunches/d ${avg((r) => r.lunchStarts / r.days).toFixed(1)} | ` +
-      `maxConcurrentBreak ${Math.max(...rows.map((r) => r.maxConcurrentBreak))}`,
+      `maxBreak ${Math.max(...rows.map((r) => r.maxConcurrentBreak))} | maxFatigue ${Math.max(...rows.map((r) => r.maxFatigue)).toFixed(0)}`,
   );
   return { disch, ama };
 }
@@ -163,6 +171,20 @@ describeProbe('Staff-break probe (SHIFTS_STAGE2_CONTRACT §6)', () => {
           `LOUNGE recovers ${(loungeS.disch - noLoungeS.disch).toFixed(2)} disch/d vs no-lounge`,
       );
     }
+
+    // TIGHT-ROSTER arm (design review): 2-per-role, where fatigue actually binds
+    // and the lounge should pay off MOST — plus a death-spiral safety check.
+    console.log(`\n########## TIGHT ROSTER (2 nurse + 2 doctor/shift), reputation 500 ##########`);
+    const tOff = withCapReturn(9999, () => seeds.map((s) => runArm(s, 'off', 500, days, 'tight')));
+    const tNo = seeds.map((s) => runArm(s, 'no-lounge', 500, days, 'tight'));
+    const tLo = seeds.map((s) => runArm(s, 'lounge', 500, days, 'tight'));
+    const tOffS = summarize('OFF', tOff);
+    const tNoS = summarize('NO-LOUNGE', tNo);
+    const tLoS = summarize('LOUNGE', tLo);
+    console.log(
+      `  >> TIGHT coverage cost (OFF − NO-LOUNGE) disch/d = ${(tOffS.disch - tNoS.disch).toFixed(2)} | ` +
+        `LOUNGE recovers ${(tLoS.disch - tNoS.disch).toFixed(2)} disch/d, ${(tNoS.ama - tLoS.ama).toFixed(2)} fewer AMA/d`,
+    );
   }, 600_000);
 });
 

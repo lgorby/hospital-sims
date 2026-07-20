@@ -29,7 +29,7 @@ import { World, type Mess, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 14;
+export const SAVE_VERSION = 15;
 
 /**
  * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
@@ -167,6 +167,15 @@ export const SAVE_VERSION = 14;
  * clean "newer than this game understands" refusal — the v10→v11 content rule.
  * No new role, no new condition. `topUpCandidates` stays a no-op.
  *
+ * v14 → v15 (SHIFTS Stage 3a, SHIFTS_STAGE3A_CONTRACT): `Staff` gains `fatigue`
+ * (0..`BALANCE.shifts.fatigue.max`) — a load-weighted meter that slows TREATMENT
+ * duration only (the success/death roll stays raw-skill). A v<15 save defaults
+ * `fatigue = 0` (inert until staff work a shift) via the threaded `saveVersion` in
+ * `readStaff`. SAVED not derived (a mid-shift staffer's fatigue can't be re-derived
+ * — the `onFloor` M1 precedent). The border REJECTS an out-of-[0,max] value (the
+ * untrusted-input convention — never a clamp). No new role/room/condition; the field
+ * is the whole bump, and it earns the other direction cleanly.
+ *
  * Anything below 1 or above SAVE_VERSION is refused.
  */
 export function isLoadableVersion(version: number): boolean {
@@ -294,6 +303,8 @@ export interface SavedStaff {
   onBreak: SavedStaffBreak | null;
   /** SHIFTS Stage 2 (v14): already lunched this shift? */
   lunchedThisShift: boolean;
+  /** SHIFTS Stage 3a (v15): 0..BALANCE.shifts.fatigue.max. */
+  fatigue: number;
   at: SavedPoint;
   next: SavedPoint | null;
   path: SavedPoint[];
@@ -944,6 +955,7 @@ function writeStaff(s: Staff): SavedStaff {
     onFloor: s.onFloor,
     onBreak: s.onBreak === null ? null : writeStaffBreak(s.onBreak),
     lunchedThisShift: s.lunchedThisShift,
+    fatigue: s.fatigue,
     at: writePoint(s.at),
     next: writePointOrNull(s.next),
     path: s.path.map(writePoint),
@@ -954,6 +966,15 @@ function writeStaff(s: Staff): SavedStaff {
 
 function readShiftOrNull(value: unknown, label: string): ShiftId | null {
   return value === null || value === undefined ? null : asOneOf(value, SHIFT_IDS, label);
+}
+
+/** v15 (SHIFTS Stage 3a): REJECT an out-of-range fatigue — the untrusted-input
+ *  convention (never a clamp, which would launder corruption). */
+function readFatigue(value: unknown, label: string): number {
+  const n = asNumber(value, label);
+  const max = BALANCE.shifts.fatigue.max;
+  if (n < 0 || n > max) fail(label, `a fatigue within [0, ${max}]`);
+  return n;
 }
 
 function readStaff(value: unknown, label: string, saveVersion: number): Staff {
@@ -979,6 +1000,7 @@ function readStaff(value: unknown, label: string, saveVersion: number): Staff {
         ? null
         : readStaffBreak(o.onBreak, `${label}.onBreak`),
     lunchedThisShift: saveVersion < 14 ? false : asBool(o.lunchedThisShift, `${label}.lunchedThisShift`),
+    fatigue: saveVersion < 15 ? 0 : readFatigue(o.fatigue, `${label}.fatigue`),
     at: readPoint(o.at, `${label}.at`),
     next: readPointOrNull(o.next, `${label}.next`),
     path: readPath(o.path, `${label}.path`),

@@ -10,6 +10,7 @@ import {
   attentionSkill,
   checkInCapacity,
   effectivePriority,
+  fatigueDurationMultiplier,
   onShift,
   staffRatioFor,
   treatmentDurationTicks,
@@ -901,10 +902,17 @@ function promoteGatheredReservations(world: World): void {
             sum + attentionSkill(m.skill, world.staffLoadIn(m.id, room.id, { activeOnly: true })),
           0,
         ) / members.length;
+      // SHIFTS Stage 3a: tired staff hold the bay LONGER — a separate duration
+      // multiplier from the MEAN fatigue (0 for null-shift staff → 1.0, bit-
+      // identical). Kept OUT of attentionSkill's clamp (design review).
+      const fatigueMult = fatigueDurationMultiplier(
+        members.reduce((sum, m) => sum + m.fatigue, 0) / members.length,
+      );
       reservation.ticksRemaining = treatmentDurationTicks(
         step.durationGameMinutes,
         averageSkill,
         room.quality,
+        fatigueMult,
       );
     }
   }

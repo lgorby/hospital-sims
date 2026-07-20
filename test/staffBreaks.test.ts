@@ -10,6 +10,8 @@ import type { Patient } from '../src/sim/entities/patient';
 import type { Room } from '../src/sim/entities/room';
 import type { Staff } from '../src/sim/entities/staff';
 import { validateRoomExpand, validateRoomSell } from '../src/sim/build';
+import { fatigueDurationMultiplier, successChance, treatmentDurationTicks } from '../src/sim/formulas';
+import type { Reservation } from '../src/sim/entities/staff';
 import { loadWorld, saveToString } from '../src/sim/save';
 import { updateShifts } from '../src/sim/systems/shifts';
 import { updateStaffBreaks } from '../src/sim/systems/staffBreaks';
@@ -391,6 +393,119 @@ describe('save, migration & determinism', () => {
       loaded.world.tick();
     }
     expect(saveToString(loaded.world)).toBe(saveToString(world));
+  });
+});
+
+// ------------------------------------------------------------- fatigue (Stage 3a)
+
+describe('fatigue (SHIFTS Stage 3a)', () => {
+  // A day-shift minute BEFORE the lunch window [600,900), so idle staff accrue
+  // without trying to lunch.
+  const DAY_PRE_LUNCH = 420; // 07:00
+
+  function tickN(world: World, n: number): void {
+    for (let i = 0; i < n; i++) {
+      updateStaffBreaks(world);
+      world.clock.advance();
+    }
+  }
+
+  it('an on-duty shifted staffer accrues fatigue; a null-shift one never does', () => {
+    const world = setup();
+    const shifted = hireShift(world, 'nurse', 'day');
+    placeIdle(shifted, 18, 20);
+    const nullShift = world.addStaffMember('doctor', 3, 100); // null shift = test roster
+    placeIdle(nullShift, 19, 20);
+    world.clock.tick = tickForMinute(DAY_PRE_LUNCH);
+    tickN(world, 100);
+    expect(shifted.fatigue).toBeGreaterThan(0);
+    expect(nullShift.fatigue).toBe(0); // inert — keeps fixtures bit-identical
+  });
+
+  it('fatigue is capped at fatigue.max (bounded, never runaway)', () => {
+    const world = setup();
+    const nurse = hireShift(world, 'nurse', 'day');
+    placeIdle(nurse, 18, 20);
+    nurse.fatigue = BALANCE.shifts.fatigue.max - 1;
+    world.clock.tick = tickForMinute(DAY_PRE_LUNCH);
+    tickN(world, 400);
+    expect(nurse.fatigue).toBe(BALANCE.shifts.fatigue.max);
+  });
+
+  it('an off-shift (home) staffer recovers fatigue', () => {
+    const world = setup();
+    const nurse = hireShift(world, 'nurse', 'day');
+    nurse.onFloor = false; // gone home
+    nurse.fatigue = 50;
+    world.clock.tick = tickForMinute(1320); // night — a day nurse is off-shift
+    tickN(world, 100);
+    expect(nurse.fatigue).toBeLessThan(50);
+  });
+
+  it('load-weighted: a treating staffer tires faster than an idle one', () => {
+    const world = setup();
+    const exam = build(world, 'exam', { col: 14, row: 14, cols: 3, rows: 3 });
+    const idle = hireShift(world, 'nurse', 'day');
+    const busy = hireShift(world, 'doctor', 'day');
+    placeIdle(idle, 18, 20);
+    placeIdle(busy, 19, 20);
+    // Give `busy` a live active treatment reservation (load 1).
+    const res: Reservation = {
+      id: world.takeId(), kind: 'treatment', patientId: -1, roomId: exam.id,
+      staffIds: [busy.id], stepIndex: 0, slotIndex: 0, phase: 'active',
+      ticksRemaining: 9999, patientWaitingSince: null,
+    };
+    world.reservations.set(res.id, res);
+    world.clock.tick = tickForMinute(DAY_PRE_LUNCH);
+    tickN(world, 100);
+    expect(busy.fatigue).toBeGreaterThan(idle.fatigue);
+  });
+
+  it('a completed LOUNGE lunch rests more than an off-floor lunch', () => {
+    const world = setup();
+    const lounge = buildLounge(world);
+    const n1 = hireShift(world, 'nurse', 'day');
+    n1.fatigue = 70;
+    n1.at = { col: 17, row: 15 }; // inside the lounge
+    n1.onBreak = { mode: 'lounge', roomId: lounge.id, slot: 0, phase: 'using', ticksRemaining: 1, startedAt: 0 };
+    const n2 = hireShift(world, 'nurse', 'day');
+    n2.fatigue = 70;
+    n2.onFloor = false;
+    n2.onBreak = { mode: 'offFloor', phase: 'using', ticksRemaining: 1, startedAt: 0 };
+    world.clock.tick = tickForMinute(DAY_MID);
+    updateStaffBreaks(world); // both lunches complete this tick
+    expect(70 - n1.fatigue).toBe(BALANCE.shifts.fatigue.loungeRest); // lounge rest
+    expect(70 - n2.fatigue).toBe(BALANCE.shifts.fatigue.offFloorRest); // off-floor rest
+    expect(70 - n1.fatigue).toBeGreaterThan(70 - n2.fatigue); // the payoff gap
+  });
+
+  it('fatigue slows treatment duration but never the success roll', () => {
+    // Duration: bit-identical rested, longer tired (non-vacuous).
+    expect(fatigueDurationMultiplier(0)).toBe(1);
+    expect(fatigueDurationMultiplier(BALANCE.shifts.fatigue.max)).toBeGreaterThan(1);
+    const rested = treatmentDurationTicks(60, 3, 0, fatigueDurationMultiplier(0));
+    const tired = treatmentDurationTicks(60, 3, 0, fatigueDurationMultiplier(BALANCE.shifts.fatigue.max));
+    expect(tired).toBeGreaterThan(rested);
+    // The success roll takes (skill, health) only — fatigue can't touch deaths.
+    expect(successChance.length).toBe(2);
+  });
+
+  it('v14→v15 loads inert (fatigue 0), and rejects an out-of-range fatigue', () => {
+    const world = new World(new EventBus(), 8);
+    setupNewGame(world);
+    world.addStaffMember('nurse', 3, 200).shift = 'day';
+    const save = JSON.parse(saveToString(world)) as Record<string, unknown>;
+    // Strip the v15 field and re-stamp to v14.
+    for (const s of save.staff as Record<string, unknown>[]) delete s.fatigue;
+    save.saveVersion = 14;
+    const ok = loadWorld(new EventBus(), JSON.stringify(save));
+    expect(ok.ok).toBe(true);
+    if (ok.ok) for (const s of ok.world.staff.values()) expect(s.fatigue).toBe(0);
+
+    // A corrupt fatigue is REJECTED, not clamped (untrusted-input convention).
+    const bad = JSON.parse(saveToString(world)) as Record<string, unknown>;
+    (bad.staff as Record<string, unknown>[])[0]!.fatigue = 99999;
+    expect(loadWorld(new EventBus(), JSON.stringify(bad)).ok).toBe(false);
   });
 });
 

@@ -322,6 +322,36 @@ its own review — not a refactor.
     contract draft): the only abort path is a lounge walk that breaks mid-flight (rare;
     offFloor falls back to the always-reachable entrance), so no thrash and no new
     saved state. Regression: `staffBreaks.test.ts` watchdog.
+- **SHIFTS Stage 3a — staff fatigue (SAVE_VERSION 15).** `Staff.fatigue`
+  (0..`BALANCE.shifts.fatigue.max`) is SAVED, not derived (the `onFloor` M1
+  precedent). Load-bearing:
+  - **INERT for null-shift staff** — `updateFatigue` returns early on `shift === null`,
+    so a test/harness roster never accrues (stays 0) and every existing fixture is
+    bit-identical. `fatigueDurationMultiplier(0) === 1` exactly, so a rested/null-shift
+    staffer's treatment duration is byte-identical to pre-3a.
+  - **Fatigue slows TREATMENT DURATION ONLY** — applied as a SEPARATE multiplier on
+    `treatmentDurationTicks` (a new optional `fatigueMult=1` param), NOT folded into
+    `attentionSkill` (it would be swallowed by the `stats.min` clamp on high-load bays —
+    design review). The SUCCESS roll (`treatment.ts`, raw skill) is UNTOUCHED — deaths
+    stay health/acuity-tied (the ED-B1 rule). Indirect deaths (slower bays → longer
+    queues) are a MEASURED cost, not a guarantee-of-no-change.
+  - **Accrual is LOAD-WEIGHTED** (`updateFatigue` in `staffBreaks.ts`): `basePerGameHour
+    + workPerGameHour × activeTreatmentLoad` while `onShift && onFloor && onBreak === null`.
+    So the busy bottleneck staff tire fastest — where the lounge payoff must land.
+  - **Recovery is SHIFT-gated** (`!onShift && !onFloor` → recover) — GUARANTEED nightly
+    (~11.5h off) even 1-deep; only the LUNCH/cap is headcount-gated. The off-shift-on-floor
+    and on-shift-off-floor windows FREEZE fatigue (intended, bounded).
+  - **`updateFatigue` runs FIRST in the per-member loop**, structurally BEFORE the
+    `onBreak` early-`continue` and `tryStartLunch`'s `!onFloor` return — else recovery for
+    home staff never runs. Lunch-rest is applied at lunch completion (`advanceBreak`): a
+    LOUNGE lunch rests more than an off-floor one (the payoff gap). Every mutation clamps
+    to `[0, max]` (bounded, never runaway).
+  - **The save border REJECTS an out-of-[0,max] fatigue** (`readFatigue` → `fail`), the
+    untrusted-input convention — never a clamp (which would launder corruption).
+  - **Measured**: fatigue makes the lounge a positive throughput lever, biggest on a TIGHT
+    roster (coverage cost ~1.2 disch/d, lounge recovers ~0.44), small on an over-staffed
+    build; the cap holds (maxFatigue ≤ max) and deaths stay flat (no spiral) on the fragile
+    roster. `staffBreakProbe` (`STAFF_BREAK_PROBE=1`) is the instrument.
 - **`allowResumeToPaused` distinguishes player-opened overlays from midnight
   ones** (finances epic): `PausingOverlay`'s speed-1 fallback is right for the
   daily report and challenge card (which only open at a day boundary), but
