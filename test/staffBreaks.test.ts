@@ -145,6 +145,22 @@ describe('lounge lunch vs off-floor lunch', () => {
     expect(luncher.duty.kind).toBe('idle'); // back in the pool
   });
 
+  it('steps OUT of the lounge after her lunch — no endless-lounge loiter', () => {
+    const world = setup();
+    const lounge = buildLounge(world);
+    const nurse = hireShift(world, 'nurse', 'day');
+    // Park her mid-lunch INSIDE the lounge, about to finish.
+    nurse.at = { ...lounge.door!.inside };
+    nurse.onBreak = { mode: 'lounge', roomId: lounge.id, slot: 0, phase: 'using', ticksRemaining: 1, startedAt: 0 };
+    world.clock.tick = tickForMinute(DAY_MID) - 1;
+    updateStaffBreaks(world); // lunch completes this tick
+    expect(nurse.onBreak).toBeNull();
+    expect(nurse.target).not.toBeNull(); // walking OUT, not parked on the seat
+    let guard = 0;
+    while (world.isInsideRoom(nurse.at, lounge) && guard++ < 600) world.tick();
+    expect(world.isInsideRoom(nurse.at, lounge)).toBe(false); // ended up outside
+  });
+
   it('with NO lounge, a staffer leaves the floor to eat, then returns on the floor', () => {
     const world = setup(); // no lounge built
     const roster = [0, 1].map(() => hireShift(world, 'nurse', 'day'));

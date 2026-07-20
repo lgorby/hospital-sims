@@ -153,18 +153,15 @@ revisited.
 
 ## Next
 
-### START HERE (session handoff, 2026-07-20 — SHIFTS STAGE 2 + 3a SHIPPED LOCAL (NOT DEPLOYED); PICK THE NEXT FEATURE)
+### START HERE (session handoff, 2026-07-20 — SHIFTS STAGE 2 + 3a SHIPPED + DEPLOYED; 3b DEFERRED, PICK A DIFFERENT FEATURE)
 
-**SHIFTS Stage 2 (lunches + lounge, v14) AND Stage 3a (staff fatigue, v15) are
-IMPLEMENTED, REVIEWED, and COMMITTED LOCALLY — NOT pushed/deployed.** SAVE_VERSION
-**13 → 14 → 15** (one-way). All gates green; **742 tests pass, 8 skip**. Provenance in
-`CHANGELOG.md` *(shifts 2)* / *(shifts 3a)*; do-not-regress rules in `INVARIANTS.md`
-("SHIFTS Stage 2" / "SHIFTS Stage 3a"). Contracts: `docs/SHIFTS_STAGE2_CONTRACT.md`,
-`docs/SHIFTS_STAGE3A_CONTRACT.md` (both v2, all pre-impl + post-impl findings folded).
-
-**⚠ DEPLOY IS PENDING — a separate owner release call.** `origin/master` is still at
-`9ae3b95` (SHIFTS Stage-1 = LIVE v13). The Stage 2 + 3a commits are LOCAL only. Pushing
-auto-deploys and v15 is one-way, so the owner deploys deliberately, not as routine hygiene.
+**SHIFTS Stage 2 (lunches + lounge, v14) AND Stage 3a (staff fatigue, v15) are SHIPPED +
+DEPLOYED** (`112755d`, pushed 2026-07-20, **CI green in 32s, Vercel LIVE at v15 — HTTP 200
+verified**). SAVE_VERSION **13 → 14 → 15**, one-way and now the DEPLOYED baseline. **742
+tests, 8 skip.** Provenance in `CHANGELOG.md` *(shifts 2)* / *(shifts 3a)*; do-not-regress
+rules in `INVARIANTS.md` ("SHIFTS Stage 2" / "SHIFTS Stage 3a"); contracts
+`docs/SHIFTS_STAGE2_CONTRACT.md`, `docs/SHIFTS_STAGE3A_CONTRACT.md` (both v2, all pre-impl +
+post-impl findings folded). **Working tree clean; `origin/master` = `112755d` = LIVE.**
 
 **What shipped (Stage 2):** staggered per-staffer lunches (id-hash, rng-free) with a
 per-role coverage cap ("never all at once"); solo-of-a-role skips lunch; on-site lounge
@@ -176,23 +173,36 @@ inert for null-shift staff. **This is what makes the lounge pay off.** Measured 
 positive but PARTIAL lever — capped by skip-under-capture, the residual Stage-2 debt);
 small on an over-staffed build; cap holds, deaths flat (no spiral). Not massaged.
 
-**►►► NEXT: START A NEW FEATURE.** Follow the per-milestone workflow every time (it keeps
-paying): **plan → 2 independent split-lens pre-impl review agents → implement → post-impl
-review agent → fix ALL findings + a regression each → gates green (tsc + lint + build) →
-commit.** Live-drive anything player-facing (`/run-hospital-simms`). Recommended options,
-strongest first:
+**►►► NEXT: PICK A NEW FEATURE — NOT shifts.** The owner **DEFERRED SHIFTS Stage 3b**
+(2026-07-20: "let's come back to 3b") — do NOT start it unless the owner reopens it; its
+scope is preserved in the box just below for when they do. For this next session, take a
+DIFFERENT feature. Follow the per-milestone workflow every time (it keeps paying): **plan →
+2 independent split-lens pre-impl review agents → implement → post-impl review agent → fix
+ALL findings + a regression each → gates green (tsc + lint + build) → commit → (owner call
+to) push/deploy.** Live-drive anything player-facing (`/run-hospital-simms`). Strong
+non-shifts candidates, all owner asks:
 
-1. **SHIFTS STAGE 3b — night differential, agency/overtime, morale/quit** (Stage 3a
-   FATIGUE just shipped, v15). The economy levers deferred from 3a: night-shift pay
-   premium (+10–15%), agency/overtime as a ~2× emergency gap-filler, and (a bigger surface)
-   a morale/quit system. `SHIFTS_STAGE3A_CONTRACT.md` §7 lists them; `Staff.fatigue` is
-   reusable as a morale input (don't mint a second meter). **Two open debts 3a surfaced,
-   worth deciding here:** (a) **skip-under-capture caps the lounge payoff** — the busiest
-   captured nurses never lunch, so the lounge only recovers ~37% of the coverage cost; if
-   you want the lounge to matter MORE, that's a break-pre-emption / captured-staff-carve-out
-   decision (owner has declined pre-emption twice — revisit with the 3a probe data); (b) an
-   aborted lunch counts as "lunched"/rested for the once-guard — 3b may distinguish
-   "attempted" vs "ate" for the morale signal.
+1. **MAINTENANCE-DISPATCH NARRATION — cheapest, render-only, high-legibility (good warm-up).**
+   Owner ask: turn a breakdown's follow-up into "{staff} en route to {room}", and the
+   valuable UNSTAFFED case "CT broken — no maintenance staff available" (drives a HIRE). The
+   dispatcher already produces the job-state transitions; a render-side listener updates the
+   SAME NEEDS-ATTENTION alert in place. No sim/save change. Scope in the backlog below.
+2. **NURSE TECHS — a capacity lever the owner asked for** (meatier; distinct from EVS: a
+   tech attends a PATIENT, EVS a TILE). Patient load 6–9. Design prize: "do I need a nurse
+   or a tech?" Pairs with the OBSERVATION v4 rewrite. Scope in the backlog ("Nurse techs").
+3. **AUDIO** (owner ask) — overhead pages, critical-arrival/stroke alerts, missing-patient
+   pages: a WebAudio layer driven by the EXISTING EventBus, sim stays silent (render-side
+   consumer). A MILESTONE — needs its own cue-list/mixing design pass. Backlog "(d) AUDIO".
+
+**► DEFERRED: SHIFTS STAGE 3b (do NOT start unless the owner reopens it).** Night-shift pay
+premium (+10–15%), agency/overtime as a ~2× emergency gap-filler, and (a bigger surface) a
+morale/quit system. `SHIFTS_STAGE3A_CONTRACT.md` §7 lists them; `Staff.fatigue` is reusable
+as a morale input (don't mint a second meter). **Two open debts 3a surfaced, to decide when
+3b reopens:** (a) **skip-under-capture caps the lounge payoff** — captured nurses never lunch,
+so the lounge recovers only ~37% of the coverage cost; making it matter MORE is a
+break-pre-emption / captured-staff-carve-out decision (owner has declined pre-emption twice —
+revisit with the 3a probe data); (b) an aborted lunch counts as "lunched"/rested for the
+once-guard — 3b may distinguish "attempted" vs "ate" for the morale signal.
 2. **NURSE TECHS — a capacity lever the owner asked for** (distinct from EVS: a tech
    attends a PATIENT, EVS attends a TILE). Patient load 6–9. The design prize: "do I
    need a nurse or a tech?" Pairs with the OBSERVATION v4 rewrite (which wants nurse-tech

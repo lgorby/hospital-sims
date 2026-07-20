@@ -220,8 +220,15 @@ function advanceBreak(
     // lunchedThisShift → the double-lunch bug the review caught).
     placeAtEntrance(world, member);
   } else {
-    // Already on the floor in the lounge; the dispatcher re-picks her.
+    // Lounge lunch done: STEP OUT to a normal standing spot instead of idling
+    // inside the walled lounge (the no-loitering rule every release path
+    // follows). Without this she stands on the seat until the dispatcher next
+    // needs her — which on a calm hospital / over-staffed role looks like an
+    // endless lunch (owner live-report, 2026-07-20). The dispatcher / standing
+    // post re-picks her from the corridor.
     member.duty = { kind: 'idle' };
+    const spot = world.nearestFreeStandingTile(member.at, member);
+    if (spot) world.setWalkerTarget(member, spot);
     world.events.emit('staffUpdated', { staffId: member.id });
   }
 }
