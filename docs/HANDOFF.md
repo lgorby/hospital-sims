@@ -153,15 +153,54 @@ revisited.
 
 ## Next
 
-### START HERE (session handoff, 2026-07-20 — SHIFTS STAGE-1 MECHANICALLY SHIPPED, LIVE-DRIVEN, LOCAL-ONLY)
+### START HERE (session handoff, 2026-07-20 — SHIFTS STAGE-1 SHIPPED + DEPLOYED; PICK THE NEXT FEATURE)
 
 Working tree clean; **725 tests (718 pass, 7 skip), all gates green** (tsc + lint +
 build). **SHIPPED + DEPLOYED 2026-07-20** (`9ae3b95`, CI green, Vercel auto-deploy):
 ECONOMY Stage-1 + the full SHIFTS Stage-1 line are LIVE. SAVE_VERSION 13 is one-way;
-live saves re-baseline under the tighter economy + mint a night roster on load.
+live saves re-baseline under the tighter economy + mint a night roster on load. **No
+pending local work — the tree matches `origin/master`.**
 
-**► SHIFTS STAGE-1 IS NOW FULLY IMPLEMENTED** (plan `0a89ee8`, steps `4071eaa`…`c2ad7d7`).
-Staff work day/night shifts for real. What shipped, per the reviewed `SHIFTS_IMPL_PLAN.md`:
+**►►► NEXT: START A NEW FEATURE (the shifts epic is done).** Follow the per-milestone
+workflow every time (it keeps paying): **plan → 2 independent split-lens pre-impl
+review agents → implement → post-impl review agent → fix ALL findings + a regression
+each → gates green (tsc + lint + build) → commit.** Live-drive anything player-facing
+(`/run-hospital-simms`). Recommended options, strongest first:
+
+1. **STAFF LOUNGE + LUNCH BREAKS — the natural next step, now UNBLOCKED.** Owner ask
+   (Comfort dropdown). It was blocked *because* "a lunch break IS a shift concept, so
+   designing the lounge alone made it decoration" — shifts now exist, so this is the
+   direct continuation (call it SHIFTS Stage 2). Scope in the backlog below ("STAFF
+   LOUNGE"): the room is cheap; the real work is what a break MEANS (a fatigue/hunger
+   meter on the patient-bladder precedent, a break side-trip via `patientNeeds`'
+   `needBreak` pattern, and whether an on-break staffer leaves the pool). The **30-min
+   overlap window** the shift model already has is where a break naturally lives. Watch
+   the recorded three-way interaction: a ratio nurse who never returns to `idle` never
+   goes off shift and never takes a break either — decide that deliberately.
+2. **NURSE TECHS — a capacity lever the owner asked for** (distinct from EVS: a tech
+   attends a PATIENT, EVS attends a TILE). Patient load 6–9. The design prize: "do I
+   need a nurse or a tech?" Pairs with the OBSERVATION v4 rewrite (which wants nurse-tech
+   staffing). Scope in the backlog ("Nurse techs").
+3. **MAINTENANCE-DISPATCH NARRATION — cheap, render-only, high-legibility.** Owner ask:
+   turn a breakdown's follow-up into "{staff} en route to {room}" (and the valuable
+   UNSTAFFED case: "CT broken — no maintenance staff available", which drives a HIRE).
+   The dispatcher already produces the job-state transitions; a render-side listener
+   updates the SAME NEEDS-ATTENTION alert in place. No sim/save change. Good warm-up.
+
+**►► IMPROVEMENTS worth making (from the shifts epic — do one if it fits the session):**
+- **Respawn walk-in polish (game-feel):** on-shift staff currently *place* at the
+  entrance then walk to their relief target — a slight door pop-in. The owner cares about
+  feel; making it a visible walk-in (or smoothing it) was noted in `SHIFTS_IMPL_PLAN.md`
+  §B. Small, render-adjacent.
+- **Marginal-save migration mitigation (MEASURED, optional):** the mint-night migration
+  is a pure +20% payroll cost — safe for healthy saves, but it tips an already over-hired
+  marginal save into sustained loss (measured: +$415→−$657/d, survives 5d but trends to
+  bankruptcy). Shipped mitigations: the load notice + the fire-the-twins escape hatch.
+  A stronger guard (e.g. migrate day-only for saves below a margin floor) was NOT adopted
+  (it crashes rep; owner locked mint-night) — revisit only if a live player reports it.
+
+**► SHIFTS STAGE-1 — WHAT SHIPPED (current-state record; plan `0a89ee8`, steps `4071eaa`…`9ae3b95`).**
+Staff work day/night shifts for real. Per the reviewed `SHIFTS_IMPL_PLAN.md`:
 - **Clock opens 06:00** (`BALANCE.time.dayStartMinute`; `isMidnight`→`isDayRollover`; day
   rollover + daily report + autosave stay on the raw tick, now at 06:00). The offset
   re-phased the spawn stream → harness seed re-pin 1338→1340, and the per-type economy
@@ -187,11 +226,11 @@ Staff work day/night shifts for real. What shipped, per the reviewed `SHIFTS_IMP
   The 06:00 open offsets the walk-home harm, so day-only is +$192/d — survivable-but-tight,
   the intended pressure. Both a pre-impl (2 lenses) and a post-impl review ran.
 
-**► REMAINING SHIFTS MINORs (carried, non-blocking):** (1) the 4 migration probe arms +
-a MARGINAL-save arm are still unmeasured (migration CORRECTNESS is unit-tested in
-`save.test.ts`; the marginal-save balance question — does mint-night sink an already-tight
-live save? — is the open bit). (2) Staff lounge / lunches / fatigue are Stage 2–3.
-(3) Optional: respawn is instant placement (a door pop-in) — a walk-in polish was noted.
+**► SHIFTS MINORs — ALL CLOSED.** The marginal-save migration arm is now MEASURED
+(`shiftProbe` migration arm + contract "MARGINAL-SAVE MIGRATION ARM"; the two open items
+— respawn polish + a stronger marginal mitigation — are folded into IMPROVEMENTS above,
+not blockers). Shifts Stage 2/3 (lounge, lunches, fatigue) are NEW features, not debt —
+see the NEXT block.
 
 **► THE PRIOR SHIFTS STATE (superseded, kept for provenance):**
 

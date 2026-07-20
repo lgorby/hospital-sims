@@ -255,12 +255,32 @@ its own review — not a refactor.
   ~6%). `TALLY_KEY_VERSIONS {utilities:12, repairs:12}` gates v11 loads (else
   `asNumber(undefined)` throws). Regression: `test/economyStage1.test.ts` margin
   band (0.25–0.40) + `save.test.ts` v11→v12→v13 back-compat.
-- **The `onShift` availability gate is INERT until a shift is assigned** (SHIFTS
-  Stage-1 plumbing): `Staff.shift` defaults null = always on, so `onShift` returns
-  true and dispatch/payroll are unchanged; `onFloor` is SAVED (not derived — a
-  staffer mid-walk-home would derive wrong, breaking save/load determinism);
-  `rolePool` MUST exclude off-shift or the anti-capture guard misfires. The shift
-  MECHANICS (walk-home, reconciliation) are not yet active — activation pending.
+- **SHIFTS Stage-1 is LIVE (SAVE_VERSION 13, deployed 2026-07-20).** `Staff.shift`
+  (`day`/`night`/`null`) and `onFloor` are SAVED. `null` = always-on (test rosters and
+  pre-shift entities); real hires get a shift. The load-bearing rules:
+  - **The wage factor lives in ONE place** — `economy.ts` charges `salaryPerDay ×
+    shiftWageMultiplier(shift)` (0.6 for shifted). The hire path assigns `shift` ONLY;
+    NEVER pre-scale `salaryPerDay` (double-count — it bit the probe itself, PROBE REVIEW
+    2). Pinned: `economyStage1.test.ts` "SHIFTS wage mechanism".
+  - **`onFloor` is SAVED, not derived** — a staffer mid-walk-home would derive wrong and
+    break save→load→run determinism. Every all-staff iteration that PLACES a staffer in
+    the world MUST exclude `!onFloor`: `isTileClaimed`, renderer sprite loop + `pickAt`,
+    build/expand/sell occupancy (`build.ts`), AND `staffNearby` (`wayfinding.ts` — the
+    one missed in review; off-floor staff cluster on the entrance tile and would rescue
+    lost patients at the door). Adding a new all-staff placement loop? Add the guard.
+  - **`updateShifts` runs BEFORE `updateDispatcher`** and keys `busy` on reservation
+    PHASES + `duty.kind==='job'`, NOT `member.duty` (which stays pinned to a gathering
+    bay while a second promotes to active — a `duty`-based check would abandon a live
+    bay). Off-shift gathering bays are cancelled unconditionally (mirror `fireStaff`),
+    so the ungated `promoteGatheredReservations` can't promote an off-shift gather.
+  - **The clock offset is its OWN constant** (`BALANCE.time.dayStartMinute`), NOT
+    `shifts.day.startMinute` — the probe sweeps the day window and the clock phase must
+    stay put; a drift-pin test asserts they're equal. Day rollover stays on the raw tick
+    (`isDayRollover`); the 06:00 re-base re-phases the spawn RNG stream, so spawn-
+    dependent suites re-baseline WITH any change to it.
+  - **v<13 load mints a night roster** (`migrateMintNightRoster` in `loadWorld`, after
+    `restorePrivateState` so twin ids can't collide) — deterministic, no rng, no
+    `staffHired` emit. Regressions: `test/shifts.test.ts` (18), `save.test.ts` v12→v13.
 - **`allowResumeToPaused` distinguishes player-opened overlays from midnight
   ones** (finances epic): `PausingOverlay`'s speed-1 fallback is right for the
   daily report and challenge card (which only open at a day boundary), but

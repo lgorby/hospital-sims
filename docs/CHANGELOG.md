@@ -48,8 +48,8 @@ scoping notes kept for provenance).
 
 ## Completed epics and asks
 
-- **ECONOMY STAGE-1: SHIPPED (2026-07-19, SAVE_VERSION 12; committed LOCAL, not
-  pushed)** — `docs/ECONOMY_STAGE1_CONTRACT.md`. The game ran a measured ~82%
+- **ECONOMY STAGE-1: SHIPPED + DEPLOYED (2026-07-20, SAVE_VERSION 12)** —
+  `docs/ECONOMY_STAGE1_CONTRACT.md`. The game ran a measured ~82%
   operating margin (payroll was the ONLY recurring cost), so no cost decision
   could matter. Collapsed to **~32%** via three levers, all measured on a new
   binding EARLY-GAME arm before any number was written (`test/economyProbe.test.ts`,
@@ -64,21 +64,47 @@ scoping notes kept for provenance).
   measured); 2× payroll → ~6% margin (the shifts unblock). Regressions:
   `test/economyStage1.test.ts` (fee scale, utilities accrual, repair charge, the
   ~32% margin band, the per-room net-positive invariant) + v11→v12→v13 back-compat.
-- **SHIFTS STAGE-1: DE-RISKED + PLUMBING LANDED INERT (2026-07-19, SAVE_VERSION 13,
-  LOCAL)** — `docs/SHIFTS_STAGE1_CONTRACT.md`. Two-shift coverage. Contract v2 + two
-  split-lens pre-impl reviews + a shift probe + its adversarial review + a migration
-  measurement derived every number: **per-shift wage 0.6×** (whole-roster payroll
-  bankrupts the day-only starter −$142/d; 0.6× rescues it +$70 and makes 24/7
-  profitable with POSITIVE night ROI — "24/7 later" is real, not a trap), **open the
-  game at 06:00**, **migration = mint a night roster** (the only option that keeps a
-  healthy live save whole — measured). The `onShift` availability gate, `shift`/
-  `onFloor` SavedStaff fields (SAVE_VERSION 12→13), and the per-shift payroll wage
-  are all wired but INERT (`shift` defaults null = always-on) — zero behaviour
-  change. Remaining: the mechanical activation (06:00 clock-start, auto-assign,
-  per-tick reconciliation + walk-home, off-floor exclusions, gather-cancel,
-  mint-night migration, night signal, harness re-tune, re-run the probe with real
-  mechanics to close the one open review finding — the gate-only probe undercounts
-  day-only night harm).
+- **SHIFTS STAGE-1: SHIPPED + DEPLOYED (2026-07-20, SAVE_VERSION 13)** —
+  `docs/SHIFTS_STAGE1_CONTRACT.md` + `docs/SHIFTS_IMPL_PLAN.md`. Staff work day/night
+  shifts for real. Reviewed twice (2 split-lens pre-impl + 1 post-impl, all findings
+  fixed). What shipped, and *why* each number:
+  - **Per-shift wage 0.6×**, applied ONCE in `economy.ts` (`shiftWageMultiplier`) — the
+    hire path assigns `shift` only, salary stays base; pre-scaling would double-count
+    (the exact bug PROBE REVIEW 2 caught in the probe itself). Whole-roster payroll
+    bankrupts the day-only starter; 0.6× rescues it and keeps 24/7 = 2× day-only.
+  - **Clock opens 06:00** (`BALANCE.time.dayStartMinute`, offset once in
+    `GameClock.minuteOfDay`; `isMidnight`→`isDayRollover`, day rollover + daily report +
+    autosave stay on the raw tick, now at 06:00). Re-phased the spawn stream → harness
+    seed 1338→1340; the per-type economy P&L invariant became MEAN-over-seeds (single
+    seed was repair-timing-noisy).
+  - **`updateShifts`** per-tick reconciliation (`src/sim/systems/shifts.ts`, between
+    `updatePatientNeeds` and `updateDispatcher`): off-shift staff cancel gathering bays
+    (mirror `fireStaff`), un-post, finish active bays/jobs, walk home → `onFloor=false`;
+    on-shift off-floor staff respawn at the entrance and **report to the outgoing
+    same-role worker's area** (owner ask). Idempotent, keys on reservation phases (not
+    `duty`, which lies during multi-bay gather→active promotion).
+  - **Off-floor exclusion** everywhere a staffer is placed: `isTileClaimed`, renderer
+    sprite loop + `pickAt`, build/expand/sell occupancy, AND `staffNearby` (the
+    post-impl-review MAJOR — gone-home staff clustered on the entrance tile and still
+    rescued lost patients at the door).
+  - **Player chooses the shift at hire** (hire-panel selector, default day); the
+    `hireStaff` command carries it; `setStaffShift` command + inspect-card toggle;
+    setup receptionist = day.
+  - **Migration = mint a night roster** (`migrateMintNightRoster` in `loadWorld` for
+    v<13): day originals + night twins, payroll ~1.2×, deterministic, one-time load
+    notice with the escape hatch.
+  - **Night-unstaffed signal** (`needs.ts` `kind:'coverage'`, panel-only): "Night shift
+    unstaffed…" — the dead-night hospital reads as a decision, not a bug.
+  - **Measurement:** the shift probe re-ran with real mechanics, tagged patients by
+    arrival-shift; the pre-registered bound (day-only incremental stranded deaths
+    < 0.2/day) is MET (~0.02) — the 06:00 open offsets the walk-home harm, so day-only
+    is +$192/d, survivable-but-tight. The marginal-save migration arm measured the last
+    MINOR: mint-night is a pure +20% payroll cost (same coverage), safe for healthy
+    saves, an acceptable-with-mitigation risk for over-hired marginal ones. Regressions:
+    `test/shifts.test.ts` (18: onShift purity, walk-home/respawn/report-to-area,
+    off-floor exclusions incl. no-rescue, anti-capture boundary, gather-cancel, job not
+    abandoned, night signal, commands), `test/save.test.ts` v12→v13 mint-night,
+    `clock.test.ts`, and the gated `shiftProbe` (day-only viability + migration arms).
 - **THE OUTPATIENT STREAM: SHIPPED (2026-07-19, SAVE_VERSION 11)** —
   `docs/OUTPATIENT_IMPL_PLAN.md` v2 (both pre-impl reviews folded) and
   `docs/IMAGING_PLAN.md` (the research that motivated it). The game had ONE
@@ -283,11 +309,17 @@ Departments plan `cb580a1` · the pre-change harness guard `8d2ad3d` ·
 Departments Stage 1 `520cf21` · the ED nurse-capture fix `b56a369` ·
 DEPARTMENTS_PLAN §4.0 `8e199ef`.
 
-### Commit hashes — ECONOMY + SHIFTS session (2026-07-19, LOCAL, not pushed)
+### Commit hashes — ECONOMY + SHIFTS (SHIPPED + DEPLOYED 2026-07-20, push `9ae3b95`, CI green)
 
-ECONOMY probe `15ba628` · derivation `ed03a49` · **ECONOMY Stage-1 impl `a949452`**
-(SAVE_VERSION 12) · SHIFTS contract v2 + 2 reviews `55059b9` · shift gate + probe
-`5a907a8` · shift probe derived numbers (in `5a907a8`) · **SHIFTS plumbing
-`4c973b1`** (SAVE_VERSION 13, inert) · handoff `a62d736`. All seven are LOCAL-only —
-a push deploys the tighter economy (re-baselines every live save) and makes v13
-one-way, so it is the owner's release decision.
+**Groundwork (inert):** ECONOMY probe `15ba628` · derivation `ed03a49` · **ECONOMY
+Stage-1 impl `a949452`** (SAVE_VERSION 12) · SHIFTS contract v2 + 2 pre-impl reviews
+`55059b9` · shift gate + probe `5a907a8` · **SHIFTS plumbing `4c973b1`** (SAVE_VERSION
+13, inert) · probe re-review (undouble the wage) `5a0ff9d`.
+
+**SHIFTS mechanical impl:** plan v2 `0a89ee8` · step 1 clock 06:00 `4071eaa` · step 2
+`updateShifts` + off-floor + gather-cancel `c0adda0` · step 3 hire-chooses-shift +
+commands + UI `5f3fdc4` · step 4 mint-night migration + load notice `141a82b` · step 5
+night-unstaffed signal `26359b4` · step 6 probe re-run (MAJOR closed) `40f9bb9` ·
+post-impl fixes (off-floor rescue MAJOR + report-to-assignment) `c2ad7d7` · marginal
+migration arm `9ae3b95`. **Deployed to production 2026-07-20** — v13 is one-way and the
+tighter economy re-baselines every live save on load.
