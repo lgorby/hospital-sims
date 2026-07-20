@@ -74,6 +74,8 @@ export function validateRoomRect(
   }
   // GDD §5 "no actors on the footprint" — patients AND staff (M2 review #2).
   for (const person of [...world.patients.values(), ...world.staff.values()]) {
+    // SHIFTS Stage-1: an off-floor (gone-home) staffer is off the map.
+    if ('onFloor' in person && !person.onFloor) continue;
     if (rectContains(rect, person.at) || (person.next && rectContains(rect, person.next))) {
       return fail('Someone is standing there');
     }

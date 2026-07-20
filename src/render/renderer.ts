@@ -457,6 +457,7 @@ export class WorldRenderer {
       }
     }
     for (const member of this.world.staff.values()) {
+      if (!member.onFloor) continue; // SHIFTS Stage-1: gone-home staff aren't clickable
       if (samePoint(member.at, tile) || (member.next && samePoint(member.next, tile))) {
         return { kind: 'staff', id: member.id };
       }
@@ -834,6 +835,17 @@ export class WorldRenderer {
     }
 
     for (const [id, member] of this.world.staff) {
+      // SHIFTS Stage-1: a gone-home (off-floor) staffer is off the map — drop her
+      // sprite like a removed staffer; a fresh one is made when she comes on shift.
+      if (!member.onFloor) {
+        const existing = this.staffSprites.get(id);
+        if (existing) {
+          existing.destroy();
+          this.staffSprites.delete(id);
+          if (this.selected?.kind === 'staff' && this.selected.id === id) this.selected = null;
+        }
+        continue;
+      }
       if (!this.staffSprites.has(id)) {
         this.staffSprites.set(id, this.makeCharacterSprite(member.role, id));
       }

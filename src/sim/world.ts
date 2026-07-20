@@ -50,6 +50,7 @@ import { updateMess } from './systems/mess';
 import { updatePatientNeeds } from './systems/patientNeeds';
 import { updateEconomy } from './systems/economy';
 import { updateMovement } from './systems/movement';
+import { updateShifts } from './systems/shifts';
 import { updateSpawn } from './systems/spawn';
 import { resolveTreatmentOutcome, updateTreatment } from './systems/treatment';
 import { updateThoughts } from './systems/thoughts';
@@ -338,6 +339,8 @@ export class World implements PathGrid {
   isTileClaimed(p: GridPoint, ignore?: Walker): boolean {
     for (const person of [...this.patients.values(), ...this.staff.values()]) {
       if (person === ignore) continue;
+      // SHIFTS Stage-1: an off-floor (gone-home) staffer holds no tile.
+      if ('onFloor' in person && !person.onFloor) continue;
       if (person.target && samePoint(person.target, p)) return true;
       if (this.walkerArrived(person) && samePoint(person.at, p)) return true;
     }
@@ -891,6 +894,7 @@ export class World implements PathGrid {
       // starts) and wedges the room forever. Byte-neutral for NEW builds:
       // their validation already guarantees an actor-free footprint.
       for (const person of [...this.patients.values(), ...this.staff.values()]) {
+        if ('onFloor' in person && !person.onFloor) continue; // SHIFTS: off-floor = off map
         if (samePoint(person.at, p) || (person.next && samePoint(person.next, p))) return false;
       }
       strip.push(tile);
@@ -2169,6 +2173,7 @@ export class World implements PathGrid {
     updateDecay(this);
     updateThoughts(this);
     updatePatientNeeds(this); // side-trips BEFORE dispatch (plan §1.9 order)
+    updateShifts(this); // SHIFTS Stage-1: reconcile on/off-floor BEFORE dispatch
     updateDispatcher(this);
     updateWayfinding(this);
     updateMovement(this);
