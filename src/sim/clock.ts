@@ -37,9 +37,14 @@ export class GameClock {
     return dayOfTick(this.tick);
   }
 
-  /** Game-minutes elapsed within the current day [0, 1440). */
+  /**
+   * Game-minutes elapsed within the current day [0, 1440). SHIFTS Stage-1: tick 0
+   * is offset to `BALANCE.time.dayStartMinute` (06:00), so a new game opens in the
+   * morning. The day ROLLOVER stays on the raw tick boundary (`isDayRollover`), so
+   * daily totals are phase-invariant; only the wall-clock phase shifts.
+   */
   get minuteOfDay(): number {
-    return ticksToGameMinutes(this.tick % TICKS_PER_DAY);
+    return (ticksToGameMinutes(this.tick % TICKS_PER_DAY) + BALANCE.time.dayStartMinute) % GAME_MINUTES_PER_DAY;
   }
 
   get hourOfDay(): number {
@@ -55,8 +60,13 @@ export class GameClock {
     return `Day ${this.day}, ${hh}:${mm}`;
   }
 
-  /** True exactly once per day rollover (checked after advance()). */
-  get isMidnight(): boolean {
+  /**
+   * True exactly once per day rollover (checked after advance()). The rollover is
+   * on the RAW tick boundary — with the 06:00 clock offset it lands at the
+   * day-shift open, NOT wall-clock midnight, so the daily report + autosave fire
+   * then (owner-decided). Named for the boundary it is, not the hour it was.
+   */
+  get isDayRollover(): boolean {
     return this.tick % TICKS_PER_DAY === 0;
   }
 }

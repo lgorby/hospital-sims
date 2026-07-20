@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { EventBus } from '../src/events';
-import { TICKS_PER_GAME_HOUR } from '../src/sim/clock';
+import { gameMinutesToTicks, TICKS_PER_GAME_HOUR } from '../src/sim/clock';
 import { BALANCE } from '../src/sim/data/balance';
 import {
   CONDITION_DEFS,
@@ -31,10 +31,18 @@ function fixture(seed = 4242, opts: { mri?: boolean } = {}) {
   return { world, events };
 }
 
-/** Advance to a tick inside clinic hours. The clock starts at hour 0. */
+/**
+ * The tick at which the outpatient clinic opens, from SSOT — phase-correct under
+ * the SHIFTS Stage-1 06:00 clock offset (tick 0 = `dayStartMinute`, NOT midnight),
+ * so `openHour × TICKS_PER_GAME_HOUR` no longer equals the open boundary.
+ */
+const CLINIC_OPEN_TICK = gameMinutesToTicks(
+  BALANCE.arrivals.outpatient.openHour * 60 - BALANCE.time.dayStartMinute,
+);
+
+/** Advance to the tick the clinic opens (its first open tick). */
 function toClinicHours(world: World): void {
-  const target = BALANCE.arrivals.outpatient.openHour * TICKS_PER_GAME_HOUR;
-  while (world.clock.tick < target) world.tick();
+  while (world.clock.tick < CLINIC_OPEN_TICK) world.tick();
 }
 
 function electives(world: World) {
@@ -44,18 +52,24 @@ function electives(world: World) {
 describe('outpatient stream — arrival', () => {
   it('spawns NO referral outside clinic hours', () => {
     const { world } = fixture();
-    const target = BALANCE.arrivals.outpatient.openHour * TICKS_PER_GAME_HOUR;
-    while (world.clock.tick < target) world.tick();
+    while (world.clock.tick < CLINIC_OPEN_TICK) world.tick();
     expect(electives(world)).toHaveLength(0);
   });
 
   it('spawns referrals once the clinic opens', () => {
     const { world } = fixture();
+    const o = BALANCE.arrivals.outpatient;
     toClinicHours(world);
-    // A full clinic day at ~1/game-hour is ~10 referrals; a couple of hours is
-    // ample to see at least one without asserting an exact seeded count.
-    for (let i = 0; i < 3 * TICKS_PER_GAME_HOUR; i++) world.tick();
-    expect(electives(world).length).toBeGreaterThan(0);
+    // Count CUMULATIVE arrivals across the whole open window (referrals check in,
+    // take one study and leave, so an instantaneous count can be 0 mid-window; and
+    // at 0.5/game-hour a 3-hour sample is seed-fragile — the full ~10h clinic day
+    // expects ~5, robust).
+    const seen = new Set<number>();
+    while (world.clock.hourOfDay >= o.openHour && world.clock.hourOfDay < o.closeHour) {
+      world.tick();
+      for (const p of electives(world)) seen.add(p.id);
+    }
+    expect(seen.size).toBeGreaterThan(0);
   });
 
   it('PRE-CLINIC ticks leave the rng stream untouched — the control window', () => {
@@ -66,8 +80,7 @@ describe('outpatient stream — arrival', () => {
     // gated world would consume an extra draw per tick and diverge instantly.
     const withRoom = fixture(99).world;
     const without = fixture(99, { mri: false }).world;
-    const target = BALANCE.arrivals.outpatient.openHour * TICKS_PER_GAME_HOUR;
-    while (withRoom.clock.tick < target) {
+    while (withRoom.clock.tick < CLINIC_OPEN_TICK) {
       withRoom.tick();
       without.tick();
     }

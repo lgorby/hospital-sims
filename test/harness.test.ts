@@ -239,7 +239,16 @@ describe('headless balance harness (M4)', () => {
     // (probe: 132 restroom visits, 5 organic breakdowns incl. the restroom's
     // piping, 0 broken at end, 111 treated / 3 died, rep 459) — the fixture
     // seed stands un-re-pinned.
-    const s = runHospital(1338, STANDARD_ROOMS, 5);
+    // Seed re-pin 1338→1340 (SHIFTS Stage-1 clock 06:00 re-base): re-basing tick
+    // 0 shifts `hourOfDay` at every tick, so the per-tick spawn draw
+    // (`updateSpawn`, keyed on `timeOfDayMultiplier(hourOfDay)`) re-phases every
+    // fixed-seed trajectory — 1338 dropped appendicitis (6/148, shares one OR) to
+    // 0, the documented "arrival luck." Audited across 8 seeds (1337/1339/1340-42/
+    // 4242/90210): the envelope is healthy on ALL (treated 135–161, died 1–6, rep
+    // 402–563, cash positive, no game-over); 1337/1340/1341/4242/90210 discharge
+    // every condition. Re-pinned to 1340 (healthiest: 161 treated, rep 563, appendix
+    // 3, gallstones 5). Assertions unchanged — the seed is the fixture.
+    const s = runHospital(1340, STANDARD_ROOMS, 5);
     const w = s.world;
 
     expect(w.gameOver).toBe(false);

@@ -90,8 +90,9 @@ export function updateSpawn(world: World): void {
  * DRAW-ORDER CONTRACT, and it is load-bearing for determinism (§4):
  *   - the clinic-hours check sits OUTSIDE `rng.chance`, which consumes a draw
  *     unconditionally. That is what keeps every pre-clinic tick bit-identical
- *     to the pre-change build, giving a real control window (the clock starts
- *     at hour 0, so ticks [0, openHour x TICKS_PER_GAME_HOUR) are untouched).
+ *     to the pre-change build, giving a real control window. (SHIFTS Stage-1
+ *     re-based tick 0 to 06:00, so the clinic-hours gate opens at a different
+ *     tick offset than before — the draw-order contract is phase-independent.)
  *   - the room-gate sits INSIDE, after the draw, so owning no scanner does not
  *     itself perturb the stream.
  * Ordered AFTER the emergency roll so that roll's draws keep their positions.

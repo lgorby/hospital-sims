@@ -2180,7 +2180,7 @@ export class World implements PathGrid {
     // see arrivals immediately (M3 review: at most 2 rechecks per tick).
     this.auraCheckedTick = -1;
     this.checkBankruptcy();
-    if (!this.gameOver && this.clock.isMidnight) this.closeDay();
+    if (!this.gameOver && this.clock.isDayRollover) this.closeDay();
   }
 
   /**
@@ -2209,7 +2209,7 @@ export class World implements PathGrid {
       // otherwise "lasted N days" / the DNF "busted day N" over-count by one
       // (final review, finding 1b). A bust can only fire well after grace, so
       // this is never day 0.
-      day: this.clock.isMidnight ? this.clock.day - 1 : this.clock.day,
+      day: this.clock.isDayRollover ? this.clock.day - 1 : this.clock.day,
       cash: this.cash,
       reputation: this.reputation,
       treated: this.lifetimeTreated,

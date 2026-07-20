@@ -9,6 +9,15 @@ export const BALANCE = {
   time: {
     ticksPerSecond: 10,
     gameDayRealMinutes: 8, // 1 game day = 8 real minutes at 1× speed
+    /**
+     * SHIFTS Stage-1: the game clock opens here (tick 0 = this minuteOfDay), so a
+     * new hospital starts in the MORNING with its day staff on duty (Owner Fork 1
+     * A). It MUST equal `shifts.day.startMinute` (arrivals + shifts are
+     * co-phase-locked) — pinned by a test — but is a SEPARATE constant on purpose:
+     * the shift probe sweeps `shifts.day` to measure the window as a balance lever,
+     * and the clock phase must stay put while it does, or that arm measures nothing.
+     */
+    dayStartMinute: 360, // 06:00
   },
   /** The 1–5 scale shared by acuity, staff skill, and patient wayfinding
    *  (SSOT — audit #7: rng rolls, UI star rows, and formula spans derive it). */
