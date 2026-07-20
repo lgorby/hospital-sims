@@ -22,7 +22,7 @@ day-only night deaths — stranded-at-boundary harm is unmeasured until walk-hom
 gather-cancel exist). Two review caveats to carry: the `+$70` day-only figure is a
 **reputation-floor** number (the 1-nurse starter crashes rep to 0 by day 2–3 even
 at baseline — a pre-existing fragility), so day-only is "survivable-but-tight," NOT
-a safe default. **GIT STATE: 7 commits ahead of `origin/master`, LOCAL-only, NOT
+a safe default. **GIT STATE: the ECONOMY + SHIFTS commits are LOCAL-only, NOT
 pushed** (through `4c973b1`) — a push re-baselines every live save under the tighter
 economy AND makes v13 one-way, so it is the owner's deploy call. Prior: outpatient
 stream LIVE (SAVE_VERSION 11); Departments Stage 2a still blocked.
@@ -70,7 +70,7 @@ hygiene.**
 | Gates | lint, `tsc --noEmit`, `vite build` all green; CI runs the full gate on every push to `master` and every PR |
 | `SAVE_VERSION` | **13** (`src/sim/save.ts:32`) LOCAL — v1–v13 loadable. **v11 is what's DEPLOYED/LIVE**; v12 (ECONOMY tally keys) + v13 (SHIFTS `shift`/`onFloor` staff fields, INERT) are committed local-only. Pushing makes v13 one-way AND re-baselines every live save under the tighter economy. |
 | Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 15 room types (14 buildable, `resp` retired) · 11 staff roles |
-| Working tree | clean. Commits through `74a516e` are on `origin/master` (LIVE). **7 commits are LOCAL-only** (`15ba628` econ probe, `ed03a49` derivation, `a949452` ECONOMY impl, `55059b9` shifts contract v2, `5a907a8` shift gate+probe, `4c973b1` shifts plumbing, `a62d736` handoff) — a push is the owner's deploy + save-re-baseline decision. |
+| Working tree | clean. Commits through `74a516e` are on `origin/master` (LIVE). **Everything after is LOCAL-only** — the ECONOMY + SHIFTS work (`15ba628` econ probe → `a949452` ECONOMY impl → `4c973b1` shifts plumbing → the docs commits; `git log origin/master..` for the full list) — a push is the owner's deploy + save-re-baseline decision. |
 
 **SAVE_VERSION 11 is deployed, which makes it one-way.** Saves written by the
 live build cannot be opened by the previous one — that is the bump doing its
@@ -154,8 +154,8 @@ revisited.
 
 ### START HERE (session handoff, 2026-07-19 late — SHIFTS STAGE-1: PROBE REVIEWED, PLUMBING LANDED INERT)
 
-Working tree clean; **699 tests (693 pass, 6 skip), all gates green**; 7 commits
-ahead of `origin/master`, LOCAL-only (see Current state).
+Working tree clean; **699 tests (693 pass, 6 skip), all gates green**; the ECONOMY
++ SHIFTS commits are LOCAL-only, not pushed (see Current state).
 
 **► ECONOMY STAGE-1 SHIPPED** (`a949452`, SAVE_VERSION 11→12): the ~82% margin is
 collapsed to ~32% (feeScale + size/usage-scaled utilities + per-repair costs). This
