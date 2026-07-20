@@ -195,6 +195,18 @@ SSOT export in `data/roles.ts` (renderer + guard both import it); regression tes
 `data.test.ts` "scrub-cap clinical roles are hue-separated". Reviewed (SHIP-able,
 drift finding folded). Committed local, NOT pushed.)*
 
+*(DONE LOCAL 2026-07-20, AWAITING OWNER PUSH: **sparks-decal legibility** —
+render-only, no save bump. `hazardSparks` (broken-room MECHANICAL decal in
+`render/sprites.ts`) added a warm amber glow halo + bolder bolts/pinpoints so the
+fault reads at default zoom against the greyed floor (the banked Stage-3 NIT); it
+stays a SECONDARY marker (greyed floor + NEEDS-ATTENTION panel are the primary
+signals). Verified before/after via live-drive (build CT → Break a room). Reviewed
+CLEAN (no BLOCKER/MAJOR). No headless test: the bounds==tile invariant is safe by
+construction (unchanged bounds rect, all shapes inside 64×32) and a Pixi-importing
+test would break the renderer-free suite — a conscious call, same as `messDecal`'s
+identical unguarded invariant. `hazardSteam` (piping) deliberately left as-is: it
+already has a filled water-film area, so it never had the all-thin-strokes problem.)*
+
 1. **NURSE TECHS — a capacity lever the owner asked for** (meatier; distinct from EVS: a
    tech attends a PATIENT, EVS a TILE). Patient load 6–9. Design prize: "do I need a nurse
    or a tech?" Pairs with the OBSERVATION v4 rewrite. Scope in the backlog ("Nurse techs").
@@ -775,10 +787,11 @@ remain valid for a Stage 2a v2 — the code map was not what stopped the stage.
   trap-BFS doesn't re-check existing ATRIUM footprints; room/expand ghost
   validity keys omit cash while paused; patients stand in messes (V1
   collision, accepted); wage-accrual float dust (HUD rounds it); Stage-3
-  live-drive: sparks decal reads subtle at default zoom (grey floor
-  carries it), restroom "In use" line lists "(on the way)" walkers under
+  live-drive: restroom "In use" line lists "(on the way)" walkers under
   an "In use" header, and REJECTED build/expand/sell modes stay armed
-  after the reason toast (pre-existing; Esc is the exit).
+  after the reason toast (pre-existing; Esc is the exit). *(The sparks-decal
+  "reads subtle at default zoom" NIT is DONE — warm amber glow added, see the
+  DONE-LOCAL note in START HERE.)*
 - **Owner asks 2026-07-18 (answered + scoped, pending owner priorities):**
   (a) *Do patients bring family?* Not yet — GDD §11 item 15 (family &
   visitors) is designed at sketch level only; needs a milestone (non-patient

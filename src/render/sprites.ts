@@ -373,10 +373,17 @@ export function hazardKey(kind: RoomFailure['kind']): string {
 }
 
 /**
- * Mechanical failure: a scorch smudge under the fault with a few jagged spark
- * bolts flung flat across the ground plane and hot pinpoints at their tips —
- * "the machine is arcing". Same flat decal language as the messes (all shapes
- * squashed toward 2:1, no rise), subtle but readable on any floor color.
+ * Mechanical failure: a warm arc-light halo with a scorch smudge under the
+ * fault, a few jagged spark bolts flung flat across the ground plane, and hot
+ * pinpoints at their tips — "the machine is arcing". Same flat decal language
+ * as the messes (all shapes squashed toward 2:1, no rise).
+ *
+ * The halo is the legibility anchor: a broken room GREYS its floor
+ * (brokenFloorTint), and thin 1px bolts on a dark desaturated floor washed out
+ * at default zoom (handoff live-drive note). A warm colored AREA survives
+ * downscaling where strokes vanish, so the fault now reads without zooming in.
+ * Everything stays inside the 64×32 tile canvas, so ground-tile placement is
+ * unchanged.
  */
 function hazardSparks(g: Graphics): void {
   const cx = TILE_W / 2;
@@ -385,25 +392,32 @@ function hazardSparks(g: Graphics): void {
   const spark = 0xffd23f; // hot yellow
   const ember = 0xf29a2e; // cooler orange secondary
   const hot = 0xfff3b8; // near-white pinpoints
-  // Scorch smudge — two stacked soot lobes.
-  g.ellipse(cx, cy, 9.5, 4.6).fill({ color: scorch, alpha: 0.38 });
-  g.ellipse(cx + 2, cy + 1, 5, 2.4).fill({ color: shade(scorch, 0.55), alpha: 0.45 });
-  // Jagged bolts radiating from the smudge (flat zigzag strokes).
+  const glow = 0xff9a2b; // warm arc-light halo — the contrast against greyed floor
+  // Warm halo FIRST (below the scorch + bolts): two stacked squashed ellipses
+  // approximate a soft falloff. This is what makes a broken machine legible at
+  // default zoom; the scorch on top leaves it reading as a hot ring, not a blob.
+  g.ellipse(cx, cy, 16, 7.6).fill({ color: glow, alpha: 0.16 });
+  g.ellipse(cx, cy, 10.5, 5).fill({ color: glow, alpha: 0.22 });
+  // Scorch smudge — two stacked soot lobes (a dark core inside the halo).
+  g.ellipse(cx, cy, 9.5, 4.6).fill({ color: scorch, alpha: 0.42 });
+  g.ellipse(cx + 2, cy + 1, 5, 2.4).fill({ color: shade(scorch, 0.55), alpha: 0.5 });
+  // Jagged bolts radiating from the smudge (flat zigzag strokes) — bolder and
+  // fully opaque so they hold up when the whole decal is drawn small.
   const bolt = (pts: readonly number[], color: number, width: number): void => {
     g.moveTo(cx + pts[0]!, cy + pts[1]!);
     for (let i = 2; i < pts.length; i += 2) g.lineTo(cx + pts[i]!, cy + pts[i + 1]!);
-    g.stroke({ color, width, alpha: 0.9 });
+    g.stroke({ color, width, alpha: 1 });
   };
-  bolt([2, -1, 8, -4, 13, -2], spark, 1.4);
-  bolt([-3, 1, -9, 3, -14, 1], spark, 1.4);
-  bolt([1, 2, 5, 5, 11, 4], ember, 1.2);
-  bolt([-1, -2, -4, -5, -9, -6], ember, 1.1);
-  // Hot pinpoints at the bolt tips + one at the source.
-  g.circle(cx + 13, cy - 2, 1.3).fill(hot);
-  g.circle(cx - 14, cy + 1, 1.1).fill(hot);
-  g.circle(cx + 11, cy + 4, 1).fill({ color: hot, alpha: 0.9 });
-  g.circle(cx - 9, cy - 6, 0.9).fill({ color: hot, alpha: 0.85 });
-  g.circle(cx, cy - 1, 1.5).fill({ color: hot, alpha: 0.95 });
+  bolt([2, -1, 8, -4, 14, -2], spark, 2);
+  bolt([-3, 1, -9, 3, -15, 1], spark, 2);
+  bolt([1, 2, 5, 5, 12, 4], ember, 1.6);
+  bolt([-1, -2, -4, -5, -10, -6], ember, 1.5);
+  // Hot pinpoints at the bolt tips + one at the source — enlarged to read.
+  g.circle(cx + 14, cy - 2, 1.8).fill(hot);
+  g.circle(cx - 15, cy + 1, 1.6).fill(hot);
+  g.circle(cx + 12, cy + 4, 1.4).fill({ color: hot, alpha: 0.95 });
+  g.circle(cx - 10, cy - 6, 1.2).fill({ color: hot, alpha: 0.9 });
+  g.circle(cx, cy - 1, 2).fill({ color: hot, alpha: 1 });
 }
 
 /**
