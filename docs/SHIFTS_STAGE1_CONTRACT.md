@@ -1,9 +1,15 @@
 # Staff Shifts — Stage 1 CONTRACT (two-shift coverage)
 
-**Status:** **NOT READY (2026-07-19, both reviews).** Six MAJORs across two
-lenses. The epic is harder than this draft assumed in two independent ways —
-economic and mechanical — and the reframe needs an owner decision (see the
-block below). **No code.**
+**Status:** **v2 REVIEWED (both split lenses, 2026-07-19) — MEASUREMENT-FIRST.**
+The ECONOMIC objection is CLEARED (ECONOMY Stage-1 shipped; 2× payroll → ~6%
+margin). The mechanical review returned READY-WITH-FIXES (save `onFloor`, per-tick
+reconciliation, don't-gate-promote); the design review returned NOT-READY as
+drafted because the contract pre-committed to the two levers the arithmetic says
+break the starter (whole-roster payroll, morning window). **Resolution: a shift
+probe measures the binding early-game arm BEFORE the numbers are written — the
+same arc the economy epic took.** Full folded requirements in the "v2 REVIEW
+OUTCOME → v3 REQUIREMENTS" block under "## v2 — MECHANICAL RESOLUTION". **Next
+concrete step: build `test/shiftProbe.test.ts`.** No code until it runs.
 
 > ## REVIEW OUTCOME — the two ways this draft is wrong
 >
@@ -64,6 +70,271 @@ block below). **No code.**
 > them — a real trade-off) rather than a cost mechanic; (iii) a lighter shift
 > model that does not send staff off-floor. Do not iterate the contract until the
 > framing is chosen.
+
+---
+
+## v2 — MECHANICAL RESOLUTION (2026-07-19)
+
+The reframe's **economic** objection is closed (ECONOMY Stage-1 shipped; 2× payroll
+now drops the mature margin ~32%→~6%, measured). What remains is the **mechanical**
+rewrite. This section resolves each of the first review's six MAJORs with a
+concrete design grounded in the current code (line refs verified 2026-07-19), and
+flags the two decisions that are genuinely the owner's.
+
+### v2 REVIEW OUTCOME — both split-lens pre-impl reviews in (2026-07-19)
+
+**Mechanical: READY-WITH-FIXES. Design: NOT-READY as drafted → measurement-first.**
+The mechanical spine holds against the code; the balance framing repeats the
+"assert the flattering arm" trap and must become a PROBE, exactly as the economy
+epic did. Fold ALL of the below before implementing; **the numbers do not get
+written until a shift probe runs.**
+
+**MECHANICAL fixes (verified against source):**
+1. **M1 — SAVE `onFloor` (one boolean); the "derived, not saved" claim is FALSE.**
+   It violates the save→load→run determinism INVARIANT (`INVARIANTS.md:49-50`): a
+   staffer WALKING home at save time is `onFloor=true` (claims tiles via
+   `isTileClaimed`, `world.ts:339`) but derives to off-floor on load, so OTHER
+   walkers' standing-spot/queue selection diverges → divergent event log. `firing`
+   is save-safe only because it uses instant `removeStaff`; shifts cannot. So
+   `SavedStaff` gains BOTH `shift` and `onFloor` (the payload already carries
+   `at/path/target`, so restore is exact). (Alt: drop the walk — blink off-floor
+   instantly — then it IS derivable; loses the polish.)
+2. **M2 — make `updateShifts` a PER-TICK RECONCILIATION, not a boundary-only
+   sweep.** The boundary sweep misses a staffer who goes idle AFTER the boundary
+   via JOB completion (cleaning finishes in the dispatcher, not `releaseReservation`)
+   — she loiters on-floor till her next shift. Per-tick reconciliation (every tick:
+   off-shift + on-floor + idle + no `active` reservation → start walk home;
+   on-shift + off-floor → respawn) is idempotent, closes the job gap, and avoids
+   storing previous-tick `onShift` (itself an unsaved-state hazard).
+3. **M3 — do NOT gate `promoteGatheredReservations` on `onShift`** (it can deadlock
+   a bay: promote refuses, gather lingers to the 60-min timeout). Rely on dispatch
+   exclusion (no new off-shift gathers) + cancel-at-reconciliation. Run
+   `updateShifts` AFTER `updatePatientNeeds`, BEFORE `updateDispatcher`
+   (`world.ts:2169-2170`).
+4. **rolePool MUST exclude off-shift** (`dispatcher.ts:227-233`) or `rolePool > 1`
+   counts an off-shift body, the anti-capture guard misfires and empties a night
+   bay. Pin it in regression #3. The derivation/sweep key on **`active`**, not
+   the ambiguous "live". Anti-capture, off-shift+firing, gathering-cancel-requeue,
+   night-check-in-stall, respawn-overlap all CONFIRMED-OK.
+
+**DESIGN reframe — measure, do not assert (the binding arm is the early game):**
+5. **Payroll model is a PROBE OUTPUT, not a pre-commitment.** Whole-roster (6a)
+   nails a day-only nurse to a full 24h wage for 12.5h — the specific thing that
+   sinks the starter (real-number estimate: day-only starter ≈ **−$19/day** before
+   the rep spiral). Measure 6a AGAINST a **per-shift wage (~0.6× day)**: day-only
+   1×0.6 is genuinely cheaper than today, while 24/7 2×0.6 is STILL exactly 2×
+   day-only — the owner's tension preserved WITHOUT nailing day-only to today's
+   cost. Adopt whichever leaves day-only positive.
+6. **The day WINDOW phase is a probe arm.** 06:00–18:30 strands the entire
+   18:30–22:00 evening rush (1.0 — the game's 2nd-highest band) for the sleepy
+   morning. Sweep 06:00–18:30 vs ~08:00–20:30 vs ~09:30–22:00; let VIABILITY, not
+   the 7a–7p realism convention, pick the phase (make it a conscious measured
+   trade if realism wins).
+7. **Expand the probe metrics.** Add: (a) deaths+walkouts of patients who ARRIVED
+   on-shift but were STRANDED at the 18:30 boundary (afternoon-peak 1.5 patients
+   abandoned overnight — invisible to an "arrivals-forgone" metric); (b) a
+   MULTI-DAY reputation trajectory for day-only (does it spiral or find a grim
+   floor?); (c) a LOW-REP shock arm (level ≠ survivability — the economy lesson);
+   (d) **incremental night-shift ROI as a hard number** (night marginal revenue −
+   night marginal payroll) — if negative, "24/7 later" is a FICTION and 24/7's
+   value must come from a named non-cash source, or Stage 3.
+8. **Pre-register falsification:** day-only starter net > 0 across seeds AND
+   night-shift marginal ROI > 0 (or a named reason 24/7 is worth it). If either
+   fails, the feature ships with a mitigating lever, not as drawn.
+9. **Reconsider the v12→v13 migration (MINOR).** Alternating-by-parity HALVES a
+   healthy live save's coverage on load (3 always-on nurses → 2-day/1-night ≈ 1.5
+   effective, same payroll), stacked on the economy re-baseline — a comfortable
+   save can spiral on open. v11 is DEPLOYED. The **opt-in flag** (old saves keep
+   24/7) deserves real weight, OR migrate by MINTING a night roster rather than
+   splitting the day one. Measure what parity does to a healthy save first.
+10. **Add a legible night-unstaffed SIGNAL** (render-side): a HUD/roster state
+    "No staff on night shift — night arrivals are not being seen", so a dead night
+    hospital reads as a DECISION, not a bug. Cheap, and it converts the pressure
+    into a teach.
+11. **Consideration (scope):** Stage-1 coverage-without-fatigue is a fiat wall;
+    fatigue (Stage 3) is what NATURALIZES it. Stage 1 alone can measure "24/7 is
+    never worth it" — that verdict must NOT kill the feature; consider pulling a
+    small reputation/quality VALUE for night coverage earlier so 24/7 has a reason
+    to exist within Stage 1. Owner call on staging.
+
+**Owner Fork 1 (clock start) note:** option A (open at 06:00) is the right UX call
+but is NOT a footnote — it adds a `startMinuteOfDay` offset to `minuteOfDay` and
+must re-base `dayOfTick`/`display`/the `?seed` boot determinism together (the 24h
+`closeDay` rollover can stay on the raw tick boundary — phase-invariant). And its
+justification is "arrivals and shifts are CO-PHASE-LOCKED" (both clock-driven), not
+merely "daily totals invariant" — it fixes the empty-floor open, NOT viability.
+
+**NEXT STEP: build `test/shiftProbe.test.ts`** (the economyProbe pattern) with the
+arms above — payroll-model × window-phase × posture (day-only/24-7/baseline) on the
+early-game + reference arms — derive the payroll model and window from the binding
+arm, THEN write the Stage-1 balance numbers and the mechanical implementation.
+Everything below (and the original draft) is superseded by these requirements.
+
+### The shift model (unchanged from the draft, restated)
+Two fixed shifts, **day 06:00–18:30** and **night 18:00–06:30** (12.5 game-h each,
+a 30-min overlap at each changeover). `onShift(shift, minuteOfDay)` is a PURE
+clock function (`formulas.ts` or `clock.ts`, SSOT), no per-staffer counter:
+day = `minuteOfDay ∈ [360, 1110]`, night = `[1080, 1440) ∪ [0, 390]`. The four
+window constants live in **`BALANCE.shifts`** (resolves MAJOR B5's SSOT gap).
+Rotation is the day↔night CHANGEOVER, not circadian rotation of one nurse (§9.1).
+
+### The core new machinery: an `onFloor` transient + a shift-boundary sweep
+The heart of the rewrite. A staffer has THREE availability states, not two:
+
+| state | `onShift` | on the floor? | in dispatch pool? |
+|---|---|---|---|
+| **working shift** | yes | yes | yes |
+| **off-shift, finishing a live bay** | no | yes | NO (new work) |
+| **off-shift, gone home** | no | **no (`onFloor=false`)** | no |
+
+- **`onFloor: boolean` is a TRANSIENT runtime field on `Staff`, NOT saved** — it is
+  DERIVED (see Save below), so it adds no `SavedStaff` field. It defaults `true`.
+- **Off-floor staff are excluded from the three all-staff iterations** the map
+  cares about: `isTileClaimed` (`world.ts:339`), the renderer sprite loop
+  (`renderer.ts:836`) and `pickAt` hit-test (`renderer.ts:459`). They REMAIN in
+  `world.staff` so payroll (`economy.ts`) still charges them — that is the whole
+  point (you pay for coverage you hire, on-shift or not). This resolves **MAJOR
+  B3** (`removeStaff` was rejected because it stops payroll; `onFloor` keeps them
+  paid but off the map).
+
+### MAJOR B1 — gathering promotion is now gated (the negation-of-the-feature bug)
+`promoteGatheredReservations` (`dispatcher.ts:810-833`) promotes a gathering bay to
+active on arrival-in-room alone, consulting NO availability — so an off-shift nurse
+would START and COMPLETE treatment. The `firing` model handles the identical case
+in `fireStaff` (`world.ts:1112-1123`): it **cancels every `gathering`-phase
+reservation** (`cancelReservation(r, {hint:false})`) and only defers (sets
+`firing`) if an `active` reservation remains. **The off-shift transition reuses
+this exact split:** at the boundary, a newly-off-shift staffer's `gathering`
+reservations are CANCELLED (the patient re-queues to an on-shift staffer); an
+`active` reservation is allowed to FINISH. Gating `promoteGatheredReservations`
+additionally with `onShift` is the belt-and-braces guard so a mid-gather boundary
+crossing can never promote.
+
+### MAJOR B2 & B4 — the walk-home trigger and the off-floor transition
+Two deterministic hooks, both reusing shipped precedents:
+1. **At each shift-boundary tick** (twice per game-day, a deterministic gate like
+   `updateEconomy`'s hourly one — a new `updateShifts(world)` system): for every
+   staffer who JUST went off-shift — cancel gathering (above), un-post if posted
+   (mirror the `sellRoom` un-post, `world.ts:1006-1012`), and if idle, start the
+   walk home (`setWalkerTarget` to `BALANCE.map.entrance`). For every staffer who
+   JUST came on-shift and is off-floor — respawn at the entrance (`onFloor=true`,
+   idle), available again.
+2. **Walk-home completion**: when an off-shift, walking-home staffer ARRIVES at the
+   entrance, set `onFloor=false` (the analogue of the patient despawn at
+   `decay.ts:35-37`, but MARK instead of delete — payroll must continue).
+3. **The last-bay releaser**: an off-shift staffer finishing an `active` bay walks
+   home when it releases — hook the `releaseReservation` last-release branch that
+   already removes a `firing` staffer (`world.ts:1996-2000`): same site, but for
+   off-shift the action is "start walk home", not "removeStaff".
+
+### MAJOR B1-independent boundary (the anti-capture subtlety, preserved)
+The ED ratio guard means a ratio nurse never returns to `idle` while a bay is live
+(`dispatcher.ts:186-196`), so an idle-gated boundary would let her work forever.
+The boundary is therefore enforced by **exclusion from the dispatch pools**, ANDing
+`onShift` into `idleStaff` (`dispatcher.ts:118`), `availableStaff`'s `eligible`
+(`dispatcher.ts:174`, beside `s.firing`) and `rolePool` (`dispatcher.ts:230`). She
+is excluded from NEW work the instant she goes off-shift; her live bays drain; on
+the last release she walks home. **The load-bearing regression** (§10 #3): a ratio
+nurse holding a bay at her boundary finishes it and then goes off, never past it.
+
+### MAJOR B4 — the midnight-start problem → **OWNER FORK 1**
+The clock starts at tick 0 = **midnight**, which is inside the NIGHT window, so a
+day-assigned starter is off-shift for the opening 6 game-hours — and a brand-new
+"day-only" hospital would open with its staff already walked home (an empty-floor
+first impression). Two clean resolutions; **this is the owner's call:**
+- **(A) RECOMMENDED — open the game at the day-shift start.** Re-base so tick 0 is
+  06:00 (a `startMinuteOfDay` offset in `clock.ts`). A new hospital opens in the
+  MORNING with its day staff on duty — genre-standard (RCT/Theme Hospital open in
+  the morning) and it makes "day-only" viable from tick 0. **Economy-SAFE: daily
+  arrival totals are phase-invariant** (the `timeOfDayCurve` integrates to the same
+  per-day total regardless of where tick 0 sits), so the just-shipped economy
+  numbers hold. Blast radius (bounded): the midnight daily-report/`closeDay` gate
+  (`world.ts:2181`), day numbering, the clock `display` string, `?seed` boot
+  determinism, and clock tests — all re-based once, cleanly.
+- **(B) Keep midnight start; auto-assign starter staff to `day`; accept the gap.**
+  Midnight–06:00 is the quietest arrival block (`timeOfDayCurve` 0.3), so few
+  patients are lost — but the new game still opens with an empty floor for ~2 real
+  minutes, which reads as broken. Cheaper, worse first impression.
+
+### MAJOR B5 — SSOT, the CommandQueue, and the save-read plumbing
+- Window constants → `BALANCE.shifts` (above).
+- The per-staffer day/night **toggle goes through the CommandQueue** (a new
+  `setStaffShift` command), never a direct `staffUpdated` mutation (hard rule 3).
+- `readStaff` (`save.ts:860-877`) does NOT currently receive `saveVersion` (unlike
+  `readPatient`/`readReservation`). Threading it in is a REQUIRED companion edit
+  for the read-time default — its one call site updates too.
+
+### Shift assignment (resolves §9.5)
+**Auto-assigned at hire, alternating within role, first = `day`** (`addStaffMember`,
+`world.ts:1037-1057`): count existing staff of that role, `day` if even, `night` if
+odd. So a minimal roster is all-`day` → the hospital is staffed through the busy
+daytime and empty at night — the coverage pressure, surfaced. A per-staffer toggle
+(hire panel / inspect card) lets the player rebalance; a full scheduling view is
+deferred.
+
+### Save — SAVE_VERSION **12 → 13** (NOT 12 — economy already took 12)
+- One new saved field: **`shift: 'day' | 'night'` on `Staff`**. It breaks
+  `SavedStaff` compile by design (`save.ts:246-260`), forcing the schema addition
+  (`writeStaff` `:842`, `readStaff` `:860` + threaded `saveVersion`).
+- **`onFloor` is NOT saved — it is DERIVED at load**: `onShift(shift, clock)` →
+  on floor; off-shift AND holding a live reservation → on floor (finishing);
+  else → off floor. Every input (shift, clock tick, reservations) is already
+  serialized, so a load reconstructs the exact floor state with no new field. This
+  is the key simplification over the draft's §5.
+- **Migration for v<13:** assign existing staff **alternating by id parity**
+  (`saveVersion < 13 ? (id % 2 ? 'night' : 'day') : asOneOf(o.shift, …)`), so a
+  loaded save gets rough round-the-clock coverage rather than empty nights.
+  Documented as a behaviour change on load (the outpatient/economy precedent).
+  **OWNER FORK 2:** alternating-by-parity (rough 24/7 on load, behaviour changes)
+  vs all-`day` (nights empty on load) vs a per-save "shifts enabled" opt-in flag
+  (old saves keep 24/7; but shifts become opt-in, which the owner did not ask for).
+  Recommend alternating-by-parity.
+
+### Payroll — the whole roster (unchanged, and now it BITES)
+No change to `economy.ts` payroll — it already charges every hired staffer hourly.
+That IS the design: you pay a night nurse whether or not you also employ a day
+nurse, so 24/7 costs ~2×. The economy re-tune is what makes this bite (measured:
+2× payroll → ~6% mature margin). Charging only on-shift staff was rejected in the
+plan (it removes the tension the owner asked for).
+
+### The measurement protocol — a probe, on the TIGHTENED economy
+Build `test/shiftProbe.test.ts` (the economyProbe pattern) measuring three postures
+on both layout arms AND the early-game arm, against the SHIPPED economy:
+1. **DAY-ONLY** (1× roster, day only) — the starter posture: profit/day, night
+   arrivals forgone, deaths/walkouts during the unstaffed night.
+2. **24/7** (2× roster, both shifts) — is it solvent at the tightened economy?
+3. **BASELINE** (today's always-on 1× roster) — the control.
+Deciding metrics, stated up front: profit/day per posture; night-arrival share a
+day-only player forgoes; deaths+walkouts in unstaffed night hours; and whether
+"day-only → 24/7" is a real progression or a trap. **No shift balance number ships
+until this runs.** The night-check-in stall (an unstaffed night reception can't
+check patients in, `dispatcher.ts:349`) is measured here too, not assumed.
+
+### Regressions the implementation must own (one per MAJOR)
+1. **`onShift` correctness** — both boundaries + both overlap windows across a full
+   game-day (unit test on the pure fn).
+2. **Off-shift exclusion** — an off-shift staffer is not in `availableStaff`/
+   `idleStaff`/`rolePool` and takes no new work.
+3. **Anti-capture-independent boundary** — a ratio nurse holding a live bay at her
+   boundary finishes it and goes off shift (does NOT work past it). THE subtlety.
+4. **Gathering cancellation** — a patient gathering to a room whose staffer goes
+   off-shift is re-dispatched or cleanly cancelled, never stranded, and
+   `promoteGatheredReservations` never promotes an off-shift staffer.
+5. **Walk-home + off-floor** — an off-shift idle staffer leaves the floor
+   (`onFloor=false`, tile freed, not rendered/clickable) and reappears on-shift.
+6. **Standing-post vacate** — an off-shift receptionist un-posts; a day-only
+   reception cannot check in at night (the coverage pressure, pinned).
+7. **v12 → v13 back-compat** — a v12 save loads with shifts assigned by parity;
+   REAL downgrade helper (`save.test.ts`), `onFloor` reconstructed, not saved.
+8. **Payroll unchanged in mechanism** — the whole roster is still charged.
+9. **Harness re-tuned green** — the roster and per-condition floors updated for the
+   shift world, landing WITH the change (regression-of-record).
+
+### The two owner forks, in one place
+1. **Clock start (MAJOR B4):** open at day-shift-start (A, recommended, economy-safe)
+   vs keep midnight + accept the empty-floor opening (B).
+2. **v12→v13 save migration:** alternating-by-parity (recommended) vs all-day vs a
+   per-save opt-in flag.
 
 ---
 

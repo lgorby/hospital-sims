@@ -6,8 +6,13 @@ The ~82% operating margin is collapsed to **~32%** via three levers (fee trim
 `feeScale 0.72`, size+usage-scaled utilities, per-repair costs). **SAVE_VERSION
 11→12; committed LOCAL, NOT pushed — pushing re-baselines every live save (owner's
 deploy call).** This UNBLOCKS the shifts epic (2× payroll now drops mature to
-~6%). **The next concrete task: the SHIFTS epic** (economic objection cleared;
-the mechanical rewrite still stands — see START HERE). **GIT STATE (corrected
+~6%). **SHIFTS Stage-1 contract v2 written + reviewed** (both split lenses:
+mechanical READY-WITH-FIXES, design NOT-READY-as-drafted — it pre-committed to the
+whole-roster-payroll + morning-window levers the arithmetic says break the
+starter). **The next concrete task: build `test/shiftProbe.test.ts`** and measure
+the binding early-game arm (payroll-model × window-phase × posture) BEFORE writing
+shift numbers — the economy epic's arc again. Details in
+`SHIFTS_STAGE1_CONTRACT.md` "v2 REVIEW OUTCOME" block. **GIT STATE (corrected
 earlier): commits through `74a516e` were already pushed/LIVE (reflog); the
 economy commits `15ba628`/`ed03a49`/this one are LOCAL-only.** Prior: outpatient
 stream LIVE (SAVE_VERSION 11); Departments Stage 2a still blocked.
