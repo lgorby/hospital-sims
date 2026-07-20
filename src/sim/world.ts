@@ -53,6 +53,7 @@ import { updateEconomy } from './systems/economy';
 import { updateMovement } from './systems/movement';
 import { updateShifts } from './systems/shifts';
 import { updateSpawn } from './systems/spawn';
+import { updateStaffBreaks } from './systems/staffBreaks';
 import { resolveTreatmentOutcome, updateTreatment } from './systems/treatment';
 import { updateThoughts } from './systems/thoughts';
 import { updateWayfinding } from './systems/wayfinding';
@@ -1060,6 +1061,8 @@ export class World implements PathGrid {
       firing: false,
       shift: null, // SHIFTS Stage-1: no shift = always on; assigned at the hire path
       onFloor: true,
+      onBreak: null, // SHIFTS Stage 2: no lunch in flight
+      lunchedThisShift: false,
       at: { ...BALANCE.map.entrance },
       next: null,
       path: [],
@@ -1132,6 +1135,8 @@ export class World implements PathGrid {
         firing: false,
         shift: 'night',
         onFloor: true,
+        onBreak: null,
+        lunchedThisShift: false,
         at: { ...BALANCE.map.entrance },
         next: null,
         path: [],
@@ -1576,6 +1581,43 @@ export class World implements PathGrid {
     const claims = this.stallClaims(room.id);
     for (let i = 0; i < capacity; i++) if (!claims.has(i)) return i;
     return null;
+  }
+
+  /**
+   * slot → staffId, DERIVED from live staff `onBreak` claims (SHIFTS Stage 2
+   * §2): a lounge seat is taken iff some live staffer's onBreak references
+   * {roomId, slot} — the restroom `stallClaims` precedent over staff. No stored
+   * state, so releasing a break frees the seat. Sim (claiming) and UI (inspect
+   * "Seats 1/3") both read this. Walking claimants hold their seat (the slot is
+   * set at claim time), so it also gates geometry (§2).
+   */
+  loungeSeatClaims(roomId: number): Map<number, number> {
+    const claims = new Map<number, number>();
+    for (const s of this.staff.values()) {
+      const b = s.onBreak;
+      if (b?.mode === 'lounge' && b.roomId === roomId && b.slot !== undefined) {
+        claims.set(b.slot, s.id);
+      }
+    }
+    return claims;
+  }
+
+  /** Lowest unclaimed lounge seat, or null when full (claim-aware — walking
+   *  claimants hold their seat exactly like restroom stalls). */
+  freeLoungeSeatIndex(room: Room): number | null {
+    const capacity = this.capacityOf(room);
+    const claims = this.loungeSeatClaims(room.id);
+    for (let i = 0; i < capacity; i++) if (!claims.has(i)) return i;
+    return null;
+  }
+
+  /** Is any live staffer's lunch claiming a seat in this lounge (walking
+   *  included)? Gates expand/sell (SHIFTS Stage 2 §2 — "Occupied"). */
+  loungeHasLiveClaim(roomId: number): boolean {
+    for (const s of this.staff.values()) {
+      if (s.onBreak?.mode === 'lounge' && s.onBreak.roomId === roomId) return true;
+    }
+    return false;
   }
 
   /** patientId of the live vending claim on this machine tile, or null. */
@@ -2227,6 +2269,7 @@ export class World implements PathGrid {
     updateDecay(this);
     updateThoughts(this);
     updatePatientNeeds(this); // side-trips BEFORE dispatch (plan §1.9 order)
+    updateStaffBreaks(this); // SHIFTS Stage 2: settle lunches BEFORE the boundary
     updateShifts(this); // SHIFTS Stage-1: reconcile on/off-floor BEFORE dispatch
     updateDispatcher(this);
     updateWayfinding(this);

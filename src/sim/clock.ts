@@ -1,6 +1,8 @@
 import { BALANCE } from './data/balance';
 
-const GAME_MINUTES_PER_DAY = 24 * 60;
+/** Game-minutes in a day — exported so the lunch-stagger wrap (SHIFTS Stage 2)
+ *  and any window arithmetic use the ONE constant, never `24 * 60`. */
+export const GAME_MINUTES_PER_DAY = 24 * 60;
 const REAL_SECONDS_PER_DAY = BALANCE.time.gameDayRealMinutes * 60;
 /** Exported for tests and systems — never re-derive or hardcode these. */
 export const TICKS_PER_DAY = REAL_SECONDS_PER_DAY * BALANCE.time.ticksPerSecond;

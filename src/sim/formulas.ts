@@ -1,4 +1,9 @@
-import { GAME_MINUTES_PER_HOUR, GAME_MINUTES_PER_TICK, gameMinutesToTicks } from './clock';
+import {
+  GAME_MINUTES_PER_DAY,
+  GAME_MINUTES_PER_HOUR,
+  GAME_MINUTES_PER_TICK,
+  gameMinutesToTicks,
+} from './clock';
 import { AMENITY_DEFS, type AmenityId } from './data/amenities';
 import { BALANCE } from './data/balance';
 import {
@@ -225,6 +230,53 @@ export function onShift(shift: ShiftId | null, minuteOfDay: number): boolean {
  *  null-shift (always-on) staffer is paid the full wage. */
 export function shiftWageMultiplier(shift: ShiftId | null): number {
   return shift === null ? 1 : BALANCE.shifts.wageFactor;
+}
+
+/**
+ * SHIFTS Stage 2 (§3.2): a deterministic 32-bit integer finalizer (rng-free) —
+ * the render-variety-hash idiom applied in-sim, so the lunch stagger re-derives
+ * identically on load without perturbing the seeded stream (legal under hard
+ * rule 2: deterministic, not `Math.random`).
+ */
+function hashInt(n: number): number {
+  let h = Math.imul(n ^ 0x9e3779b9, 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/** SHIFTS Stage 2: the minute-of-day a shift opens (its `startMinute`). */
+export function shiftStartMinute(shift: ShiftId): number {
+  return BALANCE.shifts[shift].startMinute;
+}
+
+/**
+ * SHIFTS Stage 2 (§3.2): a staffer's personal lunch start, minute-of-day. An
+ * id-hash offset spreads staff across the mid-shift window so co-workers don't
+ * overlap; wrapped mod the day so a NIGHT window (which straddles midnight)
+ * still yields a valid minute-of-day.
+ */
+export function lunchStartMinute(shift: ShiftId, staffId: number): number {
+  const l = BALANCE.shifts.lunch;
+  const open = shiftStartMinute(shift) + l.windowStartMinuteFromShiftStart;
+  return (open + (hashInt(staffId) % l.windowSpanMinutes)) % GAME_MINUTES_PER_DAY;
+}
+
+/**
+ * SHIFTS Stage 2 (§3.2): is `minuteOfDay` inside a staffer's lunch-eligibility
+ * window — from her personal start until the shared window close? Wrap-aware
+ * (the `onShift` idiom): the window is at most `windowSpanMinutes` wide, so the
+ * mod-day comparison is unambiguous. A capped/busy staffer retries across this
+ * window; past its close she skips lunch this shift.
+ */
+export function inLunchWindow(shift: ShiftId, staffId: number, minuteOfDay: number): boolean {
+  const l = BALANCE.shifts.lunch;
+  const start = lunchStartMinute(shift, staffId);
+  const close =
+    (shiftStartMinute(shift) + l.windowStartMinuteFromShiftStart + l.windowSpanMinutes) %
+    GAME_MINUTES_PER_DAY;
+  return start < close
+    ? minuteOfDay >= start && minuteOfDay < close
+    : minuteOfDay >= start || minuteOfDay < close;
 }
 
 /**

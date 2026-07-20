@@ -26,7 +26,12 @@ export type PropId =
   | 'toiletStall'
   | 'trashcan'
   | 'vending'
-  | 'plant';
+  | 'plant'
+  // SHIFTS Stage 2 (SHIFTS_STAGE2_CONTRACT §2): the staff-lounge seat. Its
+  // occupancy is DERIVED from staff `onBreak` claims (the toiletStall/restroom
+  // precedent), and it is NON-WALKABLE so `slotAnchorTile` stands the staffer
+  // on a tile beside it, unchanged.
+  | 'loungeSeat';
 
 /**
  * How many of a prop a room's footprint carries (capacity epic Stage A):
@@ -96,6 +101,9 @@ export const PROP_STYLE: Record<PropId, { color: number; rise: number; tiles: nu
   trashcan: { color: 0x707a70, rise: 10, tiles: 1 },
   vending: { color: 0xc44b4b, rise: 22, tiles: 1 },
   plant: { color: 0x4f9a5e, rise: 16, tiles: 1 },
+  // SHIFTS Stage 2: a couch/armchair — a warm upholstered tone, apart from the
+  // clinical palette.
+  loungeSeat: { color: 0x8a6d5a, rise: 12, tiles: 1 },
 };
 
 /** Waiting room chair count included in the base build (GDD §5). */
@@ -402,6 +410,29 @@ export const ROOM_DEFS = {
         id: 'toiletStall',
         walkable: false,
         density: { kind: 'perTiles', tilesPerProp: 3, min: 2 },
+      },
+    ],
+  },
+  // SHIFTS Stage 2 (SHIFTS_STAGE2_CONTRACT §2): where staff take their
+  // mid-shift lunch. Unstaffed, self-service — seat occupancy is DERIVED from
+  // staff `onBreak` claims (the restroom precedent), never reservations. 3×3
+  // min (9 tiles) derives exactly 3 seats (perTiles 3, min 3). No `failure`
+  // entry — a lounge has no equipment to break.
+  lounge: {
+    label: 'Staff Lounge',
+    kind: 'treatment',
+    category: 'comfort',
+    minCols: 3,
+    minRows: 3,
+    cost: 3_000,
+    floorColor: 0xe6dcc3,
+    staffedBy: [],
+    capacity: { kind: 'perProp', prop: 'loungeSeat', noun: 'Seats' },
+    props: [
+      {
+        id: 'loungeSeat',
+        walkable: false,
+        density: { kind: 'perTiles', tilesPerProp: 3, min: 3 },
       },
     ],
   },

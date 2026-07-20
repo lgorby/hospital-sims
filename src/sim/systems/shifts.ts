@@ -25,12 +25,24 @@ export function updateShifts(world: World): void {
 
   for (const member of world.staff.values()) {
     if (onShift(member.shift, minute)) {
-      // On shift: if home, come back on the floor (available again).
-      if (!member.onFloor) respawn(world, member, entrance);
+      // On shift: if home, come back on the floor (available again). BUT a
+      // staffer who is off-floor because of an active OFF-FLOOR LUNCH (SHIFTS
+      // Stage 2) must NOT be snapped back — that would delete the coverage cost.
+      // updateStaffBreaks (run just before this) owns her return via
+      // placeAtEntrance when the lunch ends.
+      if (!member.onFloor && member.onBreak === null) respawn(world, member);
       continue;
     }
 
-    // Off shift. Cancel any GATHERING bays (mirror fireStaff): the patient
+    // Off shift. SHIFTS Stage 2: a boundary crossed mid-lunch CANCELS the lunch —
+    // she goes HOME, not back to the floor. Clear the break (freeing any seat)
+    // and let the walk-home path below take over.
+    if (member.onBreak !== null) {
+      member.onBreak = null;
+      world.events.emit('staffUpdated', { staffId: member.id });
+    }
+
+    // Cancel any GATHERING bays (mirror fireStaff): the patient
     // re-queues to an on-shift staffer, and the ungated promoteGatheredReservations
     // (which runs after this) can never promote an off-shift gather. Cancel even
     // when an active bay remains — exactly fireStaff's rule.
@@ -85,18 +97,16 @@ export function updateShifts(world: World): void {
 }
 
 /**
- * Coming back on shift: reappear at the entrance (staff enter through the door),
- * then REPORT to the area being taken over. During the 30-min changeover overlap
- * the OUTGOING same-role worker is still on the floor, so the newcomer walks to
- * her spot to relieve her (owner ask). Standing-post roles (receptionist/greeter)
- * are re-posted by the dispatcher this SAME tick — that overrides the idle relief
- * target — so a night receptionist still reports to the reception desk, not the
- * door. No outgoing counterpart (fallback) → idle at the entrance, dispatcher routes.
+ * SHIFTS Stage 2: place a staffer on the floor at the entrance, idle — WITHOUT
+ * the shift-start relief walk or the `lunchedThisShift` reset. Shared by the
+ * shift-start respawn (which adds both) AND the end of an off-floor LUNCH (which
+ * must add neither — resetting `lunchedThisShift` here is the double-lunch bug
+ * the review caught; the relief walk targets an outgoing DIFFERENT-shift worker,
+ * meaningless mid-shift). Sequential-placement safe: nearestFreeStandingTile
+ * sees already-placed staff as occupying tiles.
  */
-function respawn(world: World, member: Staff, entrance: { col: number; row: number }): void {
-  // nearestFreeStandingTile sees already-respawned staff as occupying tiles (they
-  // are on-floor + arrived), so a whole night crew coming on at once places
-  // sequentially without stacking.
+export function placeAtEntrance(world: World, member: Staff): void {
+  const entrance = BALANCE.map.entrance;
   const spot = world.nearestFreeStandingTile(entrance, member) ?? entrance;
   member.at = { ...spot };
   member.next = null;
@@ -105,6 +115,25 @@ function respawn(world: World, member: Staff, entrance: { col: number; row: numb
   member.progress = 0;
   member.onFloor = true;
   member.duty = { kind: 'idle' };
+  world.events.emit('staffUpdated', { staffId: member.id });
+}
+
+/**
+ * Coming back on shift: reappear at the entrance (staff enter through the door),
+ * then REPORT to the area being taken over. During the 30-min changeover overlap
+ * the OUTGOING same-role worker is still on the floor, so the newcomer walks to
+ * her spot to relieve her (owner ask). Standing-post roles (receptionist/greeter)
+ * are re-posted by the dispatcher this SAME tick — that overrides the idle relief
+ * target — so a night receptionist still reports to the reception desk, not the
+ * door. No outgoing counterpart (fallback) → idle at the entrance, dispatcher routes.
+ */
+function respawn(world: World, member: Staff): void {
+  placeAtEntrance(world, member);
+  // SHIFTS Stage 2: a new shift re-enables one lunch. (Dependency, §3.6: this
+  // relies on every shifted staffer cycling off-floor once per game-day at her
+  // boundary — true today; a future stage keeping her on-floor across it must
+  // move the reset to an explicit shift-start edge.)
+  member.lunchedThisShift = false;
   // The OUTGOING same-role worker is on the OTHER shift and still on-floor during
   // the 30-min overlap (she doesn't leave until her window closes) — head to her
   // spot. Keyed on `shift !==`, not `!onShift`: during the handover she is still

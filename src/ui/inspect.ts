@@ -7,6 +7,7 @@ import { ROOM_DEFS, roomRetired } from '../sim/data/rooms';
 import { ROLE_DEFS } from '../sim/data/roles';
 import { type ShiftId } from '../sim/data/shifts';
 import { BALANCE } from '../sim/data/balance';
+import { GAME_MINUTES_PER_DAY, GAME_MINUTES_PER_HOUR, ticksToGameMinutes } from '../sim/clock';
 import {
   amenitySellback,
   moodOf,
@@ -289,11 +290,30 @@ export class InspectPanel {
           : '';
       // SHIFTS Stage-1: shift + live floor status, and the toggle's label.
       const shiftLabel = s.shift ? s.shift.charAt(0).toUpperCase() + s.shift.slice(1) : 'Always';
-      const status = !s.onFloor
-        ? 'off duty (home)'
-        : s.shift && !onShift(s.shift, this.world.clock.minuteOfDay)
-          ? 'off shift (leaving)'
-          : 'on duty';
+      // SHIFTS Stage 2: an on-lunch staffer reads legibly (§3.7) — otherwise an
+      // off-floor luncher looks like she quit, and a lounge one looks idle. Once
+      // she's settled (`using`) show when she's back so a vanishing staffer has
+      // an ETA, not a mystery.
+      let status: string;
+      if (s.onBreak !== null) {
+        const where = s.onBreak.mode === 'lounge' ? 'in the staff lounge' : 'out for lunch';
+        if (s.onBreak.phase === 'using') {
+          const back =
+            (this.world.clock.minuteOfDay + ticksToGameMinutes(s.onBreak.ticksRemaining)) %
+            GAME_MINUTES_PER_DAY;
+          const hh = String(Math.floor(back / GAME_MINUTES_PER_HOUR)).padStart(2, '0');
+          const mm = String(Math.floor(back % GAME_MINUTES_PER_HOUR)).padStart(2, '0');
+          status = `${where} — back ~${hh}:${mm}`;
+        } else {
+          status = where;
+        }
+      } else {
+        status = !s.onFloor
+          ? 'off duty (home)'
+          : s.shift && !onShift(s.shift, this.world.clock.minuteOfDay)
+            ? 'off shift (leaving)'
+            : 'on duty';
+      }
       const nextShift: ShiftId = (s.shift ?? 'day') === 'night' ? 'day' : 'night';
       this.shiftButton.textContent = `Switch to ${nextShift.charAt(0).toUpperCase() + nextShift.slice(1)} shift`;
       this.body.innerHTML =
@@ -304,18 +324,22 @@ export class InspectPanel {
         this.line('Shift', `${shiftLabel} — ${status}`) +
         this.line(
           'Duty',
-          // Stage 2: job duties resolve their kind from world.jobs so the line
-          // reads "Cleaning" / "Emptying a trashcan"; the frozen format.ts
-          // fallback covers a job deleted mid-frame (S2.1 freeze). Stage-3
-          // live-drive MINOR 2: the PHASE splits en-route from at-work, so a
-          // walking tech reads "Heading to a repair", not "Repairing".
-          staffDutyLabel(
-            s.duty,
-            // ED B1 §5.1: the PANEL's phases, not the witness reservation's.
-            panel.map((r) => r.phase),
-            s.duty.kind === 'job' ? this.world.jobs.get(s.duty.jobId)?.kind : undefined,
-            s.duty.kind === 'job' ? this.world.jobs.get(s.duty.jobId)?.phase : undefined,
-          ) + (s.firing ? ' (leaving after this patient)' : ''),
+          // SHIFTS Stage 2: on lunch her duty is idle, which would read "Idle" —
+          // say "On lunch" instead (the mode shows in the Shift status above).
+          s.onBreak !== null
+            ? 'On lunch'
+            : // Stage 2: job duties resolve their kind from world.jobs so the line
+              // reads "Cleaning" / "Emptying a trashcan"; the frozen format.ts
+              // fallback covers a job deleted mid-frame (S2.1 freeze). Stage-3
+              // live-drive MINOR 2: the PHASE splits en-route from at-work, so a
+              // walking tech reads "Heading to a repair", not "Repairing".
+              staffDutyLabel(
+                s.duty,
+                // ED B1 §5.1: the PANEL's phases, not the witness reservation's.
+                panel.map((r) => r.phase),
+                s.duty.kind === 'job' ? this.world.jobs.get(s.duty.jobId)?.kind : undefined,
+                s.duty.kind === 'job' ? this.world.jobs.get(s.duty.jobId)?.phase : undefined,
+              ) + (s.firing ? ' (leaving after this patient)' : ''),
         ) +
         panelLine;
       return;
@@ -360,13 +384,24 @@ export class InspectPanel {
     // reservations are ALWAYS empty for the unstaffed self-service room, so
     // reading them would render a permanent "Stalls 0/2" (review MINOR 7).
     const stallClaims = room.type === 'restroom' ? this.world.stallClaims(room.id) : null;
+    // SHIFTS Stage 2 (§2): a lounge derives occupancy from STAFF onBreak claims,
+    // exactly like the restroom — reading reservations would render a permanent
+    // "Seats 0/3" (the same review MINOR 7 the restroom special-case avoids).
+    const loungeClaims = room.type === 'lounge' ? this.world.loungeSeatClaims(room.id) : null;
+    const derivedClaims = stallClaims ?? loungeClaims; // slot → patientId (stall) | staffId (lounge)
     // "In use" lists only USING claimants; walkers still crossing the map
     // read "on the way" (live-drive review MINOR 3 — the flat list overstated
     // occupancy while a claimant was three corridors away).
     const claimName = (id: number): string | undefined => this.world.patients.get(id)?.name.short;
-    const occupant = stallClaims
-      ? [...stallClaims.values()]
+    const occupant = derivedClaims
+      ? [...derivedClaims.values()]
           .map((id) => {
+            // Lounge claims are STAFF ids; stall claims are PATIENT ids.
+            if (loungeClaims) {
+              const s = this.world.staff.get(id);
+              if (!s) return undefined;
+              return s.onBreak?.phase === 'walking' ? `${s.name.short} (on the way)` : s.name.short;
+            }
             const name = claimName(id);
             if (name === undefined) return undefined;
             const walking = this.world.patients.get(id)?.needBreak?.phase === 'walking';
@@ -419,8 +454,8 @@ export class InspectPanel {
     // draining "Beds 2/0" is exactly the confusion the status line prevents.
     if (capRule.kind === 'perProp' && !broken && !room.closed) {
       const total = this.world.capacityOf(room);
-      const used = stallClaims
-        ? stallClaims.size
+      const used = derivedClaims
+        ? derivedClaims.size
         : room.type === 'waiting'
           ? [...this.world.patients.values()].filter((p) => p.waitingRoomId === room.id).length
           : reservations.length;

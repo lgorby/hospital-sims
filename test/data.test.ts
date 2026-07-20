@@ -25,6 +25,9 @@ const CONDITION_STEP_EXEMPT_ROOMS: readonly RoomType[] = [
   'triage',
   'atrium',
   'restroom',
+  // SHIFTS Stage 2: the staff lounge is visited by STAFF on lunch (onBreak
+  // side-trips), never a patient treatment step — self-service like restroom.
+  'lounge',
 ];
 
 describe('SSOT data integrity', () => {

@@ -122,8 +122,16 @@ function starvingDemand(world: World): Map<RoleId, Set<RoomType>> {
 
 function idleStaff(world: World, filter: (s: Staff) => boolean): Staff[] {
   // SHIFTS Stage-1: onShift is INERT (true) until a shift is assigned.
+  // SHIFTS Stage 2: an on-lunch staffer is out of the pool. Load-bearing (a
+  // lounge-mode luncher has duty.kind === 'idle' and is on-floor, so nothing
+  // else would exclude her).
   return [...world.staff.values()].filter(
-    (s) => s.duty.kind === 'idle' && !s.firing && onShift(s.shift, world.clock.minuteOfDay) && filter(s),
+    (s) =>
+      s.duty.kind === 'idle' &&
+      !s.firing &&
+      s.onBreak === null &&
+      onShift(s.shift, world.clock.minuteOfDay) &&
+      filter(s),
   );
 }
 
@@ -181,7 +189,12 @@ function availableStaff(
   }
   const eligible = [...world.staff.values()].filter((s) => {
     // SHIFTS Stage-1: off-shift staff take no new work (excluded like `firing`).
-    if (s.firing || !onShift(s.shift, world.clock.minuteOfDay) || !filter(s)) return false;
+    // SHIFTS Stage 2: an on-lunch staffer is out of the pool (§4 — the pools
+    // gate on onShift, never onFloor, so this is the SOLE exclusion of an
+    // off-floor luncher, and it also excludes a lounge-mode one).
+    if (s.firing || s.onBreak !== null || !onShift(s.shift, world.clock.minuteOfDay) || !filter(s)) {
+      return false;
+    }
     const load = loads.get(s.id) ?? 0;
     // An engaged staffer is only extendable within THIS room: their witness
     // duty must name a reservation here (§1 — a ratio staffer's reservations
@@ -239,7 +252,14 @@ function rolePool(world: World, role: RoleId): number {
   for (const member of world.staff.values()) {
     // SHIFTS Stage-1: off-shift bodies must NOT count, or the anti-capture guard
     // misfires (rolePool > 1 on paper while one shift is empty). Mechanical review.
-    if (member.role === role && !member.firing && onShift(member.shift, world.clock.minuteOfDay)) {
+    // SHIFTS Stage 2: an on-lunch body isn't working either — a lunching nurse
+    // counted here would misfire the same guard (design review).
+    if (
+      member.role === role &&
+      !member.firing &&
+      member.onBreak === null &&
+      onShift(member.shift, world.clock.minuteOfDay)
+    ) {
       count += 1;
     }
   }

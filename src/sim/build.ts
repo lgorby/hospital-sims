@@ -258,6 +258,9 @@ export function validateRoomExpand(
   for (const p of world.patients.values()) {
     if (p.needBreak?.roomId === roomId) return fail('Occupied');
   }
+  // SHIFTS Stage 2 (§2): lounge seat claims (staff on lunch) renumber on
+  // expand exactly like stalls — walking claimants included.
+  if (world.loungeHasLiveClaim(roomId)) return fail('Occupied');
   if (room.door && rectContains(newRect, room.door.outside)) {
     return fail('Expansion would swallow the door — grow away from it');
   }
@@ -412,6 +415,9 @@ export function validateRoomSell(world: World, roomId: number): Validation {
   for (const p of world.patients.values()) {
     if (p.needBreak?.roomId === roomId) return fail('Occupied');
   }
+  // SHIFTS Stage 2 (§2): a staffer on lunch claims a lounge seat (walking
+  // included) — "Someone is inside" only catches an ARRIVED on-floor claimant.
+  if (world.loungeHasLiveClaim(roomId)) return fail('Occupied');
   // Open-plan exemption (Flow rule 9, M3 ruling): an atrium holds no one —
   // its tiles are public through-traffic, so people standing on them never
   // block the sale (they stay exactly where they are, on plain corridor).

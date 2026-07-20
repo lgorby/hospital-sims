@@ -3,6 +3,29 @@ import type { RoleId } from '../data/roles';
 import type { ShiftId } from '../data/shifts';
 import type { GridPoint } from '../types';
 
+/**
+ * SHIFTS Stage 2 (SHIFTS_STAGE2_CONTRACT §3.1): a staffer's in-flight lunch —
+ * a sub-state mirroring the patient `NeedBreak`, NOT a duty. Stage/duty stay
+ * put; the dispatcher skips an on-break staffer (`onBreak !== null`). Lounge-seat
+ * occupancy is DERIVED from these (a seat is taken iff some live staffer's
+ * `onBreak` references it), so release frees the seat by construction.
+ */
+export type StaffBreak = {
+  /** lounge: walk to a lounge seat (short, on-site). offFloor: leave the
+   *  building to eat (longer) — during `using` the staffer is off-map
+   *  (`onFloor === false`). */
+  mode: 'lounge' | 'offFloor';
+  /** lounge mode: the lounge room. */
+  roomId?: number;
+  /** lounge mode: the claimed seat slot. */
+  slot?: number;
+  phase: 'walking' | 'using';
+  /** Set when `using` begins. */
+  ticksRemaining: number;
+  /** Claim tick — the watchdog abandons a walk that never reaches the target. */
+  startedAt: number;
+};
+
 export type StaffDuty =
   | { kind: 'idle' }
   /** Standing post (receptionist at a reception desk; greeter in M3). */
@@ -63,6 +86,19 @@ export interface Staff {
    * hazard). Defaults true.
    */
   onFloor: boolean;
+  /**
+   * SHIFTS Stage 2: the in-flight mid-shift lunch; null = none. SAVED (not
+   * derived — a staffer mid-walk-to-lunch would re-derive wrong, the
+   * `onFloor` M1 determinism precedent). Defaults null (v<14 + null-shift
+   * test rosters stay inert). See StaffBreak.
+   */
+  onBreak: StaffBreak | null;
+  /**
+   * SHIFTS Stage 2: has this staffer already taken her lunch this shift? Reset
+   * to false at each shift start (respawn). SAVED; defaults false. Guards the
+   * one-lunch-per-shift rule.
+   */
+  lunchedThisShift: boolean;
 
   // Walker fields (movement system)
   at: GridPoint;

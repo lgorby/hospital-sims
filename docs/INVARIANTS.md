@@ -281,6 +281,47 @@ its own review — not a refactor.
   - **v<13 load mints a night roster** (`migrateMintNightRoster` in `loadWorld`, after
     `restorePrivateState` so twin ids can't collide) — deterministic, no rng, no
     `staffHired` emit. Regressions: `test/shifts.test.ts` (18), `save.test.ts` v12→v13.
+- **SHIFTS Stage 2 — the mid-shift lunch (SAVE_VERSION 14).** `Staff.onBreak`
+  (`StaffBreak | null`) and `lunchedThisShift` are SAVED, not derived (the
+  `onFloor` M1 precedent — a staffer mid-walk-to-lunch would derive wrong).
+  `null`/`false` keep v<14 and null-shift (test) rosters inert. Load-bearing:
+  - **The "never all at once" guarantee is a per-role coverage cap** (`coveragePermits`,
+    the ED-B1 "bounded by role headcount" precedent): a lunch starts only if ≥
+    `minSameRoleOnFloor` same-role workers remain on-shift/on-floor/not-on-break/
+    not-firing afterward. A solo-of-a-role therefore NEVER lunches (chosen — hire
+    slack to unlock breaks). `updateStaffBreaks` scans in ascending staff-id order
+    and mutates `onBreak` in place, so two same-tick committers can't both drop the
+    floor. Regressions: `staffBreaks.test.ts`.
+  - **The stagger is a pure id-hash** (`lunchStartMinute`/`inLunchWindow` in
+    `formulas.ts`) — rng-free, so enabling lunches never perturbs a null-shift
+    fixture's seeded stream; the seat-anchor fallback shares `world.rng` exactly
+    as the restroom does. `inLunchWindow` is wrap-aware (a night lunch straddles
+    midnight, mod `GAME_MINUTES_PER_DAY`).
+  - **Lunch-start requires `duty.kind ∈ {idle, post}`** (NOT the active-only "busy"
+    test): a `reserved` (gathering OR active) or `job` staffer must be ineligible,
+    or she walks off mid-gather and strands the patient (there is no gather-cancel
+    on the lunch path). A captured ratio nurse simply skips lunch (Stage-3 debt).
+  - **`onBreak === null` is load-bearing in ALL THREE dispatch pools** (`idleStaff`/
+    `availableStaff`/`rolePool`): the pools gate on `onShift`, never `onFloor`, so it
+    is the SOLE exclusion of an off-floor luncher AND excludes a lounge-mode (on-floor)
+    one. A lunching nurse counted in `rolePool` would misfire the ED anti-capture guard.
+  - **`updateStaffBreaks` runs BEFORE `updateShifts`.** The shift boundary CANCELS an
+    in-flight lunch (she goes home, not back to the floor), and `updateShifts`' respawn
+    is gated on `onBreak === null` — else it snaps an off-floor luncher back mid-lunch,
+    deleting the coverage cost (pinned non-vacuous). Lunch-end uses `placeAtEntrance`
+    (relief-free, NO `lunchedThisShift` reset); `respawn` (shift start) keeps the reset
+    — mixing them is the double-lunch bug the review caught.
+  - **Lounge occupancy is DERIVED from `onBreak`** (`loungeSeatClaims`/`freeLoungeSeatIndex`
+    over `world.staff`, the restroom `stallClaims` precedent — NOT `freeSlotIndex`, which
+    is reservation-derived and always empty here). Live claims gate expand/sell ("Occupied",
+    walking claimants included, `loungeHasLiveClaim`); the inspect card counts them, never
+    `reservationsOn`. Border: `onBreak.roomId`→a lounge, slot in range, seat-exclusive,
+    phase-aware `onFloor` pin (lounge/offFloor-walking ⇒ on-floor; offFloor-using ⇒ off-map).
+  - **An aborted lunch (watchdog/dead-path) CONSUMES that shift's attempt** —
+    `lunchedThisShift` stays true, no retry-hold field (SHIPPED, revised from the v2
+    contract draft): the only abort path is a lounge walk that breaks mid-flight (rare;
+    offFloor falls back to the always-reachable entrance), so no thrash and no new
+    saved state. Regression: `staffBreaks.test.ts` watchdog.
 - **`allowResumeToPaused` distinguishes player-opened overlays from midnight
   ones** (finances epic): `PausingOverlay`'s speed-1 fallback is right for the
   daily report and challenge card (which only open at a day boundary), but

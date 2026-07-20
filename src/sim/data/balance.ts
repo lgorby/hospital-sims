@@ -87,6 +87,41 @@ export const BALANCE = {
      * unaffected.
      */
     wageFactor: 0.6,
+    /**
+     * SHIFTS Stage 2 (SHIFTS_STAGE2_CONTRACT §3): the mid-shift lunch. Each
+     * shifted staffer takes ONE ~30-min lunch per shift, at a personal time
+     * staggered across `windowSpanMinutes` (an id-hash offset — rng-free,
+     * deterministic) so co-workers don't overlap, and a per-role coverage cap
+     * (`minSameRoleOnFloor`) guarantees the floor never empties. WITH a lounge
+     * the lunch is short + on-site; WITHOUT one the staffer leaves the building
+     * to eat (longer). INITIAL values — the probe (test/staffBreakProbe) tunes
+     * them; no Stage-2 balance number ships until it runs both layout arms.
+     */
+    lunch: {
+      /** Eligible from this many game-minutes into the shift… */
+      windowStartMinuteFromShiftStart: 240,
+      /** …across this window; the personal start is staggered within it. */
+      windowSpanMinutes: 300,
+      /** On-site lounge lunch (the owner's "30 minutes"). */
+      loungeBreakGameMinutes: 30,
+      /** No lounge: leave the building to eat — a materially bigger coverage
+       *  hole than the on-site lounge, so building a lounge measurably cuts the
+       *  cost (the ratified §0.3 payoff). Widened from 45 after the probe showed
+       *  a 45 vs 30 gap was too small to survive the walk to a non-adjacent
+       *  lounge (the LAYOUT distance trap). The lounge's LARGER payoff is Stage-3
+       *  morale (rested staff work better); this is the honest Stage-2 lever. */
+      offFloorBreakGameMinutes: 60,
+      /** Coverage cap: a lunch may start only if ≥ this many same-role workers
+       *  remain on-floor/on-shift/not-on-break afterward. A solo-of-a-role
+       *  therefore never lunches (owner decision §0.5). */
+      minSameRoleOnFloor: 1,
+      /** A walk that never reaches the lounge/entrance is abandoned after this
+       *  long (the restroom watchdog precedent — covers a lost/sprawling map);
+       *  the abort costs that shift's lunch (bounded), no re-arm thrash because
+       *  the claim only commits when a path existed and the fallback (entrance)
+       *  is always reachable. */
+      breakWatchdogGameMinutes: 120,
+    },
   },
   arrivals: {
     /** M4 balance pass: 3.0 overwhelmed a full 6-room build (~50 arrivals vs

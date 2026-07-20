@@ -18,7 +18,7 @@ import {
 } from './data/rooms';
 import type { NeedBreak, Patient, PatientStage } from './entities/patient';
 import type { Room } from './entities/room';
-import type { Candidate, Job, Reservation, Staff, StaffDuty } from './entities/staff';
+import type { Candidate, Job, Reservation, Staff, StaffBreak, StaffDuty } from './entities/staff';
 import { staffRatioFor, treatmentDurationTicks } from './formulas';
 import type { GridPoint, Rect } from './types';
 import { World, type Mess, type Tile } from './world';
@@ -29,7 +29,7 @@ import { World, type Mess, type Tile } from './world';
  * written deliberately (explicit per-entity serializers, plan rule 3) so
  * `SAVE_VERSION` can be migrated deliberately later.
  */
-export const SAVE_VERSION = 13;
+export const SAVE_VERSION = 14;
 
 /**
  * THE version-acceptance policy (SSOT audit #8): loadWorld's gate and the UI's
@@ -155,6 +155,18 @@ export const SAVE_VERSION = 13;
  * (loadWorld) that converts a v<13 roster to shifts is a deliberate SEPARATE
  * transformation; this field default just keeps the old roster valid.
  *
+ * v13 → v14 (SHIFTS Stage 2, SHIFTS_STAGE2_CONTRACT): adds the `lounge` ROOM
+ * TYPE + `loungeSeat` prop (grid RLE carries it), and `Staff` gains `onBreak`
+ * (StaffBreak | null — the mid-shift lunch sub-state) and `lunchedThisShift`
+ * (bool). A v<14 save defaults `onBreak = null` / `lunchedThisShift = false`
+ * via the threaded `saveVersion` in `readStaff`, so an old roster is inert until
+ * the next lunch window. `onBreak` is SAVED, not derived (a staffer mid-walk-to-
+ * lunch would derive wrong — the `onFloor` M1 precedent). The bump ALSO earns
+ * the OTHER direction: `asOneOf(o.type, ROOM_TYPES)` would throw on the new
+ * `lounge` type in an older DEPLOYED build (Vercel auto-deploys) instead of the
+ * clean "newer than this game understands" refusal — the v10→v11 content rule.
+ * No new role, no new condition. `topUpCandidates` stays a no-op.
+ *
  * Anything below 1 or above SAVE_VERSION is refused.
  */
 export function isLoadableVersion(version: number): boolean {
@@ -254,6 +266,17 @@ export type SavedStaffDuty =
   /** v5 (amenities Stage 2): bound to a facility job. */
   | { kind: 'job'; jobId: number };
 
+/** v14 (SHIFTS Stage 2): the mid-shift lunch sub-state. Lounge claims carry
+ *  roomId+slot; an off-floor lunch (left the building to eat) carries neither. */
+export interface SavedStaffBreak {
+  mode: 'lounge' | 'offFloor';
+  roomId?: number;
+  slot?: number;
+  phase: 'walking' | 'using';
+  ticksRemaining: number;
+  startedAt: number;
+}
+
 export interface SavedStaff {
   id: number;
   name: SavedName;
@@ -267,6 +290,10 @@ export interface SavedStaff {
   shift: ShiftId | null;
   /** SHIFTS Stage-1 (v13): off-floor staff are home (not on the map). */
   onFloor: boolean;
+  /** SHIFTS Stage 2 (v14): the in-flight lunch; null = none. */
+  onBreak: SavedStaffBreak | null;
+  /** SHIFTS Stage 2 (v14): already lunched this shift? */
+  lunchedThisShift: boolean;
   at: SavedPoint;
   next: SavedPoint | null;
   path: SavedPoint[];
@@ -856,6 +883,53 @@ function readStaffDuty(value: unknown, label: string): StaffDuty {
   }
 }
 
+/** v14 (SHIFTS Stage 2): mode-shaped like writeNeedBreak — a lounge claim
+ *  writes roomId+slot, an off-floor lunch writes neither. Fixed key order per
+ *  mode (byte-identity depends on it). */
+function writeStaffBreak(b: StaffBreak): SavedStaffBreak {
+  return {
+    mode: b.mode,
+    ...(b.roomId !== undefined ? { roomId: b.roomId } : {}),
+    ...(b.slot !== undefined ? { slot: b.slot } : {}),
+    phase: b.phase,
+    ticksRemaining: b.ticksRemaining,
+    startedAt: b.startedAt,
+  };
+}
+
+function readStaffBreak(value: unknown, label: string): StaffBreak {
+  const o = asRecord(value, label);
+  const mode = asOneOf(o.mode, ['lounge', 'offFloor'], `${label}.mode`);
+  // Bounded like readNeedBreak: a hostile `using` timer would hide the staffer
+  // from the dispatcher past any legal lunch. Untrusted input dies at the border.
+  const maxUseTicks = gameMinutesToTicks(
+    Math.max(
+      BALANCE.shifts.lunch.loungeBreakGameMinutes,
+      BALANCE.shifts.lunch.offFloorBreakGameMinutes,
+    ),
+  );
+  const ticksRemaining = asNumber(o.ticksRemaining, `${label}.ticksRemaining`);
+  if (ticksRemaining < 0 || ticksRemaining > maxUseTicks) {
+    fail(`${label}.ticksRemaining`, `a use timer within [0, ${maxUseTicks}] ticks`);
+  }
+  const shared = {
+    phase: asOneOf(o.phase, ['walking', 'using'], `${label}.phase`),
+    ticksRemaining,
+    startedAt: asNumber(o.startedAt, `${label}.startedAt`),
+  };
+  // Mode-strict: a lounge claim NEEDS roomId+slot (occupancy derives from it);
+  // an off-floor lunch carries neither.
+  if (mode === 'lounge') {
+    return {
+      mode,
+      roomId: asInt(o.roomId, `${label}.roomId`),
+      slot: asInt(o.slot, `${label}.slot`),
+      ...shared,
+    };
+  }
+  return { mode, ...shared };
+}
+
 function writeStaff(s: Staff): SavedStaff {
   return {
     id: s.id,
@@ -868,6 +942,8 @@ function writeStaff(s: Staff): SavedStaff {
     firing: s.firing,
     shift: s.shift,
     onFloor: s.onFloor,
+    onBreak: s.onBreak === null ? null : writeStaffBreak(s.onBreak),
+    lunchedThisShift: s.lunchedThisShift,
     at: writePoint(s.at),
     next: writePointOrNull(s.next),
     path: s.path.map(writePoint),
@@ -896,6 +972,13 @@ function readStaff(value: unknown, label: string, saveVersion: number): Staff {
     // shifts deliberately; the read-time default just keeps old staff valid.
     shift: saveVersion < 13 ? null : readShiftOrNull(o.shift, `${label}.shift`),
     onFloor: saveVersion < 13 ? true : asBool(o.onFloor, `${label}.onFloor`),
+    // SHIFTS Stage 2 (v14): pre-v14 staff have no lunch in flight and haven't
+    // lunched — inert until the next lunch window.
+    onBreak:
+      saveVersion < 14 || o.onBreak === null || o.onBreak === undefined
+        ? null
+        : readStaffBreak(o.onBreak, `${label}.onBreak`),
+    lunchedThisShift: saveVersion < 14 ? false : asBool(o.lunchedThisShift, `${label}.lunchedThisShift`),
     at: readPoint(o.at, `${label}.at`),
     next: readPointOrNull(o.next, `${label}.next`),
     path: readPath(o.path, `${label}.path`),
@@ -1556,6 +1639,45 @@ function validateReferences(data: RestorePayload): void {
         fail(`patients[${i}].needBreak.tile`, `one user per machine (${key} is claimed twice)`);
       }
       vendingClaimsHeld.add(key);
+    }
+  });
+
+  // -- staff lunch claims (v14, SHIFTS Stage 2 §8): a lounge lunch resolves to a
+  // lounge room with the seat inside its grid-derived count, exclusively held;
+  // the onFloor pin is phase-aware — an off-floor lunch is on-floor while
+  // WALKING to the exit and off-map while USING (eating off-site). This is the
+  // determinism pin (onBreak is saved, not derived).
+  const loungeSeatsHeld = new Set<string>();
+  data.staff.forEach((s, i) => {
+    const b = s.onBreak;
+    if (b === null) return;
+    if (b.mode === 'lounge') {
+      mustResolve(b.roomId!, roomIds, `staff[${i}].onBreak.roomId`, 'a room');
+      const room = roomsById.get(b.roomId!)!;
+      if (room.type !== 'lounge') {
+        fail(`staff[${i}].onBreak.roomId`, `a lounge (room ${room.id} is ${room.type})`);
+      }
+      const seats = gridPropCapacity(room, 'loungeSeat');
+      if (b.slot! < 0 || b.slot! >= seats) {
+        fail(
+          `staff[${i}].onBreak.slot`,
+          `a seat below the room's count of ${seats} (got ${b.slot})`,
+        );
+      }
+      const claimKey = `${b.roomId}:${b.slot}`;
+      if (loungeSeatsHeld.has(claimKey)) {
+        fail(`staff[${i}].onBreak.slot`, `an exclusive seat (${claimKey} is held twice)`);
+      }
+      loungeSeatsHeld.add(claimKey);
+      if (!s.onFloor) fail(`staff[${i}].onFloor`, 'on-floor for a lounge lunch');
+    } else {
+      const expectOnFloor = b.phase === 'walking';
+      if (s.onFloor !== expectOnFloor) {
+        fail(
+          `staff[${i}].onFloor`,
+          expectOnFloor ? 'on-floor while walking out to lunch' : 'off-floor while eating off-site',
+        );
+      }
     }
   });
 
