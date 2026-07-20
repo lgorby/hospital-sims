@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { CommandQueue } from '../src/commands';
 import { EventBus } from '../src/events';
 import { gameMinutesToTicks } from '../src/sim/clock';
 import { BALANCE } from '../src/sim/data/balance';
@@ -144,6 +145,37 @@ describe('night reception stall', () => {
     expect(recept.onFloor).toBe(false);
     expect(p.stage.kind).toBe('queuedCheckIn');
     expect(p.stage.kind).not.toBe('waiting');
+  });
+});
+
+describe('hire + setStaffShift commands (through the queue)', () => {
+  it('the setup receptionist works the day shift (new game opens day-staffed)', () => {
+    const { world } = setup();
+    const recept = [...world.staff.values()].find((s) => s.role === 'receptionist')!;
+    expect(recept.shift).toBe('day');
+  });
+
+  it('hireStaff assigns the CHOSEN shift; addStaffMember stays null-shift', () => {
+    const { world } = setup();
+    const queue = new CommandQueue();
+    const cand = world.candidates.find((c) => c.role === 'nurse')!;
+    world.cash += 1000;
+    queue.push({ type: 'hireStaff', candidateId: cand.id, shift: 'night' });
+    world.applyCommands(queue);
+    const hired = [...world.staff.values()].find((s) => s.role === 'nurse')!;
+    expect(hired.shift).toBe('night');
+    // A directly-added staffer (test path) stays always-on.
+    expect(world.addStaffMember('doctor', 3, 100).shift).toBeNull();
+  });
+
+  it('setStaffShift rebalances an existing staffer; a missing id is a no-op', () => {
+    const { world } = setup();
+    const queue = new CommandQueue();
+    const recept = [...world.staff.values()].find((s) => s.role === 'receptionist')!;
+    queue.push({ type: 'setStaffShift', staffId: recept.id, shift: 'night' });
+    queue.push({ type: 'setStaffShift', staffId: 999999, shift: 'day' }); // no such staffer
+    expect(() => world.applyCommands(queue)).not.toThrow();
+    expect(recept.shift).toBe('night');
   });
 });
 

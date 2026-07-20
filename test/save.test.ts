@@ -1407,9 +1407,13 @@ function financeSave(): string {
     world.buildRoom('exam', { col: 14, row: 27, cols: 3, rows: 3 }, { col: 17, row: 28 }, true);
     world.placeAmenity('vending', { col: 25, row: 36 });
     // Two closed days through the REAL closeDay path (history, trim, resets).
+    // SHIFTS Stage-1: the day-shifted setup receptionist stalls check-in at night,
+    // so patients pile up in checkInQueues; clear those alongside patients (the
+    // blunt test-only clear doesn't unwind queue refs the way a real despawn does).
     for (let d = 0; d < 2; d++) {
       for (let i = TICKS_PER_DAY - (world.clock.tick % TICKS_PER_DAY); i > 0; i--) world.tick();
       world.patients.clear();
+      world.checkInQueues.clear();
     }
     const exam = world.roomsOfType('exam')[0]!;
     exam.revenueToday = 150;
@@ -1488,7 +1492,7 @@ describe('v6 → v7 migration (finances, FINANCE_PLAN §9.7)', () => {
     // surgeon bug was exactly a role the dispatcher hinted for and no pool
     // could offer.
     const queue = new CommandQueue();
-    queue.push({ type: 'hireStaff', candidateId: offered[0]!.id });
+    queue.push({ type: 'hireStaff', candidateId: offered[0]!.id, shift: 'day' });
     w.applyCommands(queue);
     expect([...w.staff.values()].some((st) => st.role === 'anesthesiologist')).toBe(true);
   });

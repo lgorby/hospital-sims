@@ -219,7 +219,7 @@ describe('per-room attribution (§4.1)', () => {
     world.sellAmenity({ col: 25, row: 36 });
     world.buildRoom('resp', { col: 28, row: 27, cols: 3, rows: 3 }, { col: 31, row: 28 });
     apply(world, { type: 'sellRoom', roomId: world.roomsOfType('resp')[0]!.id });
-    apply(world, { type: 'hireStaff', candidateId: world.candidates[0]!.id });
+    apply(world, { type: 'hireStaff', candidateId: world.candidates[0]!.id, shift: 'day' });
 
     for (const key of ['construction', 'sellIncome', 'hireFees'] as CashTallyKey[]) {
       expect(world.today[key], `${key} tallied today`).toBeGreaterThan(0);

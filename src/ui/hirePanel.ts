@@ -2,6 +2,7 @@ import type { CommandQueue } from '../commands';
 import type { EventBus } from '../events';
 import { BALANCE } from '../sim/data/balance';
 import { ROLE_DEFS, ROLE_IDS } from '../sim/data/roles';
+import { SHIFT_IDS, type ShiftId } from '../sim/data/shifts';
 import type { World } from '../sim/world';
 import type { BottomBarDropdowns, DropdownHandle } from './bottomBar';
 
@@ -42,6 +43,10 @@ export class HirePanel {
     return '★'.repeat(skill) + '☆'.repeat(MAX_SKILL - skill);
   }
 
+  private static shiftLabel(shift: ShiftId): string {
+    return shift.charAt(0).toUpperCase() + shift.slice(1);
+  }
+
   private render(): void {
     if (!this.dropdown.isOpen) return;
     this.panel.replaceChildren();
@@ -66,14 +71,27 @@ export class HirePanel {
       const row = document.createElement('div');
       row.className = 'person-row';
       const label = document.createElement('span');
-      label.textContent = `${member.name.full} — ${ROLE_DEFS[member.role].label} ${HirePanel.stars(member.skill)} $${member.salaryPerDay}/day`;
+      const shiftText = member.shift ? ` · ${HirePanel.shiftLabel(member.shift)}` : '';
+      label.textContent = `${member.name.full} — ${ROLE_DEFS[member.role].label} ${HirePanel.stars(member.skill)} $${member.salaryPerDay}/day${shiftText}`;
+      // SHIFTS Stage-1: a day/night toggle so the player can rebalance coverage
+      // (also on the inspect card). Emits setStaffShift; the next tick moves the
+      // staffer on/off floor. Null-shift (test rosters only) defaults to day.
+      const cur: ShiftId = member.shift ?? 'day';
+      const other: ShiftId = cur === 'night' ? 'day' : 'night';
+      const shiftBtn = document.createElement('button');
+      shiftBtn.textContent = HirePanel.shiftLabel(cur);
+      shiftBtn.title = `Switch to ${other} shift`;
+      shiftBtn.disabled = member.firing;
+      shiftBtn.addEventListener('click', () => {
+        this.commands.push({ type: 'setStaffShift', staffId: member.id, shift: other });
+      });
       const fire = document.createElement('button');
       fire.textContent = member.firing ? 'Leaving…' : 'Fire';
       fire.disabled = member.firing;
       fire.addEventListener('click', () => {
         this.commands.push({ type: 'fireStaff', staffId: member.id });
       });
-      row.append(label, fire);
+      row.append(label, shiftBtn, fire);
       this.panel.appendChild(row);
     }
 
@@ -102,13 +120,28 @@ export class HirePanel {
         row.className = 'person-row';
         const label = document.createElement('span');
         label.textContent = `${candidate.name.full}, ${candidate.age} — ${HirePanel.stars(candidate.skill)} $${candidate.salaryPerDay}/day`;
+        // SHIFTS Stage-1: the player CHOOSES the new hire's shift here (default
+        // day — the viable starter posture). The value rides the hireStaff command.
+        const shiftSel = document.createElement('select');
+        shiftSel.setAttribute('data-ui', '');
+        for (const s of SHIFT_IDS) {
+          const opt = document.createElement('option');
+          opt.value = s;
+          opt.textContent = HirePanel.shiftLabel(s);
+          shiftSel.appendChild(opt);
+        }
+        shiftSel.value = 'day';
         const hire = document.createElement('button');
         hire.textContent = 'Hire';
         hire.addEventListener('click', () => {
-          this.commands.push({ type: 'hireStaff', candidateId: candidate.id });
+          this.commands.push({
+            type: 'hireStaff',
+            candidateId: candidate.id,
+            shift: shiftSel.value as ShiftId,
+          });
           // World replaces the candidate; staffHired re-renders.
         });
-        row.append(label, hire);
+        row.append(label, shiftSel, hire);
         this.panel.appendChild(row);
       }
     }

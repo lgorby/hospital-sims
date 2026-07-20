@@ -5,10 +5,12 @@ import { AMENITY_DEFS, type AmenityId } from '../sim/data/amenities';
 import { CONDITION_DEFS, conditionElective } from '../sim/data/conditions';
 import { ROOM_DEFS, roomRetired } from '../sim/data/rooms';
 import { ROLE_DEFS } from '../sim/data/roles';
+import { type ShiftId } from '../sim/data/shifts';
 import { BALANCE } from '../sim/data/balance';
 import {
   amenitySellback,
   moodOf,
+  onShift,
   roomEarns,
   sellbackAmount,
   staffRatioFor,
@@ -48,6 +50,8 @@ export class InspectPanel {
    *  that makes a permanently-busy room expandable. Sits between Expand and
    *  Sell, i.e. next to the two rejection reasons it exists to resolve. */
   private closeButton!: HTMLButtonElement;
+  /** SHIFTS Stage-1: day/night toggle on staff selections (rebalance coverage). */
+  private shiftButton!: HTMLButtonElement;
   private shownKey = '';
 
   constructor(
@@ -81,11 +85,21 @@ export class InspectPanel {
     this.closeButton = document.createElement('button');
     this.closeButton.className = 'inspect-action';
     this.closeButton.setAttribute('data-ui', '');
+    this.shiftButton = document.createElement('button');
+    this.shiftButton.className = 'inspect-action';
+    this.shiftButton.setAttribute('data-ui', '');
     this.actionButton = document.createElement('button');
     this.actionButton.className = 'inspect-action';
     this.actionButton.setAttribute('data-ui', '');
 
-    this.panel.append(header, this.body, this.expandButton, this.closeButton, this.actionButton);
+    this.panel.append(
+      header,
+      this.body,
+      this.expandButton,
+      this.closeButton,
+      this.shiftButton,
+      this.actionButton,
+    );
     parent.appendChild(this.panel);
   }
 
@@ -184,6 +198,24 @@ export class InspectPanel {
     } else {
       freshClose.style.display = 'none';
     }
+    // SHIFTS Stage-1: the day/night toggle on staff selections, rebuilt fresh so
+    // listeners never stack. The current shift is read at CLICK time (the card
+    // never caches authoritative state — the hire panel can flip it too).
+    const freshShift = document.createElement('button');
+    freshShift.className = 'inspect-action';
+    freshShift.setAttribute('data-ui', '');
+    this.shiftButton.replaceWith(freshShift);
+    this.shiftButton = freshShift;
+    if (selection.kind === 'staff') {
+      freshShift.addEventListener('click', () => {
+        const member = this.world.staff.get(selection.id);
+        if (!member) return;
+        const next: ShiftId = (member.shift ?? 'day') === 'night' ? 'day' : 'night';
+        this.commands.push({ type: 'setStaffShift', staffId: selection.id, shift: next });
+      });
+    } else {
+      freshShift.style.display = 'none';
+    }
   }
 
   /** Phase of the reservation a reserved stage/duty is bound to (else undefined). */
@@ -255,11 +287,21 @@ export class InspectPanel {
               `${ROOM_DEFS[panelRoom.type].label} ${this.world.staffLoadIn(s.id, panelRoom.id)}/${ratio}`,
             )
           : '';
+      // SHIFTS Stage-1: shift + live floor status, and the toggle's label.
+      const shiftLabel = s.shift ? s.shift.charAt(0).toUpperCase() + s.shift.slice(1) : 'Always';
+      const status = !s.onFloor
+        ? 'off duty (home)'
+        : s.shift && !onShift(s.shift, this.world.clock.minuteOfDay)
+          ? 'off shift (leaving)'
+          : 'on duty';
+      const nextShift: ShiftId = (s.shift ?? 'day') === 'night' ? 'day' : 'night';
+      this.shiftButton.textContent = `Switch to ${nextShift.charAt(0).toUpperCase() + nextShift.slice(1)} shift`;
       this.body.innerHTML =
         `<div class="inspect-name">${esc(s.name.full)}, ${s.age}</div>` +
         this.line('Role', ROLE_DEFS[s.role].label) +
         this.line('Skill', stars) +
         this.line('Salary', `$${s.salaryPerDay}/day`) +
+        this.line('Shift', `${shiftLabel} — ${status}`) +
         this.line(
           'Duty',
           // Stage 2: job duties resolve their kind from world.jobs so the line

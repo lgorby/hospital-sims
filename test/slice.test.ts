@@ -64,8 +64,8 @@ describe('M2 vertical slice', () => {
     // Hire one nurse and one doctor from the candidate pool.
     const nurse = t.world.candidates.find((c) => c.role === 'nurse')!;
     const doctor = t.world.candidates.find((c) => c.role === 'doctor')!;
-    t.queue.push({ type: 'hireStaff', candidateId: nurse.id });
-    t.queue.push({ type: 'hireStaff', candidateId: doctor.id });
+    t.queue.push({ type: 'hireStaff', candidateId: nurse.id, shift: 'day' });
+    t.queue.push({ type: 'hireStaff', candidateId: doctor.id, shift: 'day' });
     t.queue.push({ type: 'debugSpawnPatient' });
     t.apply();
 

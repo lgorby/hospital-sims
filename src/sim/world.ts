@@ -16,6 +16,7 @@ import { CONDITION_DEFS, conditionElective, type ConditionId } from './data/cond
 import { emptyCashTotals, type CashTallyKey, type CashTotals } from './data/finance';
 import { generateAge, generateName, generateStaffAge } from './data/names';
 import { ROLE_DEFS, ROLE_IDS, type RoleId } from './data/roles';
+import type { ShiftId } from './data/shifts';
 import {
   PROP_STYLE,
   ROOM_DEFS,
@@ -687,10 +688,13 @@ export class World implements PathGrid {
         this.sellAmenity({ col: command.col, row: command.row });
         return;
       case 'hireStaff':
-        this.hireStaff(command.candidateId);
+        this.hireStaff(command.candidateId, command.shift);
         return;
       case 'fireStaff':
         this.fireStaff(command.staffId);
+        return;
+      case 'setStaffShift':
+        this.setStaffShift(command.staffId, command.shift);
         return;
       case 'debugSpawnPatient':
         this.spawnPatient(command.condition ?? 'flu');
@@ -1067,7 +1071,7 @@ export class World implements PathGrid {
     return member;
   }
 
-  private hireStaff(candidateId: number): void {
+  private hireStaff(candidateId: number, shift: ShiftId): void {
     const index = this.candidates.findIndex((c) => c.id === candidateId);
     if (index === -1) return;
     if (this.cash < BALANCE.economy.hireFee) {
@@ -1076,16 +1080,31 @@ export class World implements PathGrid {
     }
     const candidate = this.candidates[index]!;
     this.candidates.splice(index, 1, this.makeCandidate(candidate.role));
-    this.addStaffMember(
+    // SHIFTS Stage-1: the player chose the shift at the hire panel. Assign it
+    // here, at the HIRE path only (NOT addStaffMember, so test rosters stay
+    // null-shift/always-on). The 0.6× wage is applied dynamically in economy.ts —
+    // salaryPerDay stays at base (pre-scaling would double-count, PROBE REVIEW 2).
+    const member = this.addStaffMember(
       candidate.role,
       candidate.skill,
       candidate.salaryPerDay,
       candidate.name,
       candidate.age,
     );
+    member.shift = shift;
     this.cash -= BALANCE.economy.hireFee;
     this.tallyCash('hireFees', BALANCE.economy.hireFee);
     this.events.emit('cashChanged', { cash: this.cash });
+  }
+
+  /** SHIFTS Stage-1: rebalance an existing staffer's shift (hard rule 3, via the
+   *  queue). The next-tick updateShifts moves them on/off floor to match. */
+  private setStaffShift(staffId: number, shift: ShiftId): void {
+    const member = this.staff.get(staffId);
+    if (!member) return; // fired same frame — a clean no-op
+    if (member.shift === shift) return;
+    member.shift = shift;
+    this.events.emit('staffUpdated', { staffId: member.id });
   }
 
   private fireStaff(staffId: number): void {

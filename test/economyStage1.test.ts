@@ -80,7 +80,10 @@ describe('utilities (lever 2) accrue hourly in updateEconomy', () => {
     updateEconomy(world);
 
     const charged = cash0 - world.cash;
-    const payrollHour = [...world.staff.values()].reduce((s, m) => s + m.salaryPerDay, 0) / 24;
+    // The CHARGED payroll includes the shift wage multiplier (the setup receptionist
+    // is day-shifted since SHIFTS Stage-1, so economy charges her 0.6×).
+    const payrollHour =
+      [...world.staff.values()].reduce((s, m) => s + m.salaryPerDay * shiftWageMultiplier(m.shift), 0) / 24;
     const utilCharged = charged - payrollHour;
     expect(utilCharged).toBeGreaterThan(0); // base on every room, no room active
     expect(world.today.utilities - util0).toBeCloseTo(utilCharged, 6);

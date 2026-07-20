@@ -25,10 +25,13 @@ export function setupNewGame(world: World): void {
     { col: e.col + 3, row: e.row - 4 },
     true,
   );
-  world.addStaffMember('receptionist', 3, ROLE_DEFS.receptionist.salaryPerDay, {
+  // SHIFTS Stage-1: the starter receptionist works the DAY shift, so a new game
+  // opens day-staffed at 06:00 (the viable day-only starter posture).
+  const receptionist = world.addStaffMember('receptionist', 3, ROLE_DEFS.receptionist.salaryPerDay, {
     first: 'June',
     last: 'Abernathy',
     full: 'June Abernathy',
     short: 'June A.',
   });
+  receptionist.shift = 'day';
 }
