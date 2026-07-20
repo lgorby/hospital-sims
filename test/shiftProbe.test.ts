@@ -1,0 +1,282 @@
+import { describe, it } from 'vitest';
+
+import { TICKS_PER_DAY } from '../src/sim/clock';
+import { BALANCE } from '../src/sim/data/balance';
+import { ROLE_DEFS, type RoleId } from '../src/sim/data/roles';
+import type { ShiftId } from '../src/sim/data/shifts';
+import { EventBus } from '../src/events';
+import { setupNewGame } from '../src/sim/newGame';
+import { World } from '../src/sim/world';
+import { REFERENCE_BUILD, matureStaffRoster, type RoomSpec } from './fixtures/builds';
+
+/**
+ * THE SHIFT PROBE — SHIFTS_STAGE1_CONTRACT §"v2 REVIEW OUTCOME", the measurement
+ * both pre-impl reviews demanded before any shift balance number is written.
+ *
+ * The design review proved the drafted contract pre-committed to the two levers
+ * the arithmetic says break the starter — whole-roster payroll and the 06:00
+ * window — so this probe makes BOTH probe OUTPUTS and measures the binding
+ * EARLY-GAME arm:
+ *   - PAYROLL MODEL: 6a (whole-roster, full wage even off-shift) vs a per-shift
+ *     wage (~0.6× day). Per-shift keeps "24/7 = 2× day-only" WITHOUT nailing
+ *     day-only to today's absolute cost.
+ *   - WINDOW PHASE: 06:00–18:30 (strands the 18:30–22:00 evening rush) vs a later
+ *     ~09:30–22:00 (captures the evening, gives up the sleepy morning).
+ *   - POSTURE: BASELINE (always-on 1× roster), DAY-ONLY (1× roster, day shift),
+ *     24/7 (2× roster, both shifts).
+ *
+ * The sim's onShift availability gate is LIVE but INERT until a shift is assigned
+ * (a staffer's `shift` defaults null = always on). This probe assigns shifts and
+ * sweeps `BALANCE.shifts` (the economyProbe.withArm precedent), so it measures the
+ * REAL dispatch behaviour, not an injected approximation.
+ *
+ * Deciding metrics, stated up front (the ones that FALSIFY the design):
+ *   - day-only starter net/day > 0 (across seeds) — the binding question;
+ *   - incremental night-shift ROI = 24/7 net − day-only net (is "24/7 later" real
+ *     or a trap?);
+ *   - deaths+walkouts during UNSTAFFED night hours (incl. patients stranded past
+ *     the boundary), and the multi-day reputation trajectory (does day-only
+ *     spiral?).
+ *
+ * Caveat: the probe runs the availability gate only — off-shift staff are excluded
+ * from NEW work but do NOT yet walk home, and a gather formed before the boundary
+ * still completes (the M1 gather-cancel is implementation, not measurement). This
+ * slightly OVER-counts off-shift coverage, so a day-only net that is already
+ * negative here is conservatively negative.
+ *
+ * Run: SHIFT_PROBE=1 npx vitest run test/shiftProbe.test.ts --disable-console-intercept
+ */
+
+// The early-game arm — the BINDING build (mirrors the economy probe's starter).
+const EARLY_GAME_BUILD: RoomSpec[] = [
+  { type: 'triage', rect: { col: 10, row: 28, cols: 2, rows: 2 }, door: { col: 12, row: 29 } },
+  { type: 'exam', rect: { col: 14, row: 27, cols: 3, rows: 3 }, door: { col: 17, row: 28 } },
+  { type: 'er', rect: { col: 32, row: 26, cols: 3, rows: 4 }, door: { col: 35, row: 27 } },
+];
+const EARLY_ROLES: RoleId[] = ['nurse', 'doctor']; // + the setup receptionist
+
+/** The day on-floor window in minuteOfDay, used to classify a death as "night". */
+const dayWindow = () => BALANCE.shifts.day;
+function inNight(minuteOfDay: number): boolean {
+  const w = dayWindow();
+  return !(minuteOfDay >= w.startMinute && minuteOfDay < w.endMinute);
+}
+
+type Posture = 'baseline' | 'day-only' | '24-7';
+
+interface ShiftProbe {
+  seed: number;
+  revenue: number;
+  profit: number;
+  payrollPerDay: number;
+  discharged: number;
+  died: number;
+  leftAma: number;
+  diedNight: number;
+  amaNight: number;
+  repTrajectory: number[];
+  days: number;
+}
+
+/**
+ * Configure the roster for a posture. `payrollFactor` scales the per-shift wage
+ * (1.0 = whole-roster 6a; 0.6 = per-shift). BASELINE ignores both (always-on).
+ */
+function configureRoster(world: World, posture: Posture, payrollFactor: number): void {
+  const receptionist = [...world.staff.values()].find((s) => s.role === 'receptionist')!;
+  const addShifted = (role: RoleId, shift: ShiftId | null): void => {
+    const base = ROLE_DEFS[role].salaryPerDay;
+    const salary = shift === null ? base : Math.round(base * payrollFactor);
+    const m = world.addStaffMember(role, 3, salary);
+    m.shift = shift;
+  };
+
+  if (posture === 'baseline') {
+    // Always-on 1× roster (today). The setup receptionist stays null.
+    for (const role of EARLY_ROLES) addShifted(role, null);
+    return;
+  }
+  // Both shifted postures: the setup receptionist works the DAY shift.
+  receptionist.shift = 'day';
+  if (payrollFactor !== 1) {
+    receptionist.salaryPerDay = Math.round(ROLE_DEFS.receptionist.salaryPerDay * payrollFactor);
+  }
+  for (const role of EARLY_ROLES) addShifted(role, 'day');
+  if (posture === '24-7') {
+    addShifted('receptionist', 'night');
+    for (const role of EARLY_ROLES) addShifted(role, 'night');
+  }
+}
+
+/** Same, for a mature build (the reference roster, shifted). */
+function configureMature(world: World, posture: Posture, payrollFactor: number): void {
+  const receptionist = [...world.staff.values()].find((s) => s.role === 'receptionist')!;
+  const roster = matureStaffRoster();
+  const add = (role: RoleId, shift: ShiftId | null): void => {
+    const base = ROLE_DEFS[role].salaryPerDay;
+    const salary = shift === null ? base : Math.round(base * payrollFactor);
+    world.addStaffMember(role, 3, salary).shift = shift;
+  };
+  if (posture === 'baseline') {
+    for (const { role, count } of roster) for (let i = 0; i < count; i++) add(role, null);
+    return;
+  }
+  receptionist.shift = 'day';
+  for (const { role, count } of roster) for (let i = 0; i < count; i++) add(role, 'day');
+  if (posture === '24-7') {
+    add('receptionist', 'night');
+    for (const { role, count } of roster) for (let i = 0; i < count; i++) add(role, 'night');
+  }
+}
+
+function runShift(
+  seed: number,
+  build: RoomSpec[],
+  configure: (w: World, p: Posture, f: number) => void,
+  posture: Posture,
+  payrollFactor: number,
+  days: number,
+  bankroll: number,
+  reputation?: number,
+): ShiftProbe {
+  const events = new EventBus();
+  const world = new World(events, seed);
+  setupNewGame(world);
+  if (reputation !== undefined) world.reputation = reputation;
+  world.cash += bankroll;
+  for (const spec of build) world.buildRoom(spec.type, spec.rect, spec.door);
+  world.placeAmenity('vending', { col: 26, row: 33 });
+  world.placeAmenity('trashcan', { col: 27, row: 33 });
+  configure(world, posture, payrollFactor);
+
+  const p: ShiftProbe = {
+    seed,
+    revenue: 0,
+    profit: 0,
+    payrollPerDay: [...world.staff.values()].reduce((s, m) => s + m.salaryPerDay, 0),
+    discharged: 0,
+    died: 0,
+    leftAma: 0,
+    diedNight: 0,
+    amaNight: 0,
+    repTrajectory: [],
+    days,
+  };
+  events.on('patientDischarged', () => (p.discharged += 1));
+  events.on('patientDied', () => {
+    p.died += 1;
+    if (inNight(world.clock.minuteOfDay)) p.diedNight += 1;
+  });
+  events.on('patientLeftAma', () => {
+    p.leftAma += 1;
+    if (inNight(world.clock.minuteOfDay)) p.amaNight += 1;
+  });
+
+  const cash0 = world.cash;
+  const rev0 = world.lifetime.revenue;
+  for (let i = 0; i < TICKS_PER_DAY * days; i++) {
+    world.tick();
+    if (world.clock.tick % TICKS_PER_DAY === 0) p.repTrajectory.push(Math.round(world.reputation));
+  }
+  p.revenue = (world.lifetime.revenue - rev0) / days;
+  p.profit = (world.cash - cash0) / days;
+  return p;
+}
+
+function summarize(label: string, rows: ShiftProbe[]): number {
+  const n = rows.length;
+  const avg = (f: (r: ShiftProbe) => number) => rows.reduce((s, r) => s + f(r), 0) / n;
+  const profit = avg((r) => r.profit);
+  console.log(`\n=== ${label} ===`);
+  console.log(
+    [
+      `rev/d $${avg((r) => r.revenue).toFixed(0)}`,
+      `payroll/d $${avg((r) => r.payrollPerDay).toFixed(0)}`,
+      `PROFIT/d $${profit.toFixed(0)}`,
+      `disch/d ${avg((r) => r.discharged / r.days).toFixed(1)}`,
+      `died/d ${avg((r) => r.died / r.days).toFixed(2)}`,
+      `AMA/d ${avg((r) => r.leftAma / r.days).toFixed(1)}`,
+      `nightDeaths/d ${avg((r) => r.diedNight / r.days).toFixed(2)}`,
+      `nightAMA/d ${avg((r) => r.amaNight / r.days).toFixed(1)}`,
+    ].join(' | '),
+  );
+  console.log(
+    '  per-seed profit/d: ' + rows.map((r) => `${r.seed} $${r.profit.toFixed(0)}`).join('  '),
+  );
+  console.log('  rep trajectory (seed ' + rows[0]!.seed + '): ' + rows[0]!.repTrajectory.join(' → '));
+  return profit;
+}
+
+// Sweep BALANCE.shifts windows in place (the economyProbe.withArm precedent).
+function withWindow(name: string, day: { s: number; e: number }, night: { s: number; e: number }, fn: () => void): void {
+  const sh = BALANCE.shifts as { day: { startMinute: number; endMinute: number }; night: { startMinute: number; endMinute: number } };
+  const saved = { d: { ...sh.day }, n: { ...sh.night } };
+  sh.day.startMinute = day.s;
+  sh.day.endMinute = day.e;
+  sh.night.startMinute = night.s;
+  sh.night.endMinute = night.e;
+  try {
+    console.log(`\n########## WINDOW: ${name} (day ${day.s}-${day.e}) ##########`);
+    fn();
+  } finally {
+    Object.assign(sh.day, saved.d);
+    Object.assign(sh.night, saved.n);
+  }
+}
+
+declare const process: { env: Record<string, string | undefined> } | undefined;
+const describeProbe =
+  typeof process !== 'undefined' && process.env.SHIFT_PROBE ? describe : describe.skip;
+
+describeProbe('Shift probe (SHIFTS_STAGE1_CONTRACT §measurement)', () => {
+  it('prints day-only viability + night ROI across payroll models and windows', () => {
+    const seeds = [1337, 1338, 31337, 4242, 90210];
+    const early = (posture: Posture, factor: number, rep?: number) =>
+      seeds.map((s) => runShift(s, EARLY_GAME_BUILD, configureRoster, posture, factor, 10, 0, rep));
+
+    // BASELINE is shift-independent — run once.
+    console.log('\n>>>>> EARLY-GAME ARM (binding) <<<<<');
+    const base = summarize('EARLY baseline (always-on 1×)', early('baseline', 1));
+
+    for (const [wname, day, night] of [
+      ['06:00–18:30 (default)', { s: 360, e: 1110 }, { s: 1080, e: 390 }],
+      ['09:30–22:00 (evening-capture)', { s: 570, e: 1320 }, { s: 1290, e: 600 }],
+    ] as const) {
+      withWindow(wname, day, night, () => {
+        for (const factor of [1, 0.6] as const) {
+          const tag = factor === 1 ? '6a whole-roster' : 'per-shift 0.6×';
+          const dayOnly = summarize(`EARLY day-only · ${tag}`, early('day-only', factor));
+          const round = summarize(`EARLY 24/7 · ${tag}`, early('24-7', factor));
+          console.log(
+            `  >> NIGHT ROI (24/7 − day-only) = $${(round - dayOnly).toFixed(0)}/d | ` +
+              `day-only vs baseline: $${(dayOnly - base).toFixed(0)}/d`,
+          );
+        }
+      });
+    }
+
+    // SHOCK: day-only starter opening at rep 150 (does it recover or spiral?).
+    withWindow('06:00–18:30 (default)', { s: 360, e: 1110 }, { s: 1080, e: 390 }, () => {
+      summarize('EARLY day-only · 6a · SHOCK rep150', early('day-only', 1, 150));
+    });
+
+    // CEILING: the mature reference build, default window, whole-roster payroll.
+    console.log('\n>>>>> REFERENCE ARM (mature ceiling) <<<<<');
+    const matureBase = summarize(
+      'REF baseline',
+      seeds.map((s) => runShift(s, REFERENCE_BUILD, configureMature, 'baseline', 1, 5, 10_000_000)),
+    );
+    const matureDay = summarize(
+      'REF day-only · 6a',
+      seeds.map((s) => runShift(s, REFERENCE_BUILD, configureMature, 'day-only', 1, 5, 10_000_000)),
+    );
+    const matureRound = summarize(
+      'REF 24/7 · 6a',
+      seeds.map((s) => runShift(s, REFERENCE_BUILD, configureMature, '24-7', 1, 5, 10_000_000)),
+    );
+    console.log(
+      `  >> REF night ROI = $${(matureRound - matureDay).toFixed(0)}/d | ` +
+        `day-only vs baseline: $${(matureDay - matureBase).toFixed(0)}/d`,
+    );
+  }, 600_000);
+});

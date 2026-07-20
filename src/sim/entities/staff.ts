@@ -1,5 +1,6 @@
 import type { PersonName } from '../data/names';
 import type { RoleId } from '../data/roles';
+import type { ShiftId } from '../data/shifts';
 import type { GridPoint } from '../types';
 
 export type StaffDuty =
@@ -48,6 +49,13 @@ export interface Staff {
   duty: StaffDuty;
   /** Fired while busy: released → removed instead of returning to idle. */
   firing: boolean;
+  /**
+   * SHIFTS Stage-1: which shift this staffer works. `null` = no shift, always on
+   * duty (today's behaviour and the default) — the availability gate is inert
+   * until this is set. NOT serialized yet (the probe assigns it; the shipped
+   * feature adds it to SavedStaff at SAVE_VERSION 13).
+   */
+  shift: ShiftId | null;
 
   // Walker fields (movement system)
   at: GridPoint;

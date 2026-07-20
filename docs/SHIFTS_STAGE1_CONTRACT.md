@@ -8,8 +8,11 @@ drafted because the contract pre-committed to the two levers the arithmetic says
 break the starter (whole-roster payroll, morning window). **Resolution: a shift
 probe measures the binding early-game arm BEFORE the numbers are written — the
 same arc the economy epic took.** Full folded requirements in the "v2 REVIEW
-OUTCOME → v3 REQUIREMENTS" block under "## v2 — MECHANICAL RESOLUTION". **Next
-concrete step: build `test/shiftProbe.test.ts`.** No code until it runs.
+OUTCOME → v3 REQUIREMENTS" block under "## v2 — MECHANICAL RESOLUTION". **The shift
+probe HAS run (see "## MEASURED" below): the derived model is a PER-SHIFT WAGE
+(~0.6×), which makes day-only survivable and 24/7 profitable with positive night
+ROI — whole-roster payroll bankrupts the starter. Next: owner picks the wage
+factor, measure the v12→v13 migration, review the probe, THEN implement.**
 
 > ## REVIEW OUTCOME — the two ways this draft is wrong
 >
@@ -169,6 +172,72 @@ arms above — payroll-model × window-phase × posture (day-only/24-7/baseline)
 early-game + reference arms — derive the payroll model and window from the binding
 arm, THEN write the Stage-1 balance numbers and the mechanical implementation.
 Everything below (and the original draft) is superseded by these requirements.
+
+---
+
+## MEASURED — the shift probe ran (2026-07-19)
+
+`test/shiftProbe.test.ts` (gated `SHIFT_PROBE=1`), 5 seeds, against the SHIPPED
+economy. The sim's `onShift` availability gate is live but INERT until a shift is
+assigned (`shift` defaults null); the probe assigns shifts + sweeps `BALANCE.shifts`.
+**Caveat:** the probe runs the availability gate only — off-shift staff take no NEW
+work but do NOT yet walk home, and a gather formed before the boundary still
+completes — so it OVER-counts off-shift coverage. A day-only net that is already
+negative here is conservatively negative; a marginal-positive is an optimistic bound.
+
+**Early-game (binding) arm, default 06:00–18:30 window, profit/day:**
+| posture | whole-roster (6a) | per-shift (0.6×) |
+|---|---|---|
+| BASELINE (always-on 1×) | **+$253** | — |
+| DAY-ONLY | **−$142** ❌ (every seed neg) | **+$70** ⚠ (2/5 seeds neg) |
+| 24/7 | +$159 | **+$583** ✅ |
+| **night ROI** (24/7 − day-only) | +$301 | +$513 |
+
+**Mature (REFERENCE) arm, 6a:** baseline +$4,842 · day-only +$73 (rep drops to ~39)
+· 24/7 +$1,672 (rep climbs to 613) · **night ROI +$1,598**.
+
+### The four derived findings
+1. **PAYROLL MODEL = per-shift wage (~0.6× day), NOT whole-roster (6a).** DECISIVE:
+   6a nails a day-only nurse to a full 24h wage for 12.5h and **bankrupts the
+   day-only starter (−$142/day, every seed)** and leaves even the mature day-only
+   at a razor +$73. A per-shift wage rescues day-only (+$70) AND keeps 24/7 = 2×
+   day-only (the owner's tension) — a shifted staffer's `salaryPerDay` becomes
+   `round(base × shiftWageFactor)`.
+2. **NIGHT ROI IS POSITIVE on both arms** (+$301–609 early, +$1,598 mature) — so
+   **"24/7 later" is a REAL progression, not a trap.** Night coverage pays.
+3. **DAY-ONLY is a marginal, rep-crashed floor** — even rescued to +$70 it is the
+   lean/risky starter posture (the player is pulled toward 24/7, which pays). The
+   falsification bound (day-only net > 0 across ALL seeds) is NOT fully met (2/5
+   seeds slightly negative under the optimistic gate-only probe), so day-only is
+   "survivable-but-tight", not "comfortable" — acceptable as the intended pressure,
+   NOT as a safe default.
+4. **WINDOW phase:** the later 09:30–22:00 window helps 24/7 and total revenue
+   (evening-rush capture) but barely moves the throughput-capped day-only starter.
+   Not load-bearing for viability — keep the realistic 06:00–18:30 default (or a
+   modest later shift), a mid-game lever more than a starter one.
+
+### THE REMAINING OWNER DIAL — the per-shift wage FACTOR
+The factor trades day-only viability against how much 24/7 costs vs TODAY:
+- **0.6×** (measured): day-only +$70 (viable), 24/7 = 1.2× today's payroll.
+- **1.0×** (= 6a): day-only −$142 (bankrupt), 24/7 = 2× today's payroll (the owner's
+  "punishing 2×" reading, but it kills the starter).
+- ~0.7–0.8× sits between. **Recommend ~0.6**; a higher factor makes 24/7 bite harder
+  at the cost of day-only viability. Owner call, informed by the curve above.
+
+### A NEW finding (not a shifts blocker, but flagged)
+The probe tracked REPUTATION (no prior probe did): **the 1-nurse starter crashes
+its rep to 0 within ~3 days even at BASELINE** — it turns away ~11 patients/day, and
+AMA walkouts (−8 rep each) tank it, after which it survives at a grim low-rep floor.
+This is a PRE-EXISTING early-game fragility (the understaffed starter), independent
+of shifts — an onboarding/tuning question for a later pass, not this contract.
+
+### Remaining before implementation
+- **Owner: pick the wage factor** (recommend 0.6).
+- **Measure the v12→v13 migration** on a healthy live save (parity vs mint-night vs
+  opt-in — the deferred fork) before choosing.
+- **Adversarially review the probe** (the gate-only caveat + the numbers), then write
+  the mechanical implementation (save `onFloor`, per-tick reconciliation,
+  walk-home, night signal) with these numbers.
 
 ### The shift model (unchanged from the draft, restated)
 Two fixed shifts, **day 06:00–18:30** and **night 18:00–06:30** (12.5 game-h each,

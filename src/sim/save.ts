@@ -868,6 +868,9 @@ function readStaff(value: unknown, label: string): Staff {
     salaryPerDay: asNumber(o.salaryPerDay, `${label}.salaryPerDay`),
     duty: readStaffDuty(o.duty, `${label}.duty`),
     firing: asBool(o.firing, `${label}.firing`),
+    // SHIFTS Stage-1: `shift` is not serialized yet (the availability gate is
+    // inert at null). The shipped feature adds it to SavedStaff at SAVE_VERSION 13.
+    shift: null,
     at: readPoint(o.at, `${label}.at`),
     next: readPointOrNull(o.next, `${label}.next`),
     path: readPath(o.path, `${label}.path`),

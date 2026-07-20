@@ -60,6 +60,17 @@ export const BALANCE = {
       restroom: 200, resp: 200,
     } as Partial<Record<RoomType, number>>,
   },
+  /**
+   * SHIFTS Stage-1 (SHIFTS_STAGE1_CONTRACT). `minuteOfDay` windows a staffer is
+   * on duty; night WRAPS midnight (`startMinute > endMinute`). 12.5 game-h each
+   * with a 30-min overlap at each changeover (06:00–06:30, 18:00–18:30). These
+   * are the PROBE's default candidate windows — the phase is a measured arm, not
+   * yet a shipped balance number.
+   */
+  shifts: {
+    day: { startMinute: 360, endMinute: 1110 }, // 06:00 → 18:30
+    night: { startMinute: 1080, endMinute: 390 }, // 18:00 → 06:30 (wraps)
+  },
   arrivals: {
     /** M4 balance pass: 3.0 overwhelmed a full 6-room build (~50 arrivals vs
      *  ~23 treatable/day → rep death-spiral to double digits by day 4); 2.0

@@ -9,6 +9,7 @@ import {
 import { CONDITION_DEFS, CONDITION_IDS, type ConditionId } from './data/conditions';
 import { FINANCE_CATEGORIES, type CashTotals } from './data/finance';
 import type { RoleId } from './data/roles';
+import type { ShiftId } from './data/shifts';
 import {
   RETIRED_ROOMS,
   ROOM_DEFS,
@@ -203,6 +204,21 @@ export function roomHvacPerHour(rect: Rect): number {
 /** Usage draw for an ACTIVE equipment room, $/game-hour (0 for non-equipment). */
 export function roomUsagePerHour(roomType: RoomType): number {
   return BALANCE.economy.usagePerActiveHour[roomType] ?? 0;
+}
+
+/**
+ * SHIFTS Stage-1 (SHIFTS_STAGE1_CONTRACT): is a staffer on duty right now? PURE
+ * clock arithmetic over `minuteOfDay` — no per-staffer counter, deterministic.
+ * `shift === null` (the default) means "always on", so this is INERT until
+ * shifts are assigned. Night WRAPS midnight (`startMinute > endMinute`), which
+ * also yields the two 30-min overlap windows where both shifts read on-duty.
+ */
+export function onShift(shift: ShiftId | null, minuteOfDay: number): boolean {
+  if (shift === null) return true;
+  const w = BALANCE.shifts[shift];
+  return w.startMinute < w.endMinute
+    ? minuteOfDay >= w.startMinute && minuteOfDay < w.endMinute
+    : minuteOfDay >= w.startMinute || minuteOfDay < w.endMinute;
 }
 
 /**

@@ -9,10 +9,15 @@ deploy call).** This UNBLOCKS the shifts epic (2× payroll now drops mature to
 ~6%). **SHIFTS Stage-1 contract v2 written + reviewed** (both split lenses:
 mechanical READY-WITH-FIXES, design NOT-READY-as-drafted — it pre-committed to the
 whole-roster-payroll + morning-window levers the arithmetic says break the
-starter). **The next concrete task: build `test/shiftProbe.test.ts`** and measure
-the binding early-game arm (payroll-model × window-phase × posture) BEFORE writing
-shift numbers — the economy epic's arc again. Details in
-`SHIFTS_STAGE1_CONTRACT.md` "v2 REVIEW OUTCOME" block. **GIT STATE (corrected
+starter). **The shift probe HAS RUN** (`test/shiftProbe.test.ts`, gated): the derived model
+is a **PER-SHIFT WAGE (~0.6×)** — whole-roster payroll bankrupts the day-only
+starter (−$142/day), per-shift rescues it (+$70) and makes 24/7 profitable with
+**positive night ROI** (24/7-later is real, not a trap). **Next concrete task:
+owner picks the wage factor (rec. 0.6), measure the v12→v13 migration on a healthy
+save, review the probe, THEN implement** (save `onFloor`, per-tick reconciliation,
+walk-home, night signal, SAVE_VERSION 13). Full numbers in
+`SHIFTS_STAGE1_CONTRACT.md` "## MEASURED". NB the probe also found the 1-nurse
+starter crashes rep to 0 even at baseline — a pre-existing early-game fragility. **GIT STATE (corrected
 earlier): commits through `74a516e` were already pushed/LIVE (reflog); the
 economy commits `15ba628`/`ed03a49`/this one are LOCAL-only.** Prior: outpatient
 stream LIVE (SAVE_VERSION 11); Departments Stage 2a still blocked.

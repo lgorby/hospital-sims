@@ -10,6 +10,7 @@ import {
   attentionSkill,
   checkInCapacity,
   effectivePriority,
+  onShift,
   staffRatioFor,
   treatmentDurationTicks,
 } from '../formulas';
@@ -115,7 +116,10 @@ function starvingDemand(world: World): Map<RoleId, Set<RoomType>> {
 }
 
 function idleStaff(world: World, filter: (s: Staff) => boolean): Staff[] {
-  return [...world.staff.values()].filter((s) => s.duty.kind === 'idle' && !s.firing && filter(s));
+  // SHIFTS Stage-1: onShift is INERT (true) until a shift is assigned.
+  return [...world.staff.values()].filter(
+    (s) => s.duty.kind === 'idle' && !s.firing && onShift(s.shift, world.clock.minuteOfDay) && filter(s),
+  );
 }
 
 /**
@@ -171,7 +175,8 @@ function availableStaff(
     for (const id of r.staffIds) loads.set(id, (loads.get(id) ?? 0) + 1);
   }
   const eligible = [...world.staff.values()].filter((s) => {
-    if (s.firing || !filter(s)) return false;
+    // SHIFTS Stage-1: off-shift staff take no new work (excluded like `firing`).
+    if (s.firing || !onShift(s.shift, world.clock.minuteOfDay) || !filter(s)) return false;
     const load = loads.get(s.id) ?? 0;
     // An engaged staffer is only extendable within THIS room: their witness
     // duty must name a reservation here (§1 — a ratio staffer's reservations
@@ -227,7 +232,11 @@ function availableStaff(
 function rolePool(world: World, role: RoleId): number {
   let count = 0;
   for (const member of world.staff.values()) {
-    if (member.role === role && !member.firing) count += 1;
+    // SHIFTS Stage-1: off-shift bodies must NOT count, or the anti-capture guard
+    // misfires (rolePool > 1 on paper while one shift is empty). Mechanical review.
+    if (member.role === role && !member.firing && onShift(member.shift, world.clock.minuteOfDay)) {
+      count += 1;
+    }
   }
   return count;
 }
