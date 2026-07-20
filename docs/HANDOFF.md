@@ -67,7 +67,7 @@ hygiene.**
 
 | | |
 |---|---|
-| Tests | **742+ passed, 8 skipped**, 55 files — `npm test`. The gated-probe skips are `shiftProbe`/`economyProbe`/`edProbe`/`utilisationProbe`/`staffBreakProbe` etc. (each `*_PROBE=1`). |
+| Tests | **747 passed, 8 skipped**, 55 files — `npm test`. The gated-probe skips are `shiftProbe`/`economyProbe`/`edProbe`/`utilisationProbe`/`staffBreakProbe` etc. (each `*_PROBE=1`). |
 | Gates | lint, `tsc --noEmit`, `vite build` all green; CI runs the full gate on every push to `master` and every PR |
 | `SAVE_VERSION` | **15** (`src/sim/save.ts:32`) — v1–v15 loadable. **v15 is SHIFTS Stage 3a (staff `fatigue`) — COMMITTED LOCALLY, NOT DEPLOYED**, on top of v14 (Stage 2 lunches + `lounge`). The DEPLOYED/LIVE version is still **v13**. v15 is one-way once pushed; v<15 saves load inert (fatigue 0 until staff work a shift). |
 | Content | **16 conditions — 14 emergency + 2 ELECTIVE referrals** · 16 room types (15 buildable inc. `lounge`, `resp` retired) · 11 staff roles |
@@ -157,7 +157,7 @@ revisited.
 
 **SHIFTS Stage 2 (lunches + lounge, v14) AND Stage 3a (staff fatigue, v15) are SHIPPED +
 DEPLOYED** (`112755d`, pushed 2026-07-20, **CI green in 32s, Vercel LIVE at v15 — HTTP 200
-verified**). SAVE_VERSION **13 → 14 → 15**, one-way and now the DEPLOYED baseline. **742
+verified**). SAVE_VERSION **13 → 14 → 15**, one-way and now the DEPLOYED baseline. **747
 tests, 8 skip.** Provenance in `CHANGELOG.md` *(shifts 2)* / *(shifts 3a)*; do-not-regress
 rules in `INVARIANTS.md` ("SHIFTS Stage 2" / "SHIFTS Stage 3a"); contracts
 `docs/SHIFTS_STAGE2_CONTRACT.md`, `docs/SHIFTS_STAGE3A_CONTRACT.md` (both v2, all pre-impl +
@@ -182,15 +182,15 @@ ALL findings + a regression each → gates green (tsc + lint + build) → commit
 to) push/deploy.** Live-drive anything player-facing (`/run-hospital-simms`). Strong
 non-shifts candidates, all owner asks:
 
-1. **MAINTENANCE-DISPATCH NARRATION — cheapest, render-only, high-legibility (good warm-up).**
-   Owner ask: turn a breakdown's follow-up into "{staff} en route to {room}", and the
-   valuable UNSTAFFED case "CT broken — no maintenance staff available" (drives a HIRE). The
-   dispatcher already produces the job-state transitions; a render-side listener updates the
-   SAME NEEDS-ATTENTION alert in place. No sim/save change. Scope in the backlog below.
-2. **NURSE TECHS — a capacity lever the owner asked for** (meatier; distinct from EVS: a
+*(DONE 2026-07-20: **Maintenance-dispatch narration** SHIPPED LOCAL — `0c606fa`,
+render-only, no save bump; the NEEDS-ATTENTION broken row now narrates the repair
+(no-tech / waiting / {tech} en route / repairing). Not deployed — see CHANGELOG
+*(maint narration)*. Don't rebuild it.)*
+
+1. **NURSE TECHS — a capacity lever the owner asked for** (meatier; distinct from EVS: a
    tech attends a PATIENT, EVS a TILE). Patient load 6–9. Design prize: "do I need a nurse
    or a tech?" Pairs with the OBSERVATION v4 rewrite. Scope in the backlog ("Nurse techs").
-3. **AUDIO** (owner ask) — overhead pages, critical-arrival/stroke alerts, missing-patient
+2. **AUDIO** (owner ask) — overhead pages, critical-arrival/stroke alerts, missing-patient
    pages: a WebAudio layer driven by the EXISTING EventBus, sim stays silent (render-side
    consumer). A MILESTONE — needs its own cue-list/mixing design pass. Backlog "(d) AUDIO".
 
