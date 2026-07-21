@@ -320,16 +320,26 @@ export class WorldRenderer {
     this.textures = generateTileTextures(this.app.renderer);
     this.characterTextures = generateCharacterTextures(this.app.renderer);
     this.sortedLayer.sortableChildren = true;
-    this.camera.addChild(this.groundLayer, this.roomFloorLayer, this.decalLayer, this.sortedLayer);
+    // The hover-tile glow is a FILLED ground-plane indicator, so it must sit
+    // BELOW the depth-sorted actors (between the decals and sortedLayer) —
+    // otherwise it paints ON TOP of a character standing on the hovered tile.
+    // (Unlike `pulseGfx`/`selectionGfx`, which are thin rings deliberately kept
+    // above the sort so they're never occluded — see their field comments.)
+    this.highlight = new Sprite(this.textures.highlight);
+    this.highlight.visible = false;
+    this.camera.addChild(
+      this.groundLayer,
+      this.roomFloorLayer,
+      this.decalLayer,
+      this.highlight,
+      this.sortedLayer,
+    );
     this.app.stage.addChild(this.camera);
 
     this.buildGround();
 
-    this.highlight = new Sprite(this.textures.highlight);
-    this.highlight.visible = false;
     this.camera.addChild(
       this.overlay,
-      this.highlight,
       this.ghost,
       this.selectionGfx,
       this.pulseGfx,
