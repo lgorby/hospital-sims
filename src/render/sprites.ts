@@ -137,9 +137,8 @@ const PROP_DECOR: Readonly<Partial<Record<PropId, PropDecor>>> = {
   ultrasoundCart: 'monitor',
   anesthesiaCart: 'monitor',
   // Big imaging machines get a recessed front control panel + status light.
+  // (ctGantry/mriBore are full custom silhouettes now — see CUSTOM_PROPS.)
   xrayMachine: 'panel',
-  ctGantry: 'panel',
-  mriBore: 'panel',
   gammaCamera: 'panel',
   shieldScreen: 'panel',
   // Wet-work stations read as a basin sunk into the top surface.
@@ -210,10 +209,135 @@ function plantProp(g: Graphics, color: number): void {
   g.ellipse(cx + 3, -8, 2, 1.2).fill({ color: shade(color, 1.5), alpha: 0.6 });
 }
 
-/** Amenity props whose whole silhouette is custom (never the generic prism). */
-const CUSTOM_PROPS: Readonly<Partial<Record<PropId, (g: Graphics, color: number, rise: number) => void>>> = {
-  trashcan: trashcanProp,
+/** The box-prism slice shared by every non-custom prop — extracted so a custom
+ *  prop (the scanner gantry / bed) can reuse the same iso housing. */
+function drawPrism(g: Graphics, color: number, rise: number, slice: PropSlice): void {
+  const top = [
+    TILE_W / 2, -rise,
+    TILE_W, TILE_H / 2 - rise,
+    TILE_W / 2, TILE_H - rise,
+    0, TILE_H / 2 - rise,
+  ];
+  // South-east face
+  g.poly([TILE_W / 2, TILE_H - rise, TILE_W, TILE_H / 2 - rise, TILE_W, TILE_H / 2, TILE_W / 2, TILE_H])
+    .fill(shade(color, 0.62));
+  // South-west face
+  g.poly([0, TILE_H / 2 - rise, TILE_W / 2, TILE_H - rise, TILE_W / 2, TILE_H, 0, TILE_H / 2])
+    .fill(shade(color, 0.78));
+  // Top face — west slices slightly lighter so strips read as one object.
+  g.poly(top).fill(slice === 'west' ? shade(color, 1.12) : color);
+  // Soft highlight rim along the lit top edges.
+  g.poly([0, TILE_H / 2 - rise, TILE_W / 2, -rise, TILE_W, TILE_H / 2 - rise])
+    .stroke({ color: shade(color, 1.28), width: 1, alpha: 0.55 });
+}
+
+/** The patient bed — a low table + a soft pad + a pillow, drawn on the foot
+ *  (east) slice of a scanner. Shared by the CT (ring + bed) path. */
+function drawScannerBed(g: Graphics): void {
+  const cx = TILE_W / 2;
+  const r = 7;
+  g.ellipse(cx, TILE_H / 2 + 5, 15, 4).fill({ color: 0x000000, alpha: 0.14 });
+  drawPrism(g, 0xdfe3ea, r, 'east');
+  const midY = TILE_H / 2 - r;
+  // Inset mattress pad (a scaled top-face diamond) + a lit NW half + a firm edge
+  // so it reads against a same-hue floor (the MRI room's bluish tint).
+  g.poly([cx, midY - 12.8, cx + 25.6, midY, cx, midY + 12.8, cx - 25.6, midY]).fill(0xc2d3e8);
+  g.poly([cx, midY - 12.8, cx - 25.6, midY, cx, midY + 12.8]).fill({ color: 0xffffff, alpha: 0.16 });
+  g.poly([cx, midY - 12.8, cx + 25.6, midY, cx, midY + 12.8, cx - 25.6, midY])
+    .stroke({ color: 0x8ea3bd, width: 1, alpha: 0.7 });
+  g.ellipse(cx - 13, midY - 3, 6, 3.4).fill(0xffffff); // pillow (head end)
+}
+
+/**
+ * CT / MRI scanner — a 2-tile prop drawn as a recognisable machine, not a box.
+ * `tube` picks the shape:
+ *  • CT (`tube=false`): a thin bore RING (west/single) + a patient BED (east).
+ *  • MRI (`tube=true`): a long TUNNEL lying along the 2-tile strip axis — WEST
+ *    is the closed back + body, EAST the body + the front bore opening + a bed
+ *    nub — so it reads ~2 tiles deep at roughly the CT's width. The two halves
+ *    meet on-screen at the shared tile edge (west's SE end and east's NW end
+ *    map to the same screen point, so the tube is seamless).
+ * `bore` scales the CT tunnel opening. All coords stay inside the PROP_RISE_PAD
+ * canvas (x 0..64, y −24..32), so propKey/placement are untouched. `rise` is
+ * unused (fixed sizing). NB: a diagonal tube caps at radius ~14 before it spills
+ * the per-tile pad — that's why the MRI can't be wider without a bigger pad.
+ */
+function scannerProp(
+  g: Graphics,
+  color: number,
+  _rise: number,
+  slice: PropSlice,
+  bore: number,
+  tube: boolean,
+): void {
+  const cx = TILE_W / 2;
+
+  if (tube) {
+    // MRI tunnel: each slice draws its half along the strip axis (NW→SE).
+    const front = slice === 'east';
+    const r = 14;
+    const x0 = front ? 14 : 18; // NW (back) end of this slice's segment
+    const y0 = front ? 0 : 2;
+    const x1 = front ? 42 : 46; // SE (front) end
+    const y1 = front ? 14 : 16;
+    g.ellipse(cx, TILE_H / 2 + 6, 18, 5).fill({ color: 0x000000, alpha: 0.13 });
+    const N = 6;
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      g.circle(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, r).fill(shade(color, 0.84)); // body
+    }
+    for (let i = 0; i <= N; i++) {
+      const t = i / N; // NW-lit ridge along the cylinder top
+      g.circle(x0 + (x1 - x0) * t - 3, y0 + (y1 - y0) * t - 4.5, r * 0.55)
+        .fill({ color: shade(color, 1.12), alpha: 0.5 });
+    }
+    if (front) {
+      g.ellipse(x1 + 8, y1 + 7, 9, 4.5).fill(0xc2d3e8); // bed poking out
+      g.ellipse(x1 + 8, y1 + 7, 9, 4.5).stroke({ color: 0x8ea3bd, width: 1, alpha: 0.6 });
+      g.ellipse(x1, y1, r - 1, r - 1).fill(shade(color, 0.62)); // bore mouth rim
+      g.ellipse(x1 - 1, y1 - 1, r - 5, r - 5).fill(0x2b2b32); // mouth
+      g.ellipse(x1 - 2, y1 - 2.5, (r - 5) * 0.55, (r - 5) * 0.55).fill(0x141419); // deep dark
+      g.circle(x1 + 9, y1 - 4, 1.6).fill(0x82e0a6); // ready light
+    } else {
+      g.circle(x0, y0, r - 1).fill(shade(color, 0.66)); // closed back cap
+      g.circle(x0 - 2, y0 - 3.5, (r - 1) * 0.6).fill({ color: shade(color, 0.82), alpha: 0.6 });
+    }
+    return;
+  }
+
+  // ── CT: a thin bore ring (west/single) + a patient bed (east). ──
+  if (slice === 'east') {
+    drawScannerBed(g);
+    return;
+  }
+  // NB: dy − RY = −19 stays inside the pad top (−24).
+  g.ellipse(cx, TILE_H / 2 + 5, 15, 5).fill({ color: 0x000000, alpha: 0.16 });
+  const dy = -1;
+  const RX = 16;
+  const RY = 17;
+  const bx = 9 * bore;
+  const byr = 11 * bore;
+  g.ellipse(cx, dy, RX, RY).fill(color); // housing ring
+  g.ellipse(cx - 3, dy - 4, RX - 3, RY - 4).fill({ color: shade(color, 1.1), alpha: 0.5 }); // NW light
+  g.ellipse(cx + 4, dy + 5, RX - 4, RY - 6).fill({ color: shade(color, 0.72), alpha: 0.4 }); // SE shade
+  g.ellipse(cx, dy, RX, RY).stroke({ color: shade(color, 0.55), width: 1 });
+  g.ellipse(cx, dy, RX - 4, RY - 4).stroke({ color: shade(color, 0.85), width: 1, alpha: 0.55 }); // groove
+  g.ellipse(cx, dy + 1, bx + 2, byr + 2).fill(shade(color, 0.5)); // tunnel wall
+  g.ellipse(cx - 1.5, dy - 1, bx, byr).fill(0x2b2b32); // tunnel mouth
+  g.ellipse(cx - 2.5, dy - 2, bx * 0.55, byr * 0.55).fill(0x141419); // deep dark
+  g.circle(cx + RX - 6, dy + RY - 8, 1.7).fill(0x82e0a6); // green "ready" light
+}
+
+/** Amenity + equipment props whose whole silhouette is custom (never the
+ *  generic prism). Receives the SLICE so a multi-tile prop (the scanner) can
+ *  draw a different half per tile. */
+const CUSTOM_PROPS: Readonly<
+  Partial<Record<PropId, (g: Graphics, color: number, rise: number, slice: PropSlice) => void>>
+> = {
+  trashcan: (g, color, rise) => trashcanProp(g, color, rise),
   plant: (g, color) => plantProp(g, color),
+  ctGantry: (g, color, rise, slice) => scannerProp(g, color, rise, slice, 0.85, false),
+  mriBore: (g, color, rise, slice) => scannerProp(g, color, rise, slice, 0.9, true),
 };
 
 // ------------------------------------------------ mess decals (Stage 2, §4.1)
@@ -475,26 +599,10 @@ function propSlice(id: PropId, slice: PropSlice): Graphics {
   // skipping the prism — the propKey lookup contract is untouched.
   const custom = CUSTOM_PROPS[id];
   if (custom) {
-    custom(g, color, rise);
+    custom(g, color, rise, slice);
     return g;
   }
-  const top = [
-    TILE_W / 2, -rise,
-    TILE_W, TILE_H / 2 - rise,
-    TILE_W / 2, TILE_H - rise,
-    0, TILE_H / 2 - rise,
-  ];
-  // South-east face
-  g.poly([TILE_W / 2, TILE_H - rise, TILE_W, TILE_H / 2 - rise, TILE_W, TILE_H / 2, TILE_W / 2, TILE_H])
-    .fill(shade(color, 0.62));
-  // South-west face
-  g.poly([0, TILE_H / 2 - rise, TILE_W / 2, TILE_H - rise, TILE_W / 2, TILE_H, 0, TILE_H / 2])
-    .fill(shade(color, 0.78));
-  // Top face — west slices slightly lighter so strips read as one object.
-  g.poly(top).fill(slice === 'west' ? shade(color, 1.12) : color);
-  // Soft highlight rim along the lit top edges — gives the prism a little pop.
-  g.poly([0, TILE_H / 2 - rise, TILE_W / 2, -rise, TILE_W, TILE_H / 2 - rise])
-    .stroke({ color: shade(color, 1.28), width: 1, alpha: 0.55 });
+  drawPrism(g, color, rise, slice);
 
   const decor = PROP_DECOR[id];
   const headEnd = slice !== 'east'; // single-ended decor lives on the west/single slice
